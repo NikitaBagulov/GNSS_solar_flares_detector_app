@@ -1,29 +1,105 @@
 from DataManager import DataManager
-from datetime import date
+from FlareTracker import FlareTracker
+from datetime import date, timedelta
 from download_functions.euv import download_soho_sem
 from download_functions.simurg_hdf import download_simurg_hdf
 from download_functions.xray import download_goes_xray
 from download_functions.hek_flares import download_flares
 
-# from pprint import pprint
+import argparse
+import os
+import sys
+from pathlib import Path
+import traceback
 
-data_manager = DataManager()
-data_manager.register_download_function("soho_sem", download_func=download_soho_sem)
-data_manager.register_download_function("goes_xray", download_func=download_goes_xray)
-data_manager.register_download_function("hek_flares", download_func=download_flares)
-# data_manager.register_download_function("simurg_hdf", download_func=download_simurg_hdf)
+parser = argparse.ArgumentParser()
+parser.add_argument('--start_date', type=str, required=True, 
+                   help='Начальная дата в формате YYYY-MM-DD')
+parser.add_argument('--end_date', type=str, default=None,
+                   help='Конечная дата в формате YYYY-MM-DD')
+parser.add_argument('--min_flare_class', type=str, default='X1.0',
+                   help='Минимальный класс вспышки (по умолчанию: X1.0)')
+parser.add_argument('--state_json_path', type=str, default='flare_tracker_state.json',
+                   help='Путь к файлу состояния JSON (относительный или абсолютный)')
+parser.add_argument('--data_download_path', type=str, default='./data',
+                   help='Путь для сохранения загруженных данных')
 
-# res = data_manager.download_by_date(target_date=date(2024, 5, 10))
-# pprint(res)
+args = parser.parse_args()
 
-from FlareTracker import FlareTracker
+try:
+    start_date = date.fromisoformat(args.start_date)
+    
+    if args.end_date:
+        end_date = date.fromisoformat(args.end_date)
+    else:
+        end_date = date.today()
 
-tracker = FlareTracker(
-    data_manager=data_manager,
-    min_year=2024,
-    min_flare_class="X1.0"
-)
+    if start_date > end_date:
+        print("Ошибка: start_date должен быть раньше end_date")
+        sys.exit(1)
+        
+except ValueError as e:
+    print(f"Ошибка в формате даты: {e}")
+    print("Используйте формат YYYY-MM-DD")
+    sys.exit(1)
 
-# 2. Проверяем пропущенные дни и скачиваем
-print("Проверка пропущенных данных...")
-tracker.download_missed_data()
+state_json_path = Path(args.state_json_path)
+if not state_json_path.is_absolute():
+    state_json_path = Path.cwd() / state_json_path
+
+data_download_path = Path(args.data_download_path)
+if not data_download_path.is_absolute():
+    data_download_path = Path.cwd() / data_download_path
+
+data_download_path.mkdir(parents=True, exist_ok=True)
+state_json_path.parent.mkdir(parents=True, exist_ok=True)
+
+print(f"Параметры запуска:")
+print(f"  Начальная дата: {start_date}")
+print(f"  Конечная дата: {end_date}")
+print(f"  Минимальный класс вспышки: {args.min_flare_class}")
+print(f"  Файл состояния: {state_json_path}")
+print(f"  Директория данных: {data_download_path}")
+print()
+
+try:
+    data_manager = DataManager(base_download_dir=str(data_download_path))
+
+    data_manager.register_download_function("soho_sem", download_func=download_soho_sem)
+    data_manager.register_download_function("goes_xray", download_func=download_goes_xray)
+    data_manager.register_download_function("hek_flares", download_func=download_flares)
+    # data_manager.register_download_function("simurg_hdf", download_func=download_simurg_hdf)
+    
+    print(f"Зарегистрировано функций загрузки: {len(data_manager.download_functions)}")
+
+    for func_name in ["soho_sem", "goes_xray", "hek_flares", "simurg_hdf"]:
+        if func_name in data_manager.download_functions:
+            print(f"✓ Функция '{func_name}' зарегистрирована")
+        else:
+            print(f"✗ Функция '{func_name}' НЕ зарегистрирована")
+    
+    print("\nИнициализация FlareTracker...")
+    tracker = FlareTracker(
+        data_manager=data_manager,
+        start_date=start_date,
+        end_date=end_date,
+        min_flare_class=args.min_flare_class,
+        state_file_path=str(state_json_path)
+    )
+    
+    print("Начинается проверка пропущенных данных...")
+
+    print(f"Диапазон дат для обработки: с {tracker.start_date} по {tracker.end_date}")
+
+    if hasattr(tracker, 'download_missed_data'):
+        result = tracker.download_missed_data()
+        print(f"Результат загрузки: {result}")
+    else:
+        print("Ошибка: у tracker нет метода download_missed_data")
+        
+    print("\nЗавершено успешно!")
+    
+except Exception as e:
+    print(f"\nПроизошла ошибка: {e}")
+    traceback.print_exc()
+    sys.exit(1)

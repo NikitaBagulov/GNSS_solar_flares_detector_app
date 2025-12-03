@@ -3,7 +3,7 @@ from typing import Dict, List, Callable, Optional, Any
 from datetime import datetime, date
 
 class DataManager:
-    def __init__(self, base_download_dir: str = "./downloads"):
+    def __init__(self, base_download_dir: str = "./data"):
 
         self.base_download_dir = Path(base_download_dir)
         self.base_download_dir.mkdir(parents=True, exist_ok=True)

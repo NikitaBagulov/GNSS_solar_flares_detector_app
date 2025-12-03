@@ -78,7 +78,7 @@ def download_goes_xray(
                 print(f"GOES-{sat} не удался: {e}")
                 continue
         
-        return pd.DataFrame()
+        return file_path
         
     except Exception as e:
         return e
