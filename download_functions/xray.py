@@ -41,10 +41,15 @@ def download_goes_xray(
     **kwargs
 ) -> pd.DataFrame:
     filename = f"goes_{date.strftime('%Y%m%d')}.csv"
-    file_path = data_manager.get_download_path('goes', date, filename)
-    if not kwargs.get('force_redownload', False) and file_path.exists():
+    final_path = data_manager.get_download_path('goes_xray', date, filename)
+    
+    temp_path = kwargs.get('temp_path', None)
+    if not temp_path:
+        temp_path = final_path.with_suffix('.tmp')
+    
+    if not kwargs.get('force_redownload', False) and final_path.exists():
         try:
-            return file_path
+            return final_path
         except:
             pass
     
@@ -70,15 +75,16 @@ def download_goes_xray(
                         ts = TimeSeries(files[0])
                         df = ts.to_dataframe()
 
-                        df.to_csv(file_path)
-                        
-                        return file_path
+                        df.to_csv(temp_path)
+
+                        return temp_path
                         
             except Exception as e:
                 print(f"GOES-{sat} не удался: {e}")
                 continue
-        
-        return file_path
+
+        return None
         
     except Exception as e:
-        return e
+        print(f"❌ Ошибка загрузки GOES X-ray: {e}")
+        return None

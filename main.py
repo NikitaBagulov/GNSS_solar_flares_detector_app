@@ -67,8 +67,8 @@ try:
 
     data_manager.register_download_function("soho_sem", download_func=download_soho_sem)
     data_manager.register_download_function("goes_xray", download_func=download_goes_xray)
-    data_manager.register_download_function("hek_flares", download_func=download_flares)
-    # data_manager.register_download_function("simurg_hdf", download_func=download_simurg_hdf)
+    # data_manager.register_download_function("hek_flares", download_func=download_flares)
+    data_manager.register_download_function("simurg_hdf", download_func=download_simurg_hdf)
     
     print(f"Зарегистрировано функций загрузки: {len(data_manager.download_functions)}")
 
