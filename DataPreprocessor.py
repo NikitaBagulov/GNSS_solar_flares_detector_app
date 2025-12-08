@@ -44,12 +44,20 @@ class DataPreprocessor:
             else:
                 raise e
 
+    def get_output_dir_for_date(self, study_date):
+        date_str = study_date.strftime("%Y-%m-%d")
+        date_dir = self.output_dir / date_str
+        date_dir.mkdir(parents=True, exist_ok=True)
+        return date_dir
+
+
     def process_file(self, file_path):
         file_path = Path(file_path)
         if not file_path.exists():
             raise ValueError(f"Could not find {file_path}")
 
         study_date = self.extract_date_from_filename(file_path)
+        date_output_dir = self.get_output_dir_for_date(study_date)
 
         sites_description = get_sites_attrs(file_path)
         n_sites = len(sites_description)
@@ -82,7 +90,7 @@ class DataPreprocessor:
 
             print(f"Chunk {chunk_idx} keys: {list(data.keys())}")
             for prod in self.data_products:
-                maps_file = self.maps_files[prod].resolve()
+                maps_file = (date_output_dir / f"map_{prod}.h5").resolve()
                 maps_file.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     store_maps_time_based({'sites': 'sites'}, data, str(maps_file), lock=False)
