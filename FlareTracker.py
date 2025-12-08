@@ -6,6 +6,7 @@ import pandas as pd
 from sunpy.net import Fido, attrs as a
 from astropy.time import Time
 from DataManager import DataManager
+import os
 
 
 class FlareTracker:
@@ -28,12 +29,13 @@ class FlareTracker:
         
         print(f"📅 Начальная дата: {start_date}")
         print(f"📅 Конечная дата: {end_date}")
-        print(f"⭐ Минимальный класс вспышек: {min_flare_class}")
+        
         
         self.data_manager = data_manager
         self.start_date = start_date
         self.end_date = end_date
         self.min_flare_class = min_flare_class
+        print(f"⭐ Минимальный класс вспышек: {self.min_flare_class}")
 
         if state_file_path is None:
             self.state_file = self.data_manager.base_download_dir / "flare_tracker_state.json"
@@ -48,6 +50,9 @@ class FlareTracker:
         self.all_flares_file = self.state_file.parent / "all_flares.csv"
         print(f"📊 Файл всех вспышек: {self.all_flares_file}")
         
+        # Автоматически синхронизируем состояние с файлами при инициализации
+        self._sync_state_with_files()
+        
         print(f"✅ FlareTracker инициализирован\n")
     
     def _load_state(self) -> Dict:
@@ -60,6 +65,7 @@ class FlareTracker:
                     if state.get("last_update_date"):
                         print(f"   📅 Последнее обновление: {state['last_update_date']}")
                     print(f"   📊 Всего вспышек в истории: {state.get('total_flares', 0)}")
+                    print(f"   💾 В state записано дней со скачанными данными: {len(state.get('data_downloaded', []))}")
                     return state
             except Exception as e:
                 print(f"   ⚠️ Ошибка загрузки состояния: {e}")
@@ -77,19 +83,130 @@ class FlareTracker:
             "data_downloaded": []
         }
     
-    def _save_state(self):
+    def _sync_state_with_files(self):
+        """Синхронизирует состояние с реально существующими файлами"""
+        print(f"\n🔍 СИНХРОНИЗАЦИЯ СОСТОЯНИЯ С ФАЙЛАМИ...")
+        
+        # Загружаем вспышки
+        all_flares = self._load_all_flares()
+        if all_flares.empty:
+            print(f"   📭 Нет вспышек в файле")
+            self.state["data_downloaded"] = []
+            self._save_state(message="Состояние очищено - нет вспышек")
+            return
+        
+        # Получаем уникальные даты со вспышками
+        flare_dates_set = set()
+        for date_str in all_flares['date'].unique():
+            try:
+                if isinstance(date_str, str):
+                    flare_date = datetime.strptime(str(date_str), "%Y-%m-%d").date()
+                elif isinstance(date_str, pd.Timestamp):
+                    flare_date = date_str.date()
+                elif isinstance(date_str, date):
+                    flare_date = date_str
+                else:
+                    continue
+                flare_dates_set.add(flare_date)
+            except Exception as e:
+                print(f"   ⚠️ Ошибка преобразования даты {date_str}: {e}")
+                continue
+        
+        flare_dates = sorted(flare_dates_set)
+        
+        print(f"   📊 Всего дней со вспышками: {len(flare_dates)}")
+        
+        # Получаем список источников
+        available_sources = list(self.data_manager.download_functions.keys())
+        print(f"   📁 Проверяемые источники: {available_sources}")
+        
+        # Проверяем какие даты действительно скачаны
+        actually_downloaded_dates = []
+        dates_with_missing_files = []
+        
+        for flare_date in flare_dates:
+            date_str = flare_date.strftime("%Y-%m-%d")
+            all_sources_have_data = True
+            
+            for source in available_sources:
+                if not self._check_source_has_data(source, flare_date):
+                    all_sources_have_data = False
+                    dates_with_missing_files.append(date_str)
+                    break
+            
+            if all_sources_have_data:
+                actually_downloaded_dates.append(date_str)
+        
+        # Обновляем состояние
+        self.state["data_downloaded"] = sorted(actually_downloaded_dates)
+        
+        # Обновляем список дат со вспышками
+        flare_date_strings = [d.strftime("%Y-%m-%d") for d in flare_dates]
+        self.state["flare_dates"] = flare_date_strings
+        
+        # Обновляем общее количество вспышек
+        self.state["total_flares"] = len(all_flares)
+        
+        print(f"\n📊 РЕЗУЛЬТАТ СИНХРОНИЗАЦИИ:")
+        print(f"   ✅ Файлы существуют для: {len(actually_downloaded_dates)} дней")
+        print(f"   ⚠️ Отсутствуют файлы для: {len(dates_with_missing_files)} дней")
+        
+        if actually_downloaded_dates:
+            print(f"\n   📅 Дни с полными данными:")
+            for date_str in actually_downloaded_dates[:5]:
+                print(f"      - {date_str}")
+            if len(actually_downloaded_dates) > 5:
+                print(f"      ... и еще {len(actually_downloaded_dates) - 5} дней")
+        
+        if dates_with_missing_files:
+            print(f"\n   ⚠️ Дни с неполными данными:")
+            for date_str in dates_with_missing_files[:5]:
+                print(f"      - {date_str}")
+            if len(dates_with_missing_files) > 5:
+                print(f"      ... и еще {len(dates_with_missing_files) - 5} дней")
+        
+        self._save_state(message="Состояние синхронизировано с файлами")
+    
+    def _save_state(self, force: bool = False, message: str = ""):
+        """Сохраняет состояние с опциональным принудительным сохранением"""
         try:
+            # Обновляем время последнего обновления
+            self.state["last_update_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
             with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(self.state, f, indent=2, ensure_ascii=False)
-            print(f"💾 Состояние сохранено в {self.state_file}")
+            
+            if message:
+                print(f"💾 {message}")
+            elif force:
+                print(f"💾 Состояние принудительно сохранено в {self.state_file}")
+            else:
+                print(f"💾 Состояние сохранено в {self.state_file}")
+                
+            # Выводим информацию о сохраненном состоянии
+            print(f"   📊 Дней со скачанными данными в state: {len(self.state.get('data_downloaded', []))}")
+            print(f"   📅 Всего дней со вспышками: {len(self.state.get('flare_dates', []))}")
+            print(f"   ⭐ Всего вспышек: {self.state.get('total_flares', 0)}")
+            
         except Exception as e:
             print(f"❌ Ошибка сохранения состояния: {e}")
+    
+    def _save_state_if_needed(self, counter: int, every_n: int = 2) -> bool:
+        """Сохраняет состояние каждые every_n операций"""
+        if counter % every_n == 0:
+            self._save_state(force=True, message=f"Промежуточное состояние сохранено (шаг {counter})")
+            return True
+        return False
     
     def _save_all_flares(self, df: pd.DataFrame):
         try:
             df.to_csv(self.all_flares_file, index=False)
             print(f"💾 Все вспышки сохранены в {self.all_flares_file}")
             print(f"   📊 Всего записей: {len(df)}")
+            
+            # После сохранения вспышек синхронизируем состояние
+            self._sync_state_with_files()
+            
         except Exception as e:
             print(f"❌ Ошибка сохранения всех вспышек: {e}")
     
@@ -200,6 +317,7 @@ class FlareTracker:
         if existing_flares.empty:
             self._save_all_flares(api_flares)
             print(f"✅ Файл был пуст, сохранены {len(api_flares)} вспышек из API")
+            
             return {'new_flares': len(api_flares), 'total_flares': len(api_flares)}
 
         existing_dates = set()
@@ -270,8 +388,8 @@ class FlareTracker:
             
             self.state["flare_dates"] = date_strings
             self.state["total_flares"] = len(updated_flares)
-            self.state["last_update_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self._save_state()
+            
+            self._save_state(message="Состояние сохранено после обновления из API")
             
             return {
                 'new_flares': len(missing_flares),
@@ -288,7 +406,7 @@ class FlareTracker:
         print(f"{'='*70}")
 
         # 1. Всегда проверяем API на новые вспышки
-        print(f"\n🔍 ВСЕГДА ПРОВЕРЯЕМ API НА НОВЫЕ ВСЫПШКИ")
+        print(f"\n🔍 ВСЕГДА ПРОВЕРЯЕМ API НА НОВЫЕ ВСПЫШКИ")
         api_result = self._update_flares_from_api()
         
         if api_result['new_flares'] > 0:
@@ -303,6 +421,9 @@ class FlareTracker:
         print(f"📥 СКАЧИВАНИЕ ДАННЫХ ЧЕРЕЗ DataManager")
         print(f"{'='*70}")
 
+        # Синхронизируем состояние перед началом скачивания
+        self._sync_state_with_files()
+        
         all_flares = self._load_all_flares()
         
         if all_flares.empty:
@@ -310,91 +431,34 @@ class FlareTracker:
             print(f"{'='*70}\n")
             return None
 
-        # Получаем уникальные даты и преобразуем их в datetime.date объекты
-        dates_with_flares = []
-        for date_str in all_flares['date'].unique():
-            try:
-                if isinstance(date_str, str):
-                    flare_date = datetime.strptime(str(date_str), "%Y-%m-%d").date()
-                elif isinstance(date_str, pd.Timestamp):
-                    flare_date = date_str.date()
-                elif isinstance(date_str, date):
-                    flare_date = date_str
-                else:
-                    continue
-                dates_with_flares.append(flare_date)
-            except Exception as e:
-                print(f"⚠️ Ошибка преобразования даты {date_str}: {e}")
+        # Получаем список дат для скачивания (тех, что в state как не скачанные)
+        flare_dates = self.get_flare_dates()
+        downloaded_dates = set(self.state.get("data_downloaded", []))
         
-        dates_with_flares = sorted(dates_with_flares)
-        total_dates = len(dates_with_flares)
-        
-        if total_dates == 0:
-            print(f"📭 Нет валидных дат для скачивания")
-            print(f"{'='*70}\n")
-            return None
-        
-        print(f"📊 Найдено дней со вспышками: {total_dates}")
-        print(f"📅 С {dates_with_flares[0]} по {dates_with_flares[-1]}")
-
-        # 3. Проверяем состояние скачанных данных - ОБНОВЛЕННАЯ ПРОВЕРКА!
-        print(f"\n📊 ПРОВЕРКА СУЩЕСТВУЮЩИХ ФАЙЛОВ...")
-        
-        # Получаем список зарегистрированных источников в DataManager
-        available_sources = list(self.data_manager.download_functions.keys())
-        print(f"   Доступные источники: {available_sources}")
-        
-        # Проверяем, какие даты действительно скачаны для ВСЕХ источников
-        actually_downloaded_dates = set()
-        dates_with_missing_files = set()
-        
-        for flare_date in dates_with_flares:
-            date_str = flare_date.strftime("%Y-%m-%d")
-            all_sources_have_data = True
-            
-            for source in available_sources:
-                # Проверяем существование файла через DataManager
-                if not self._check_source_has_data(source, flare_date):
-                    all_sources_have_data = False
-                    dates_with_missing_files.add(date_str)
-                    break
-            
-            if all_sources_have_data:
-                actually_downloaded_dates.add(date_str)
-        
-        # Синхронизируем state с реальным состоянием файлов
-        self.state["data_downloaded"] = list(actually_downloaded_dates)
-        self._save_state()
-        
-        downloaded_dates = actually_downloaded_dates
         dates_to_download = []
-        
-        for flare_date in dates_with_flares:
+        for flare_date in flare_dates:
             date_str = flare_date.strftime("%Y-%m-%d")
             if date_str not in downloaded_dates:
                 dates_to_download.append(flare_date)
         
-        print(f"\n📊 РЕАЛЬНЫЙ СТАТУС СКАЧИВАНИЯ:")
-        print(f"   ✅ Файлы существуют: {len(downloaded_dates)} дней")
-        print(f"   ⚠️ Отсутствуют файлы: {len(dates_with_missing_files)} дней")
-        print(f"   ⏳ Нужно скачать: {len(dates_to_download)} дней")
+        total_dates = len(dates_to_download)
         
-        if dates_with_missing_files:
-            print(f"\n📝 Дни с отсутствующими файлами:")
-            for date_str in sorted(list(dates_with_missing_files))[:10]:
-                print(f"   - {date_str}")
-            if len(dates_with_missing_files) > 10:
-                print(f"   ... и еще {len(dates_with_missing_files) - 10} дней")
-        
-        if not dates_to_download:
-            print(f"\n🎉 Все данные уже скачаны (проверено по файлам)!")
+        if total_dates == 0:
+            print(f"📭 Нет дат для скачивания (все уже скачаны)")
             print(f"{'='*70}\n")
             return {
                 'status': 'all_downloaded',
                 'downloaded_dates': len(downloaded_dates)
             }
+        
+        print(f"📊 Найдено дней для скачивания: {total_dates}")
+        print(f"📅 С {dates_to_download[0]} по {dates_to_download[-1]}")
 
-        # 4. Скачиваем данные для каждого дня
+        # Получаем список источников
+        available_sources = list(self.data_manager.download_functions.keys())
+        print(f"\n📁 Доступные источники: {available_sources}")
+
+        # 3. Скачиваем данные для каждого дня
         print(f"\n📥 НАЧИНАЕМ СКАЧИВАНИЕ...")
         
         success_count = 0
@@ -426,27 +490,26 @@ class FlareTracker:
                             all_sources_success = False
                     
                     if all_sources_success:
-                        # Проверяем, что ВСЕ файлы действительно созданы
                         files_exist = True
+                        missing_sources = []
+                        
                         for source in available_sources:
                             if not self._check_source_has_data(source, flare_date):
-                                print(f"   ⚠️ Файл {source} не создан!")
+                                print(f"   ⚠️ Отсутствует файл для источника: {source}")
                                 files_exist = False
-                                break
+                                missing_sources.append(source)
                         
                         if files_exist:
-                            # Обновляем состояние только если ВСЕ файлы созданы
+                            date_str = flare_date.strftime("%Y-%m-%d")
                             if date_str not in self.state["data_downloaded"]:
                                 self.state["data_downloaded"].append(date_str)
+                                self.state["data_downloaded"] = sorted(self.state["data_downloaded"])
+                                self._save_state(message=f"Дата {date_str} подтверждена как полностью скачанная")
                             
-                            # Сохраняем промежуточное состояние
-                            if i % 3 == 0:  # Чаще сохраняем
-                                self._save_state()
-                            
+                            print(f"   ✅ Все файлы существуют → дата {date_str} подтверждена")
                             success_count += 1
-                            print(f"   ✅ Все файлы успешно созданы")
                         else:
-                            print(f"   ⚠️ Не все файлы созданы, пропускаем...")
+                            print(f"   ❌ Не хватает файлов от источников: {missing_sources}")
                             failed_dates.append(date_str)
                     else:
                         print(f"   ⚠️ Не все источники успешно скачаны")
@@ -458,14 +521,19 @@ class FlareTracker:
             except Exception as e:
                 print(f"   ❌ Ошибка скачивания: {e}")
                 failed_dates.append(date_str)
+            
+            # Дополнительное сохранение каждые 2 дня для надежности
+            self._save_state_if_needed(i, every_n=2)
 
-        # 5. Сохраняем финальное состояние
-        self._save_state()
+        # 4. Финальная синхронизация и сохранение
+        print(f"\n🔄 ФИНАЛЬНАЯ СИНХРОНИЗАЦИЯ СОСТОЯНИЯ...")
+        self._sync_state_with_files()
         
         print(f"\n{'='*70}")
         print(f"📊 ИТОГИ СКАЧИВАНИЯ:")
         print(f"   ✅ Успешно скачано: {success_count} дней")
         print(f"   ❌ Не удалось скачать: {len(failed_dates)} дней")
+        print(f"   💾 Всего дней со скачанными данными: {len(self.state.get('data_downloaded', []))}")
         
         if failed_dates:
             print(f"\n📝 Даты с ошибками:")
@@ -481,36 +549,45 @@ class FlareTracker:
             'success_count': success_count,
             'failed_count': len(failed_dates),
             'failed_dates': failed_dates,
+            'downloaded_dates': len(self.state.get('data_downloaded', [])),
             'api_check': api_result
         }
 
-    def _check_source_has_data(self, source_name: str, target_date: date) -> bool:
-        """Проверяет, есть ли данные для источника за указанную дату"""
+    def _check_source_has_data(self, source_name, target_date, file_hint=None):
         try:
-            # Пробуем несколько возможных имен файлов
-            possible_filenames = [
-                f"{source_name}_{target_date.strftime('%Y%m%d')}.csv",
-                f"{source_name}.csv"
+            if file_hint:
+                p = Path(file_hint)
+                if p.exists() and p.stat().st_size > 0:
+                    return True
+
+            patterns = [
+                f"{source_name}_{target_date.strftime('%Y%m%d')}",
+                f"{source_name}-{target_date.strftime('%Y%m%d')}",
+                f"{target_date.strftime('%Y%m%d')}",
+                f"{source_name}"
             ]
-            
-            for filename in possible_filenames:
-                file_path = self.data_manager.get_download_path(
-                    source_name, 
-                    target_date, 
-                    filename,
-                    create_dir=False
-                )
-                
-                if file_path.exists():
-                    # Проверяем, что файл не пустой
-                    if file_path.stat().st_size > 0:
+
+            exts = ['.csv', '.h5', '.hdf5', '.dat', '.nc']
+
+            base_dir = self.data_manager.get_download_path(source_name, target_date, ".", create_dir=False)
+            if base_dir is None:
+                base_dir = self.data_manager.base_download_dir
+            base_dir = Path(base_dir)
+            if not base_dir.exists():
+                base_dir = base_dir.parent if base_dir.parent.exists() else Path(".")
+
+            for root, dirs, files in os.walk(base_dir):
+                for f in files:
+                    fp = Path(root) / f
+                    name = fp.name
+                    if any(p in name for p in patterns) and fp.suffix in exts and fp.stat().st_size > 0:
                         return True
-            
+
             return False
-        
-        except Exception as e:
-            print(f"⚠️ Ошибка проверки файла {source_name} за {target_date}: {e}")
+
+        except:
             return False
+
     
     def _flare_class_to_numeric(self, flare_class: str) -> float:
         if not isinstance(flare_class, str):
@@ -592,7 +669,8 @@ class FlareTracker:
         self.state["last_update_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.state["data_downloaded"] = []
         
-        self._save_state()
+        # Синхронизируем с файлами после обновления
+        self._sync_state_with_files()
         
         print(f"✅ Данные полностью обновлены из API")
         print(f"📊 Сохранено {len(api_flares)} вспышек")
@@ -600,3 +678,17 @@ class FlareTracker:
         print(f"{'='*70}\n")
         
         return True
+    
+    def get_status(self):
+        """Возвращает текущий статус системы"""
+        return {
+            'total_flare_days': len(self.state.get('flare_dates', [])),
+            'downloaded_days': len(self.state.get('data_downloaded', [])),
+            'total_flares': self.state.get('total_flares', 0),
+            'last_update': self.state.get('last_update_date', 'никогда'),
+            'min_flare_class': self.state.get('min_flare_class', 'X1.0'),
+            'date_range': {
+                'start': self.state.get('start_date'),
+                'end': self.state.get('end_date')
+            }
+        }

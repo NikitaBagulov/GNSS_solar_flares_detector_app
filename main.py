@@ -1,5 +1,7 @@
 from DataManager import DataManager
 from FlareTracker import FlareTracker
+from DataPreprocessor import DataPreprocessor
+
 from datetime import date, timedelta
 from download_functions.euv import download_soho_sem
 from download_functions.simurg_hdf import download_simurg_hdf
@@ -68,7 +70,7 @@ try:
     data_manager.register_download_function("soho_sem", download_func=download_soho_sem)
     data_manager.register_download_function("goes_xray", download_func=download_goes_xray)
     # data_manager.register_download_function("hek_flares", download_func=download_flares)
-    data_manager.register_download_function("simurg_hdf", download_func=download_simurg_hdf)
+    data_manager.register_download_function("simurg_hdf", download_func=download_simurg_hdf, default_extension='.h5')
     
     print(f"Зарегистрировано функций загрузки: {len(data_manager.download_functions)}")
 
@@ -96,7 +98,9 @@ try:
         print(f"Результат загрузки: {result}")
     else:
         print("Ошибка: у tracker нет метода download_missed_data")
-        
+    preprocessor = DataPreprocessor(input_root=str(data_download_path))
+    processed_files = preprocessor.process_all()
+
     print("\nЗавершено успешно!")
     
 except Exception as e:

@@ -6,6 +6,8 @@ import signal
 import sys
 import json
 import pandas as pd
+import os
+
 
 class DataManager:
     def __init__(self, base_download_dir: str = "./data"):
@@ -13,14 +15,20 @@ class DataManager:
         self.base_download_dir.mkdir(parents=True, exist_ok=True)
 
         self.download_functions: Dict[str, Callable] = {}
+
         self.sources_config: Dict[str, Dict] = {}
+
+        self.source_extensions: Dict[str, str] = {}
 
         self._active_downloads: Dict[str, List[Path]] = {}
         self._transaction_file = self.base_download_dir / ".download_transactions.json"
-        
+
+        self._cleanup_orphaned_temp_files()
         self._recover_interrupted_downloads()
 
         self._register_cleanup_handlers()
+        
+        print(f"📁 DataManager инициализирован в {self.base_download_dir}")
     
     def _register_cleanup_handlers(self):
         atexit.register(self._cleanup_all_downloads)
@@ -35,6 +43,25 @@ class DataManager:
         self._cleanup_all_downloads()
         sys.exit(1)
     
+    def _cleanup_orphaned_temp_files(self):
+        print("🧹 Поиск старых временных файлов...")
+
+        tmp_files = list(self.base_download_dir.rglob("*.tmp"))
+        
+        files_removed = 0
+        for tmp_file in tmp_files:
+            try:
+                file_age = datetime.now().timestamp() - tmp_file.stat().st_mtime
+                if file_age > 3600:
+                    tmp_file.unlink()
+                    files_removed += 1
+                    print(f"   🗑️ Удален старый временный файл: {tmp_file}")
+            except Exception as e:
+                print(f"   ⚠️ Не удалось удалить {tmp_file}: {e}")
+        
+        if files_removed > 0:
+            print(f"✅ Удалено {files_removed} старых временных файлов")
+    
     def _save_transaction_state(self):
         try:
             state = {}
@@ -42,7 +69,7 @@ class DataManager:
                 state[source] = [str(f) for f in temp_files]
             
             with open(self._transaction_file, 'w', encoding='utf-8') as f:
-                json.dump(state, f, indent=2)
+                json.dump(state, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"⚠️ Ошибка сохранения состояния транзакций: {e}")
     
@@ -51,6 +78,7 @@ class DataManager:
             return
         
         try:
+            print("🔄 Восстановление после прерванных загрузок...")
             with open(self._transaction_file, 'r', encoding='utf-8') as f:
                 state = json.load(f)
             
@@ -62,20 +90,21 @@ class DataManager:
                         try:
                             temp_file.unlink()
                             files_removed += 1
-                            print(f"🧹 Удален недокаченный файл: {temp_file}")
+                            print(f"   🗑️ Удален недокаченный файл: {temp_file}")
                         except Exception as e:
-                            print(f"⚠️ Не удалось удалить {temp_file}: {e}")
+                            print(f"   ⚠️ Не удалось удалить {temp_file}: {e}")
 
             self._transaction_file.unlink(missing_ok=True)
             
             if files_removed > 0:
-                print(f"✅ Восстановление: удалено {files_removed} недокаченных файлов")
+                print(f"✅ Восстановление завершено: удалено {files_removed} недокаченных файлов")
                 
         except Exception as e:
             print(f"⚠️ Ошибка восстановления после прерывания: {e}")
             self._transaction_file.unlink(missing_ok=True)
     
     def _cleanup_all_downloads(self):
+        print("🧹 Очистка активных загрузок...")
         files_removed = 0
         
         for source, temp_files in list(self._active_downloads.items()):
@@ -84,15 +113,15 @@ class DataManager:
                     try:
                         temp_file.unlink()
                         files_removed += 1
-                        print(f"🧹 Удален временный файл: {temp_file}")
+                        print(f"   🗑️ Удален временный файл: {temp_file}")
                     except Exception as e:
-                        print(f"⚠️ Не удалось удалить {temp_file}: {e}")
+                        print(f"   ⚠️ Не удалось удалить {temp_file}: {e}")
                 self._active_downloads[source].remove(temp_file)
 
         self._transaction_file.unlink(missing_ok=True)
         
         if files_removed > 0:
-            print(f"🧹 Очистка: удалено {files_removed} временных файлов")
+            print(f"✅ Очистка завершена: удалено {files_removed} временных файлов")
     
     def _start_download_transaction(self, source_name: str, temp_file: Path):
         if source_name not in self._active_downloads:
@@ -111,11 +140,16 @@ class DataManager:
     def register_download_function(self, 
         source_name: str, 
         download_func: Callable,
-        config: Optional[Dict] = None
+        config: Optional[Dict] = None,
+        default_extension: str = '.csv'
     ):
         self.download_functions[source_name] = download_func
+        self.source_extensions[source_name] = default_extension
+        
         if config:
             self.sources_config[source_name] = config
+        
+        print(f"📝 Зарегистрирован источник '{source_name}' с расширением '{default_extension}'")
     
     def download_by_date(
         self, 
@@ -124,18 +158,22 @@ class DataManager:
         force_redownload: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
+        print(f"\n📥 ЗАГРУЗКА ДАННЫХ ЗА {target_date}")
         results = {}
-        
+
         sources_to_download = sources or list(self.download_functions.keys())
         
         for source_name in sources_to_download:
             if source_name not in self.download_functions:
+                print(f"⚠️ Источник '{source_name}' не зарегистрирован, пропускаем")
                 continue
             
             try:
                 download_func = self.download_functions[source_name]
 
-                filename = f"{source_name}_{target_date.strftime('%Y%m%d')}.csv"
+                extension = self.source_extensions.get(source_name, '.csv')
+
+                filename = f"{source_name}_{target_date.strftime('%Y%m%d')}{extension}"
                 final_path = self.get_download_path(source_name, target_date, filename)
 
                 if not force_redownload and final_path.exists():
@@ -145,19 +183,21 @@ class DataManager:
                                 'status': 'skipped',
                                 'result': str(final_path),
                                 'date': target_date,
-                                'message': 'Файл уже существует'
+                                'message': 'Файл уже существует',
+                                'size': final_path.stat().st_size
                             }
+                            print(f"   ⏭️ {source_name}: файл уже существует")
                             continue
                         else:
-                            print(f"⚠️ Файл {final_path} поврежден, перезагружаем...")
-                    except:
-                        print(f"⚠️ Не удалось прочитать файл {final_path}, перезагружаем...")
+                            print(f"   ⚠️ {source_name}: файл поврежден, перезагружаем...")
+                    except Exception as e:
+                        print(f"   ⚠️ {source_name}: не удалось проверить файл ({e}), перезагружаем...")
 
-                temp_path = final_path.with_suffix('.tmp')
+                temp_path = final_path.with_suffix(extension + '.tmp')
 
                 self._start_download_transaction(source_name, temp_path)
 
-                print(f"📥 Скачивание {source_name} за {target_date}...")
+                print(f"   📥 {source_name}: скачивание...")
                 result = download_func(
                     date=target_date,
                     data_manager=self,
@@ -166,18 +206,22 @@ class DataManager:
                     **kwargs
                 )
 
-                if result and temp_path.exists():
+                if result and isinstance(result, Path) and temp_path.exists():
+                    if temp_path.stat().st_size == 0:
+                        raise Exception("Временный файл пустой")
+
                     temp_path.rename(final_path)
 
                     self._complete_download_transaction(source_name, temp_path)
-                    
+
                     results[source_name] = {
                         'status': 'success',
                         'result': str(final_path),
                         'date': target_date,
-                        'size': final_path.stat().st_size if final_path.exists() else 0
+                        'size': final_path.stat().st_size
                     }
-                    print(f"✅ Успешно скачано: {final_path}")
+                    print(f"   ✅ {source_name}: успешно скачан ({final_path.stat().st_size / 1024:.1f} KB)")
+                    
                 else:
                     if temp_path.exists():
                         temp_path.unlink()
@@ -189,7 +233,7 @@ class DataManager:
                         'error': 'Не удалось скачать файл',
                         'date': target_date
                     }
-                    print(f"❌ Ошибка скачивания {source_name}")
+                    print(f"   ❌ {source_name}: ошибка скачивания")
                     
             except Exception as e:
                 if 'temp_path' in locals() and temp_path.exists():
@@ -201,7 +245,17 @@ class DataManager:
                     'error': str(e),
                     'date': target_date
                 }
-                print(f"❌ Ошибка при скачивании из {source_name}: {e}")
+                print(f"   ❌ {source_name}: ошибка - {e}")
+        
+        print(f"📊 ИТОГИ ЗАГРУЗКИ ЗА {target_date}:")
+        for source, result in results.items():
+            status = result.get('status', 'unknown')
+            if status == 'success':
+                print(f"   ✅ {source}: успешно")
+            elif status == 'skipped':
+                print(f"   ⏭️ {source}: пропущен")
+            elif status == 'error':
+                print(f"   ❌ {source}: ошибка")
         
         return results
     
@@ -210,18 +264,27 @@ class DataManager:
             return False
         
         try:
-
-            if file_path.stat().st_size == 0:
+            file_size = file_path.stat().st_size
+            if file_size == 0:
                 return False
 
-            if file_path.suffix.lower() == '.csv':
+            extension = file_path.suffix.lower()
+            
+            if extension == '.csv':
                 df = pd.read_csv(file_path, nrows=1)
-                if df.empty:
-                    return False
-            
-            return True
-            
-        except:
+                return not df.empty
+                
+            elif extension in ['.h5', '.hdf5', '.hdf']:
+                return file_size > 100
+                
+            elif extension in ['.nc', '.cdf']:
+                return file_size > 100
+                
+            else:
+                return file_size > 0
+                
+        except Exception as e:
+            print(f"⚠️ Ошибка проверки файла {file_path}: {e}")
             return False
     
     def get_download_path(
@@ -240,7 +303,8 @@ class DataManager:
         if filename:
             return date_path / filename
         else:
-            return date_path / f"{source_name}.csv"
+            extension = self.source_extensions.get(source_name, '.csv')
+            return date_path / f"{source_name}{extension}"
     
     def check_file_exists(
         self, 
@@ -250,3 +314,38 @@ class DataManager:
     ) -> bool:
         file_path = self.get_download_path(source_name, target_date, filename, create_dir=False)
         return file_path.exists() and self._is_file_valid(file_path, source_name)
+    
+    def list_downloaded_dates(self, source_name: str) -> List[date]:
+        dates = []
+        source_dir = self.base_download_dir / source_name
+        
+        if not source_dir.exists():
+            return dates
+
+        for item in source_dir.iterdir():
+            if item.is_dir():
+                try:
+                    date_obj = datetime.strptime(item.name, '%Y-%m-%d').date()
+                    dates.append(date_obj)
+                except ValueError:
+                    continue
+        
+        return sorted(dates)
+    
+    def get_available_sources(self) -> List[str]:
+        return list(self.download_functions.keys())
+    
+    def get_source_info(self, source_name: str) -> Dict:
+        if source_name not in self.download_functions:
+            raise ValueError(f"Источник '{source_name}' не зарегистрирован")
+        
+        info = {
+            'name': source_name,
+            'extension': self.source_extensions.get(source_name, '.csv'),
+            'has_config': source_name in self.sources_config
+        }
+        
+        if source_name in self.sources_config:
+            info['config'] = self.sources_config[source_name]
+        
+        return info
