@@ -6,6 +6,7 @@ import pandas as pd
 from sunpy.net import Fido, attrs as a
 from astropy.time import Time
 from DataManager import DataManager
+import os
 
 
 class FlareTracker:
@@ -489,27 +490,26 @@ class FlareTracker:
                             all_sources_success = False
                     
                     if all_sources_success:
-                        # Проверяем, что ВСЕ файлы действительно созданы
                         files_exist = True
+                        missing_sources = []
+                        
                         for source in available_sources:
                             if not self._check_source_has_data(source, flare_date):
-                                print(f"   ⚠️ Файл {source} не создан!")
+                                print(f"   ⚠️ Отсутствует файл для источника: {source}")
                                 files_exist = False
-                                break
+                                missing_sources.append(source)
                         
                         if files_exist:
-                            # Добавляем дату в список скачанных
+                            date_str = flare_date.strftime("%Y-%m-%d")
                             if date_str not in self.state["data_downloaded"]:
                                 self.state["data_downloaded"].append(date_str)
+                                self.state["data_downloaded"] = sorted(self.state["data_downloaded"])
+                                self._save_state(message=f"Дата {date_str} подтверждена как полностью скачанная")
                             
-                            # Сортируем и сохраняем состояние
-                            self.state["data_downloaded"] = sorted(self.state["data_downloaded"])
-                            self._save_state(message=f"Данные за {date_str} успешно скачаны")
-                            
+                            print(f"   ✅ Все файлы существуют → дата {date_str} подтверждена")
                             success_count += 1
-                            print(f"   ✅ Все файлы успешно созданы")
                         else:
-                            print(f"   ⚠️ Не все файлы созданы, пропускаем...")
+                            print(f"   ❌ Не хватает файлов от источников: {missing_sources}")
                             failed_dates.append(date_str)
                     else:
                         print(f"   ⚠️ Не все источники успешно скачаны")
@@ -553,33 +553,41 @@ class FlareTracker:
             'api_check': api_result
         }
 
-    def _check_source_has_data(self, source_name: str, target_date: date) -> bool:
-        """Проверяет, есть ли данные для источника за указанную дату"""
+    def _check_source_has_data(self, source_name, target_date, file_hint=None):
         try:
-            # Пробуем несколько возможных имен файлов
-            possible_filenames = [
-                f"{source_name}_{target_date.strftime('%Y%m%d')}.csv",
-                f"{source_name}.csv"
+            if file_hint:
+                p = Path(file_hint)
+                if p.exists() and p.stat().st_size > 0:
+                    return True
+
+            patterns = [
+                f"{source_name}_{target_date.strftime('%Y%m%d')}",
+                f"{source_name}-{target_date.strftime('%Y%m%d')}",
+                f"{target_date.strftime('%Y%m%d')}",
+                f"{source_name}"
             ]
-            
-            for filename in possible_filenames:
-                file_path = self.data_manager.get_download_path(
-                    source_name, 
-                    target_date, 
-                    filename,
-                    create_dir=False
-                )
-                
-                if file_path.exists():
-                    # Проверяем, что файл не пустой
-                    if file_path.stat().st_size > 0:
+
+            exts = ['.csv', '.h5', '.hdf5', '.dat', '.nc']
+
+            base_dir = self.data_manager.get_download_path(source_name, target_date, ".", create_dir=False)
+            if base_dir is None:
+                base_dir = self.data_manager.base_download_dir
+            base_dir = Path(base_dir)
+            if not base_dir.exists():
+                base_dir = base_dir.parent if base_dir.parent.exists() else Path(".")
+
+            for root, dirs, files in os.walk(base_dir):
+                for f in files:
+                    fp = Path(root) / f
+                    name = fp.name
+                    if any(p in name for p in patterns) and fp.suffix in exts and fp.stat().st_size > 0:
                         return True
-            
+
             return False
-        
-        except Exception as e:
-            print(f"⚠️ Ошибка проверки файла {source_name} за {target_date}: {e}")
+
+        except:
             return False
+
     
     def _flare_class_to_numeric(self, flare_class: str) -> float:
         if not isinstance(flare_class, str):
