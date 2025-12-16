@@ -1,6 +1,7 @@
 from DataManager import DataManager
 from FlareTracker import FlareTracker
 from DataPreprocessor import DataPreprocessor
+from IndexCalculator import IndexCalculator
 
 from datetime import date, timedelta
 from download_functions.euv import download_soho_sem
@@ -100,6 +101,29 @@ try:
         print("Ошибка: у tracker нет метода download_missed_data")
     preprocessor = DataPreprocessor(input_root=str(data_download_path))
     processed_files = preprocessor.process_all()
+
+    calculator = IndexCalculator()
+
+    flare_dates = tracker.state.get("flare_dates", [])
+
+    if not flare_dates:
+        print("Нет дат вспышек для обработки индексов.")
+    else:
+        for date_str in flare_dates:
+            try:
+                flare_date = date.fromisoformat(date_str)
+            except ValueError:
+                print(f"Некорректная дата в состоянии: {date_str}")
+                continue
+
+            folder_path = Path(data_download_path) / flare_date.strftime("%Y-%m-%d")
+
+            if not folder_path.exists():
+                print(f"Нет папки данных для даты {flare_date}, пропуск.")
+                continue
+
+            print(f"\n=== Индексы для даты вспышки {flare_date} ===")
+            calculator.process_single_date(flare_date)
 
     print("\nЗавершено успешно!")
     
