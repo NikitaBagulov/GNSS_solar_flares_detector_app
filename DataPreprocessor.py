@@ -17,8 +17,8 @@ class DataPreprocessor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         if data_products is None:
-            # self.data_products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
-            self.data_products = ["roti"]
+            self.data_products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+            # self.data_products = ["roti"]
         else:
             self.data_products = data_products
 
@@ -50,6 +50,14 @@ class DataPreprocessor:
         date_dir.mkdir(parents=True, exist_ok=True)
         return date_dir
 
+    def is_date_already_processed(self, study_date):
+        date_output_dir = self.get_output_dir_for_date(study_date)
+
+        for prod in self.data_products:
+            maps_file = date_output_dir / f"map_{prod}.h5"
+            if not maps_file.exists():
+                return False
+        return True
 
     def process_file(self, file_path):
         file_path = Path(file_path)
@@ -57,6 +65,11 @@ class DataPreprocessor:
             raise ValueError(f"Could not find {file_path}")
 
         study_date = self.extract_date_from_filename(file_path)
+        print(study_date)
+        if self.is_date_already_processed(study_date):
+            print(f"Data for {study_date.date()} already processed, skipping.")
+            return
+        
         date_output_dir = self.get_output_dir_for_date(study_date)
 
         sites_description = get_sites_attrs(file_path)
@@ -67,13 +80,12 @@ class DataPreprocessor:
             print("No sites found in file, skipping.")
             return
 
-        times = [study_date + timedelta(seconds=30*i) for i in range(240)]
+        times = [study_date + timedelta(seconds=30*i) for i in range(2880)]
         print(f"First 5 times: {times[:5]} ... Last 5 times: {times[-5:]}")
 
         print(f"Products to process: {self.data_products}")
         print(file_path)
         start_time = time.time()
-
         generator = get_map_chunked(
             sites_description,
             times,
@@ -82,13 +94,13 @@ class DataPreprocessor:
             roti_type='simple',
             chunk=120
         )
-
         for chunk_idx, data in enumerate(generator, 1):
+            
             if not data:
-                print(f"Chunk {chunk_idx} is empty: {data}")
+                print(f"Chunk {chunk_idx} is empty: {data}. Time {time.time() - start_time:.2f} seconds\n") 
                 continue
 
-            print(f"Chunk {chunk_idx} keys: {list(data.keys())}")
+            print(f"Chunk {chunk_idx}. Time {time.time() - start_time:.2f} seconds.")
             for prod in self.data_products:
                 maps_file = (date_output_dir / f"map_{prod}.h5").resolve()
                 maps_file.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +111,7 @@ class DataPreprocessor:
                 else:
                     print(f"Saved {maps_file.name} successfully")
 
-        print(f"Finished processing {file_path.name} in {time.time() - start_time:.2f} seconds\n")
+       
 
 
     def process_all(self):
