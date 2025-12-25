@@ -2,6 +2,8 @@ from DataManager import DataManager
 from FlareTracker import FlareTracker
 from DataPreprocessor import DataPreprocessor
 from IndexCalculator import IndexCalculator
+from PlotDataLoader import PlotDataLoader
+from Plotter import Plotter
 
 from datetime import date, timedelta
 from download_functions.euv import download_soho_sem
@@ -100,7 +102,7 @@ try:
     else:
         print("Ошибка: у tracker нет метода download_missed_data")
     preprocessor = DataPreprocessor(input_root=str(data_download_path))
-    processed_files = preprocessor.process_all()
+    processed_files = preprocessor.process_all(tracker)
 
     calculator = IndexCalculator()
 
@@ -123,9 +125,35 @@ try:
                 continue
 
             print(f"\n=== Индексы для даты вспышки {flare_date} ===")
-            calculator.process_single_date(flare_date)
+            calculator.process_single_date(flare_date, tracker=tracker)
 
     print("\nЗавершено успешно!")
+    loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
+    plot_data = loader.load_day(date_str)
+
+    # plot_data — это объект PlotData
+    print(f"Найдено {len(plot_data.timestamps)} таймстемпов")
+    print(f"Количество вспышек в дне: {len(plot_data.flare)}")
+
+    # Доступ к данным
+    print("Продуктовые значения для первого таймстемпа:", plot_data.product_values[0])
+    print("X-ray значение:", plot_data.xray_values[0])
+    print("EUV значение:", plot_data.euv_values[0])
+    print("Индекс day_night:", plot_data.day_night_index[0])
+    print("Индекс gsflai:", plot_data.gsflai_index[0])
+    print("Индекс isfai:", plot_data.isfai_index[0])
+
+    # Доступ к информации о первой вспышке дня
+    first_flare = plot_data.flare[0]
+    print("Первая вспышка:")
+    print(f"  ID: {first_flare.flare_id}")
+    print(f"  Начало: {first_flare.start_time}")
+    print(f"  Пик: {first_flare.peak_time}")
+    print(f"  Конец: {first_flare.end_time}")
+    print(f"  Локация: {first_flare.location}")
+
+    plotter = Plotter(plot_data)
+    plotter.plot_all()
     
 except Exception as e:
     print(f"\nПроизошла ошибка: {e}")

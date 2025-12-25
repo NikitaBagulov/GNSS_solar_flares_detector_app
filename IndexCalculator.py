@@ -95,17 +95,26 @@ class IndexCalculator:
             self.process_single_date(date)
 
     # оставляем старую функцию, но делаем её внутренней
-    def process_single_date(self, date: datetime.date):
+    def process_single_date(self, date: datetime.date, tracker=None):
         products = self.detect_products(date)
-        print(products)
         if not products:
             print(f"Нет файлов данных для даты {date}")
             return
 
+        folder_path = self.base_folder / date.strftime("%Y-%m-%d")
+
+        indices_for_date = {}  # собираем все пути к индексам
+
         for product_type in products:
             print(f"\nОбработка продукта: {product_type}")
-            folder_path = self.base_folder / date.strftime("%Y-%m-%d")
             file_path = folder_path / f"map_{product_type}.h5"
+            output_file = folder_path / f"indices_{product_type}.csv"
+
+            # Проверка существующего CSV
+            if output_file.exists():
+                print(f"Индексы для {product_type} уже существуют, пропускаем вычисление.")
+                indices_for_date[product_type] = output_file
+                continue
 
             try:
                 data_dict = retrieve_data(file_path)
@@ -120,7 +129,6 @@ class IndexCalculator:
                 indices["time"] = time_key
                 all_results.append(indices)
 
-            output_file = folder_path / f"indices_{product_type}.csv"
             if all_results:
                 fieldnames = ["time"] + list(self.registry.index_functions.keys())
                 with open(output_file, "w", newline="", encoding="utf-8") as f:
@@ -128,8 +136,18 @@ class IndexCalculator:
                     writer.writeheader()
                     writer.writerows(all_results)
                 print(f"Индексы сохранены в {output_file}")
+                indices_for_date[product_type] = output_file
             else:
                 print(f"Нет данных для сохранения для продукта {product_type}")
+
+        # Регистрируем все файлы разом
+        if tracker is not None and indices_for_date:
+            tracker.register_files_for_date(
+                date,
+                {"indices": indices_for_date}
+            )
+
+
 
 
 

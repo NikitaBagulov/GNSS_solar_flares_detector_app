@@ -59,13 +59,27 @@ class DataPreprocessor:
                 return False
         return True
 
-    def process_file(self, file_path):
+    def process_file(self, file_path, tracker):
         file_path = Path(file_path)
         if not file_path.exists():
             raise ValueError(f"Could not find {file_path}")
 
         study_date = self.extract_date_from_filename(file_path)
-        print(study_date)
+        date_output_dir = self.get_output_dir_for_date(study_date)
+
+        # Регистрируем существующие файлы
+        existing_files = {}
+        for prod in self.data_products:
+            maps_file = date_output_dir / f"map_{prod}.h5"
+            if maps_file.exists():
+                existing_files[prod] = maps_file
+
+        if existing_files and tracker is not None:
+            tracker.register_files_for_date(
+                study_date.date(),
+                {"maps": existing_files}
+            )
+
         if self.is_date_already_processed(study_date):
             print(f"Data for {study_date.date()} already processed, skipping.")
             return
@@ -110,16 +124,26 @@ class DataPreprocessor:
                     print(f"Failed to save {maps_file.name}: {e}")
                 else:
                     print(f"Saved {maps_file.name} successfully")
+        if tracker is not None:
+            tracker.register_files_for_date(
+            study_date.date(),
+            {
+                "maps": {
+                    prod: date_output_dir / f"map_{prod}.h5"
+                    for prod in self.data_products
+                    }
+                }
+            )
 
        
 
 
-    def process_all(self):
+    def process_all(self, tracker=None):
         h5_files = self.get_h5_files()
         print(f"Found {len(h5_files)} HDF5 files to process.\n")
 
         for file_idx, file_path in enumerate(h5_files, 1):
             print(f"[{file_idx}/{len(h5_files)}] {file_path.name}")
-            self.process_file(file_path)
+            self.process_file(file_path, tracker)
 
         print("All files processed successfully!")

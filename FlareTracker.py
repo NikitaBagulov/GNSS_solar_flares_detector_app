@@ -80,9 +80,50 @@ class FlareTracker:
             "last_update_date": None,
             "flare_dates": [],
             "total_flares": 0,
-            "data_downloaded": []
+            "data_downloaded": [],
+            "files_by_date": {}
         }
     
+    def register_files_for_date(self, date: date, files: dict):
+        """
+        Регистрирует файлы, связанные с конкретной датой вспышек.
+        Добавляет данные в state и сразу сохраняет.
+        """
+        date_str = date.strftime("%Y-%m-%d")
+
+        if "files_by_date" not in self.state:
+            self.state["files_by_date"] = {}
+
+        if date_str not in self.state["files_by_date"]:
+            self.state["files_by_date"][date_str] = {}
+
+        # Преобразуем все пути в строки
+        for key, value in files.items():
+            if isinstance(value, Path):
+                self.state["files_by_date"][date_str][key] = str(value)
+            elif isinstance(value, list):
+                self.state["files_by_date"][date_str][key] = [str(p) if isinstance(p, Path) else p for p in value]
+            elif isinstance(value, dict):
+                self.state["files_by_date"][date_str][key] = {
+                    k: str(v) if isinstance(v, Path) else v for k, v in value.items()
+                }
+            else:
+                # Если передали строку или другой тип
+                self.state["files_by_date"][date_str][key] = str(value)
+
+        # Отладка: выводим, что зарегистрировано
+        print(f"\n🛠️ [DEBUG] Файлы зарегистрированы для {date_str}:")
+        for k, v in self.state["files_by_date"][date_str].items():
+            print(f"   {k}: {v}")
+
+        # Сохраняем состояние сразу после регистрации
+        self._save_state(message=f"Файлы зарегистрированы для {date_str} (DEBUG)")
+
+
+    def get_files_for_flare_date(self, flare_date: date) -> dict:
+        date_str = flare_date.strftime("%Y-%m-%d")
+        return self.state.get("files_by_date", {}).get(date_str, {})
+
     def _sync_state_with_files(self):
         """Синхронизирует состояние с реально существующими файлами"""
         print(f"\n🔍 СИНХРОНИЗАЦИЯ СОСТОЯНИЯ С ФАЙЛАМИ...")
@@ -470,7 +511,7 @@ class FlareTracker:
             
             try:
                 # Скачиваем все типы данных через DataManager
-                download_result = self.data_manager.download_by_date(target_date=flare_date)
+                download_result = self.data_manager.download_by_date(target_date=flare_date, tracker=self)
                 
                 if download_result:
                     # Проверяем результаты для каждого источника
