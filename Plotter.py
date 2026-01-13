@@ -48,14 +48,14 @@ class Plotter:
 
     def plot_all(self):
         for i, map_time in enumerate(self.data.timestamps):
-            fig = plt.figure(figsize=(15, 9), constrained_layout=False)
+            fig = plt.figure(figsize=(15, 11), constrained_layout=False)
             gs = fig.add_gridspec(
                 3,
                 3,
-                height_ratios=[6, 2, 2],
+                height_ratios=[7, 2.5, 2.5],
                 width_ratios=[3.4, 0.15, 1.4],
                 wspace=0.25,
-                hspace=0.35,
+                hspace=0.45,
             )
 
             ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
@@ -76,7 +76,7 @@ class Plotter:
             if flare:
                 title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
             fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
-            fig.subplots_adjust(top=0.9, bottom=0.07)
+            fig.subplots_adjust(top=0.9, bottom=0.08)
 
             output_path = self._build_output_path(map_time, flare)
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +113,11 @@ class Plotter:
         ax.set_ylabel("Latitude (deg)")
         if map_time is None:
             map_time = self.data.timestamps[time_index]
-        ax.set_title(f"{product_name} @ {map_time:%Y-%m-%d %H:%M UTC}", fontsize=14, pad=6)
+        ax.set_title(
+            f"{self._format_product_name(product_name)} @ {map_time:%Y-%m-%d %H:%M UTC}",
+            fontsize=14,
+            pad=6,
+        )
         plt.colorbar(sc, cax=cbar_ax, label=product_name)
         if map_time:
             self._plot_terminator(ax, map_time)
@@ -193,7 +197,7 @@ class Plotter:
             )
 
         if flare:
-            self._plot_flare_markers(ax, flare)
+            self._plot_flare_peak(ax, flare)
 
         ax.set_ylabel("Normalized Index")
         ax.set_title("Indices (Normalized)")
@@ -271,30 +275,29 @@ class Plotter:
             return None, None
         return 0.5 + x_norm * 0.45, 0.5 + y_norm * 0.45
 
-    def _plot_flare_markers(self, ax, flare):
-        if flare.start_time and flare.end_time:
-            ax.axvspan(
-                self._ensure_naive_time(flare.start_time),
-                self._ensure_naive_time(flare.end_time),
-                color="#f8c471",
-                alpha=0.18,
-                zorder=0,
-            )
-        markers = [
-            ("Start", flare.start_time, "#2ecc71", "-"),
-            ("Peak", flare.peak_time, "#f39c12", "--"),
-            ("End", flare.end_time, "#e74c3c", "-."),
-        ]
-        for label, time_value, color, style in markers:
-            if not time_value:
-                continue
-            ax.axvline(
-                self._ensure_naive_time(time_value),
-                color=color,
-                linestyle=style,
-                linewidth=1.2,
-                label="_nolegend_",
-            )
+    def _plot_flare_peak(self, ax, flare):
+        if not flare.peak_time:
+            return
+        peak_time = self._ensure_naive_time(flare.peak_time)
+        ax.axvline(
+            peak_time,
+            color="#e74c3c",
+            linestyle="--",
+            linewidth=1.4,
+            label="_nolegend_",
+        )
+        ax.annotate(
+            "Peak",
+            xy=(peak_time, 0.98),
+            xycoords=("data", "axes fraction"),
+            xytext=(6, -4),
+            textcoords="offset points",
+            fontsize=10,
+            color="#e74c3c",
+            ha="left",
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
+        )
 
     def _plot_terminator(self, ax, time_value=None, color="black", alpha=0.25):
         lat, lon = self._get_latlon(time_value)
@@ -372,6 +375,15 @@ class Plotter:
         subsolar_lon = (subsolar_lon + 180.0) % 360.0 - 180.0
 
         return subsolar_lat, subsolar_lon
+
+    def _format_product_name(self, product_name):
+        mapping = {
+            "dtec_2_10": "TEC variations 2–10 minutes",
+            "dtec_10_20": "TEC variations 10–20 minutes",
+            "dtec_20_60": "TEC variations 20–60 minutes",
+            "roti": "ROTI",
+        }
+        return mapping.get(product_name, product_name)
 
     def _select_nearest_flare(self, map_time):
         if not self.data.flare:
