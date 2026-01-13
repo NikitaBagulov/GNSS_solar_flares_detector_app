@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 from datetime import timedelta
 import json
@@ -7,14 +7,16 @@ import csv
 import numpy as np
 import pandas as pd
 import h5py
+import matplotlib.image as mpimg
 
 from PlotData import PlotData, FlareData
 
 
 class PlotDataLoader:
-    def __init__(self, flares_file: str, state_file: str):
+    def __init__(self, flares_file: str, state_file: str, sun_image_path: Optional[str] = None):
         self.flares_file = Path(flares_file)
         self.state_file = Path(state_file)
+        self.sun_image_path = Path(sun_image_path) if sun_image_path else None
 
         # CSV со вспышками
         self.flares_df = pd.read_csv(
@@ -25,6 +27,7 @@ class PlotDataLoader:
         # JSON с путями к данным
         with open(self.state_file, "r", encoding="utf-8") as f:
             self.state = json.load(f)
+        self.sun_image = self._load_sun_image()
 
     # ------------------------------------------------------------------
     # Основной метод
@@ -124,7 +127,8 @@ class PlotDataLoader:
             gsflai_index=gsflai_index,
             isfai_index=isfai_index,
 
-            flare=flare_list
+            flare=flare_list,
+            sun_image=self.sun_image
         )
 
     # ------------------------------------------------------------------
@@ -190,3 +194,19 @@ class PlotDataLoader:
 
         return times[mask].tolist(), df[value_col].tolist()
 
+    def _load_sun_image(self):
+        path = None
+        if self.sun_image_path and self.sun_image_path.exists():
+            path = self.sun_image_path
+        elif self.state.get("sun_image_path"):
+            candidate = Path(self.state["sun_image_path"])
+            if candidate.exists():
+                path = candidate
+
+        if not path:
+            return None
+
+        try:
+            return mpimg.imread(path)
+        except Exception:
+            return None

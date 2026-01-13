@@ -27,6 +27,6 @@ class PlotData:
     day_night_index: List[float] = field(default_factory=list)
     gsflai_index: List[float] = field(default_factory=list)
     isfai_index: List[float] = field(default_factory=list)
-    
-    flare: Optional[FlareData] = None 
 
+    flare: List[FlareData] = field(default_factory=list)
+    sun_image: Optional[object] = None
