@@ -51,20 +51,19 @@ class Plotter:
             fig = plt.figure(figsize=(15, 11), constrained_layout=False)
             gs = fig.add_gridspec(
                 3,
-                3,
+                2,
                 height_ratios=[7, 2.5, 2.5],
-                width_ratios=[3.4, 0.15, 1.4],
+                width_ratios=[3.6, 1.4],
                 wspace=0.25,
                 hspace=0.45,
             )
 
             ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
-            ax_cbar = fig.add_subplot(gs[0, 1])
-            ax_sun = fig.add_subplot(gs[0, 2])
+            ax_sun = fig.add_subplot(gs[0, 1])
             ax_indices = fig.add_subplot(gs[1, :])
             ax_solar = fig.add_subplot(gs[2, :])
 
-            self._plot_map(ax_map, ax_cbar, i, map_time=map_time)
+            self._plot_map(ax_map, i, map_time=map_time)
             flare = self._select_nearest_flare(map_time)
             self._plot_sun(ax_sun, flare)
             self._plot_indices(ax_indices, map_time, flare)
@@ -83,15 +82,13 @@ class Plotter:
             fig.savefig(output_path, dpi=200, bbox_inches="tight")
             plt.close(fig)
 
-    def _plot_map(self, ax, cbar_ax, time_index, product_name="dtec_2_10", map_time=None):
+    def _plot_map(self, ax, time_index, product_name="dtec_2_10", map_time=None):
         if not self.data.product_values or time_index >= len(self.data.product_values):
             ax.set_title("No map data or invalid index")
-            cbar_ax.set_axis_off()
             return
         points = self.data.product_values[time_index].get(product_name, np.array([]))
         if points.size == 0:
             ax.set_title(f"No data for product {product_name}")
-            cbar_ax.set_axis_off()
             return
 
         all_lats, all_lons, all_vals = [], [], []
@@ -118,7 +115,8 @@ class Plotter:
             fontsize=14,
             pad=6,
         )
-        plt.colorbar(sc, cax=cbar_ax, label=product_name)
+        cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
+        plt.colorbar(sc, cax=cbar_ax, label=self._format_product_name(product_name))
         if map_time:
             self._plot_terminator(ax, map_time)
 
@@ -197,7 +195,7 @@ class Plotter:
             )
 
         if flare:
-            self._plot_flare_peak(ax, flare)
+            self._plot_flare_markers(ax, flare)
 
         ax.set_ylabel("Normalized Index")
         ax.set_title("Indices (Normalized)")
@@ -275,7 +273,15 @@ class Plotter:
             return None, None
         return 0.5 + x_norm * 0.45, 0.5 + y_norm * 0.45
 
-    def _plot_flare_peak(self, ax, flare):
+    def _plot_flare_markers(self, ax, flare):
+        if flare.start_time and flare.end_time:
+            ax.axvspan(
+                self._ensure_naive_time(flare.start_time),
+                self._ensure_naive_time(flare.end_time),
+                color="#f8c471",
+                alpha=0.18,
+                zorder=0,
+            )
         if not flare.peak_time:
             return
         peak_time = self._ensure_naive_time(flare.peak_time)
