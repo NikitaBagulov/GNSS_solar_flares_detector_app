@@ -104,7 +104,9 @@ class Plotter:
             transform=ccrs.PlateCarree()
         )
         ax.coastlines()
-        ax.gridlines(draw_labels=True, linewidth=0.2, color="gray", alpha=0.6, linestyle="--")
+        gridlines = ax.gridlines(draw_labels=True, linewidth=0.4, color="gray", alpha=0.6, linestyle="--")
+        gridlines.top_labels = False
+        gridlines.right_labels = False
         ax.set_extent([-180, 180, -90, 90], crs=ccrs.PlateCarree())
         ax.set_xlabel("Longitude (deg)")
         ax.set_ylabel("Latitude (deg)")
@@ -278,8 +280,8 @@ class Plotter:
             ax.axvspan(
                 self._ensure_naive_time(flare.start_time),
                 self._ensure_naive_time(flare.end_time),
-                color="#f8c471",
-                alpha=0.18,
+                color="#f39c12",
+                alpha=0.28,
                 zorder=0,
             )
         if not flare.peak_time:
