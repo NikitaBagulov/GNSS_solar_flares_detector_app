@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -8,6 +8,7 @@ import cartopy.crs as ccrs
 import matplotlib.colors as mcolors
 import numpy as np
 import matplotlib.patches as patches
+import math
 
 DEFAULT_PARAMS = {
     'font.size': 18,
@@ -63,7 +64,7 @@ class Plotter:
             ax_indices = fig.add_subplot(gs[1, :])
             ax_solar = fig.add_subplot(gs[2, :])
 
-            self._plot_map(ax_map, ax_cbar, i)
+            self._plot_map(ax_map, ax_cbar, i, map_time=map_time)
             flare = self._select_nearest_flare(map_time)
             self._plot_sun(ax_sun, flare)
             self._plot_indices(ax_indices, map_time, flare)
@@ -74,14 +75,15 @@ class Plotter:
             title = f"GNSS Solar Flare Analysis — {map_time:%Y-%m-%d %H:%M UTC}"
             if flare:
                 title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
-            fig.suptitle(title, fontsize=18, fontweight="bold", y=0.98)
+            fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
+            fig.subplots_adjust(top=0.9, bottom=0.07)
 
             output_path = self._build_output_path(map_time, flare)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(output_path, dpi=200, bbox_inches="tight")
             plt.close(fig)
 
-    def _plot_map(self, ax, cbar_ax, time_index, product_name="dtec_2_10"):
+    def _plot_map(self, ax, cbar_ax, time_index, product_name="dtec_2_10", map_time=None):
         if not self.data.product_values or time_index >= len(self.data.product_values):
             ax.set_title("No map data or invalid index")
             cbar_ax.set_axis_off()
@@ -109,8 +111,12 @@ class Plotter:
         ax.set_extent([-180, 180, -90, 90], crs=ccrs.PlateCarree())
         ax.set_xlabel("Longitude (deg)")
         ax.set_ylabel("Latitude (deg)")
-        ax.set_title(f"{product_name} Map @ {self.data.timestamps[time_index]}")
+        if map_time is None:
+            map_time = self.data.timestamps[time_index]
+        ax.set_title(f"{product_name} @ {map_time:%Y-%m-%d %H:%M UTC}", fontsize=14, pad=6)
         plt.colorbar(sc, cax=cbar_ax, label=product_name)
+        if map_time:
+            self._plot_terminator(ax, map_time)
 
     def _plot_sun(self, ax, flare):
         ax.set_title("Solar Disk")
@@ -178,14 +184,20 @@ class Plotter:
                 ax.plot(times, norm_values, label=label, color=color)
 
         if highlight_time:
-            ax.axvline(self._ensure_naive_time(highlight_time), color='red', linestyle='--', label='Current Time')
+            ax.axvline(
+                self._ensure_naive_time(highlight_time),
+                color='red',
+                linestyle='--',
+                linewidth=1,
+                label="_nolegend_",
+            )
 
         if flare:
             self._plot_flare_markers(ax, flare)
 
         ax.set_ylabel("Normalized Index")
         ax.set_title("Indices (Normalized)")
-        ax.legend(ncol=2, loc="upper left", frameon=True)
+        ax.legend(ncol=3, loc="upper left", frameon=True, fontsize=10)
         ax.grid(True)
         ax.set_ylim(0, 1)  # Все линии в одной высоте
 
@@ -203,12 +215,18 @@ class Plotter:
                 ax.plot(naive_times, norm_values, label=label, color=color)
 
         if highlight_time:
-            ax.axvline(self._ensure_naive_time(highlight_time), color='red', linestyle='--', label='Current Time')
+            ax.axvline(
+                self._ensure_naive_time(highlight_time),
+                color='red',
+                linestyle='--',
+                linewidth=1,
+                label="_nolegend_",
+            )
 
         ax.set_ylabel("Normalized Flux")
         ax.set_title("Solar Activity (Normalized)")
         ax.grid(True)
-        ax.legend(ncol=2, loc="upper left", frameon=True)
+        ax.legend(ncol=2, loc="upper left", frameon=True, fontsize=10)
         ax.set_ylim(0, 1)
 
 
@@ -254,9 +272,17 @@ class Plotter:
         return 0.5 + x_norm * 0.45, 0.5 + y_norm * 0.45
 
     def _plot_flare_markers(self, ax, flare):
+        if flare.start_time and flare.end_time:
+            ax.axvspan(
+                self._ensure_naive_time(flare.start_time),
+                self._ensure_naive_time(flare.end_time),
+                color="#f8c471",
+                alpha=0.18,
+                zorder=0,
+            )
         markers = [
             ("Start", flare.start_time, "#2ecc71", "-"),
-            ("Peak", flare.peak_time, "#f1c40f", "--"),
+            ("Peak", flare.peak_time, "#f39c12", "--"),
             ("End", flare.end_time, "#e74c3c", "-."),
         ]
         for label, time_value, color, style in markers:
@@ -267,8 +293,85 @@ class Plotter:
                 color=color,
                 linestyle=style,
                 linewidth=1.2,
-                label=f"{label} Time",
+                label="_nolegend_",
             )
+
+    def _plot_terminator(self, ax, time_value=None, color="black", alpha=0.25):
+        lat, lon = self._get_latlon(time_value)
+        pole_lng = lon
+        if lat > 0:
+            pole_lat = -90 + lat
+            central_rot_lng = 180
+        else:
+            pole_lat = 90 + lat
+            central_rot_lng = 0
+
+        rotated_pole = ccrs.RotatedPole(
+            pole_latitude=pole_lat,
+            pole_longitude=pole_lng,
+            central_rotated_longitude=central_rot_lng,
+        )
+
+        x = [-90] * 181 + [90] * 181 + [-90]
+        y = list(range(-90, 91)) + list(range(90, -91, -1)) + [-90]
+        ax.fill(x, y, transform=rotated_pole, color=color, alpha=alpha, zorder=3)
+
+    def _get_latlon(self, time_value=None):
+        if time_value is None:
+            time_value = datetime.now(timezone.utc)
+        time_value = self._to_utc_datetime(time_value)
+        sub_lat, sub_lon = self._subsolar_point(time_value)
+        return sub_lat, sub_lon
+
+    def _to_utc_datetime(self, dt_value):
+        if dt_value.tzinfo is None:
+            return dt_value.replace(tzinfo=timezone.utc)
+        return dt_value.astimezone(timezone.utc)
+
+    def _subsolar_point(self, dt_value):
+        year, month = dt_value.year, dt_value.month
+        day = dt_value.day + (dt_value.hour + (dt_value.minute + dt_value.second / 60.0) / 60.0) / 24.0
+        if month <= 2:
+            year -= 1
+            month += 12
+        A = year // 100
+        B = 2 - A + (A // 4)
+        jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
+
+        T = (jd - 2451545.0) / 36525.0
+        L0 = (280.46646 + 36000.76983 * T + 0.0003032 * T * T) % 360.0
+        M = (357.52911 + 35999.05029 * T - 0.0001537 * T * T) % 360.0
+
+        Mrad = math.radians(M)
+        C = (
+            (1.914602 - 0.004817 * T - 0.000014 * T * T) * math.sin(Mrad)
+            + (0.019993 - 0.000101 * T) * math.sin(2 * Mrad)
+            + 0.000289 * math.sin(3 * Mrad)
+        )
+        true_long = L0 + C
+
+        eps0 = 23.439291 - 0.0130042 * T
+        eps = math.radians(eps0)
+        lam = math.radians(true_long)
+
+        dec = math.asin(math.sin(eps) * math.sin(lam))
+        subsolar_lat = math.degrees(dec)
+
+        ra = math.atan2(math.cos(eps) * math.sin(lam), math.cos(lam))
+        ra_deg = (math.degrees(ra) + 360.0) % 360.0
+
+        gmst = (
+            280.46061837
+            + 360.98564736629 * (jd - 2451545.0)
+            + 0.000387933 * T * T
+            - (T * T * T) / 38710000.0
+        ) % 360.0
+
+        gha = (gmst - ra_deg) % 360.0
+        subsolar_lon = (180.0 - gha)
+        subsolar_lon = (subsolar_lon + 180.0) % 360.0 - 180.0
+
+        return subsolar_lat, subsolar_lon
 
     def _select_nearest_flare(self, map_time):
         if not self.data.flare:
