@@ -47,18 +47,26 @@ class Plotter:
 
     def plot_all(self):
         for i, map_time in enumerate(self.data.timestamps):
-            fig = plt.figure(figsize=(14, 9), constrained_layout=True)
-            gs = fig.add_gridspec(3, 2, height_ratios=[6, 2, 2], width_ratios=[3.2, 1.4])
+            fig = plt.figure(figsize=(15, 9), constrained_layout=False)
+            gs = fig.add_gridspec(
+                3,
+                3,
+                height_ratios=[6, 2, 2],
+                width_ratios=[3.4, 0.15, 1.4],
+                wspace=0.25,
+                hspace=0.35,
+            )
 
             ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
-            ax_sun = fig.add_subplot(gs[0, 1])
+            ax_cbar = fig.add_subplot(gs[0, 1])
+            ax_sun = fig.add_subplot(gs[0, 2])
             ax_indices = fig.add_subplot(gs[1, :])
             ax_solar = fig.add_subplot(gs[2, :])
 
-            self._plot_map(ax_map, i)
+            self._plot_map(ax_map, ax_cbar, i)
             flare = self._select_nearest_flare(map_time)
             self._plot_sun(ax_sun, flare)
-            self._plot_indices(ax_indices, map_time)
+            self._plot_indices(ax_indices, map_time, flare)
             self._plot_solar(ax_solar, map_time)
             self._format_time_axis(ax_indices)
             self._format_time_axis(ax_solar)
@@ -66,21 +74,22 @@ class Plotter:
             title = f"GNSS Solar Flare Analysis — {map_time:%Y-%m-%d %H:%M UTC}"
             if flare:
                 title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
-            fig.suptitle(title, fontsize=18, fontweight="bold")
+            fig.suptitle(title, fontsize=18, fontweight="bold", y=0.98)
 
             output_path = self._build_output_path(map_time, flare)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(output_path, dpi=200, bbox_inches="tight")
             plt.close(fig)
 
-    def _plot_map(self, ax, time_index, product_name="dtec_2_10"):
+    def _plot_map(self, ax, cbar_ax, time_index, product_name="dtec_2_10"):
         if not self.data.product_values or time_index >= len(self.data.product_values):
             ax.set_title("No map data or invalid index")
+            cbar_ax.set_axis_off()
             return
-        print(time_index)
         points = self.data.product_values[time_index].get(product_name, np.array([]))
         if points.size == 0:
             ax.set_title(f"No data for product {product_name}")
+            cbar_ax.set_axis_off()
             return
 
         all_lats, all_lons, all_vals = [], [], []
@@ -101,7 +110,7 @@ class Plotter:
         ax.set_xlabel("Longitude (deg)")
         ax.set_ylabel("Latitude (deg)")
         ax.set_title(f"{product_name} Map @ {self.data.timestamps[time_index]}")
-        plt.colorbar(sc, ax=ax, label=product_name, shrink=0.8, pad=0.02)
+        plt.colorbar(sc, cax=cbar_ax, label=product_name)
 
     def _plot_sun(self, ax, flare):
         ax.set_title("Solar Disk")
@@ -153,7 +162,7 @@ class Plotter:
                     bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6),
                 )
 
-    def _plot_indices(self, ax, highlight_time=None):
+    def _plot_indices(self, ax, highlight_time=None, flare=None):
         times = self._to_naive(self.data.index_times)
         data_lists = [
             ("Day/Night", self.data.day_night_index, "orange"),
@@ -171,9 +180,12 @@ class Plotter:
         if highlight_time:
             ax.axvline(self._ensure_naive_time(highlight_time), color='red', linestyle='--', label='Current Time')
 
+        if flare:
+            self._plot_flare_markers(ax, flare)
+
         ax.set_ylabel("Normalized Index")
         ax.set_title("Indices (Normalized)")
-        ax.legend()
+        ax.legend(ncol=2, loc="upper left", frameon=True)
         ax.grid(True)
         ax.set_ylim(0, 1)  # Все линии в одной высоте
 
@@ -196,7 +208,7 @@ class Plotter:
         ax.set_ylabel("Normalized Flux")
         ax.set_title("Solar Activity (Normalized)")
         ax.grid(True)
-        ax.legend()
+        ax.legend(ncol=2, loc="upper left", frameon=True)
         ax.set_ylim(0, 1)
 
 
@@ -240,6 +252,23 @@ class Plotter:
         if abs(x_norm) > 1.1 or abs(y_norm) > 1.1:
             return None, None
         return 0.5 + x_norm * 0.45, 0.5 + y_norm * 0.45
+
+    def _plot_flare_markers(self, ax, flare):
+        markers = [
+            ("Start", flare.start_time, "#2ecc71", "-"),
+            ("Peak", flare.peak_time, "#f1c40f", "--"),
+            ("End", flare.end_time, "#e74c3c", "-."),
+        ]
+        for label, time_value, color, style in markers:
+            if not time_value:
+                continue
+            ax.axvline(
+                self._ensure_naive_time(time_value),
+                color=color,
+                linestyle=style,
+                linewidth=1.2,
+                label=f"{label} Time",
+            )
 
     def _select_nearest_flare(self, map_time):
         if not self.data.flare:
