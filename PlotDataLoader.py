@@ -166,7 +166,20 @@ class PlotDataLoader:
                     if start_interval <= time <= end_interval:
                         timestamps.add(time)
                         # сохраняем все точки
-                        product_data[prod_name][time] = f["data"][str_time][:]  
+                        product_data[prod_name][time] = f["data"][str_time][:]
+
+        if not timestamps and maps_paths:
+            for prod_name, path in maps_paths.items():
+                path = Path(path)
+                if not path.exists():
+                    continue
+
+                product_data.setdefault(prod_name, {})
+                with h5py.File(path, "r") as f:
+                    for str_time in f["data"]:
+                        time = pd.to_datetime(str_time, utc=True)
+                        timestamps.add(time)
+                        product_data[prod_name][time] = f["data"][str_time][:]
 
         timestamps = sorted(timestamps)
 
@@ -188,6 +201,9 @@ class PlotDataLoader:
         df["time"] = pd.to_datetime(df["time"], utc=True)
         mask = (df["time"] >= start_interval) & (df["time"] <= end_interval)
         df = df[mask]
+        if df.empty:
+            df = pd.read_csv(path)
+            df["time"] = pd.to_datetime(df["time"], utc=True)
 
         return df["time"].tolist(), df[column_name].tolist()
 
@@ -201,6 +217,11 @@ class PlotDataLoader:
 
         mask = (times >= start_interval) & (times <= end_interval)
         df = df[mask]
+
+        if df.empty:
+            df = pd.read_csv(path)
+            times = pd.to_datetime(df.iloc[:, 0], utc=True)
+            return times.tolist(), df[value_col].tolist()
 
         return times[mask].tolist(), df[value_col].tolist()
 
