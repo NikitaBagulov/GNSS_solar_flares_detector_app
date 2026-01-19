@@ -1,8 +1,6 @@
 from typing import List, Optional
 from pathlib import Path
-from datetime import timedelta
 import json
-import csv
 
 import numpy as np
 import pandas as pd
@@ -10,6 +8,7 @@ import h5py
 import matplotlib.image as mpimg
 
 from PlotData import PlotData, FlareData
+from flare_utils import build_flare_key, get_flare_window
 
 
 class PlotDataLoader:
@@ -23,6 +22,15 @@ class PlotDataLoader:
             self.flares_file,
             parse_dates=["start_time", "peak_time", "end_time"]
         )
+        self.flares_df["flare_key"] = self.flares_df.apply(
+            lambda row: build_flare_key(
+                row.start_time,
+                row.peak_time,
+                row.end_time,
+                row.get("class"),
+            ),
+            axis=1,
+        )
 
         # JSON с путями к данным
         with open(self.state_file, "r", encoding="utf-8") as f:
@@ -33,27 +41,31 @@ class PlotDataLoader:
     # Основной метод
     # ------------------------------------------------------------------
 
-    def load_day(self, date_str: str) -> PlotData | None:
-        # 1️⃣ Вспышки за день
-        day_flares = self.flares_df[
-            self.flares_df["start_time"].dt.strftime("%Y-%m-%d") == date_str
-        ]
+    def load_flare(self, flare_key: str) -> PlotData | None:
+        flare_row = self.flares_df[self.flares_df["flare_key"] == flare_key]
 
-        if day_flares.empty:
+        if flare_row.empty:
             return None
 
-        # 2️⃣ Общий интервал
-        start_interval = day_flares["start_time"].min() - timedelta(minutes=15)
-        end_interval   = day_flares["end_time"].max() + timedelta(minutes=15)
-        
-        start_interval = pd.to_datetime(start_interval).tz_localize('UTC')
-        end_interval = pd.to_datetime(end_interval).tz_localize('UTC')
+        flare_row = flare_row.iloc[0]
 
-        files_for_date = self.state["files_by_date"].get(date_str, {})
-        maps_paths    = files_for_date.get("maps", {})
-        indices_paths = files_for_date.get("indices", {})
-        xray_path     = files_for_date.get("goes_xray")
-        euv_path      = files_for_date.get("soho_sem")
+        start_interval, end_interval = get_flare_window(
+            flare_row.start_time,
+            flare_row.end_time,
+        )
+
+        files_for_flare = self.state.get("files_by_flare", {}).get(flare_key, {})
+        maps_paths = files_for_flare.get("maps", {})
+        indices_paths = files_for_flare.get("indices", {})
+        xray_path = files_for_flare.get("goes_xray")
+        euv_path = files_for_flare.get("soho_sem")
+
+        date_str = flare_row.start_time.strftime("%Y-%m-%d")
+        files_for_date = self.state.get("files_by_date", {}).get(date_str, {})
+        if not xray_path:
+            xray_path = files_for_date.get("goes_xray")
+        if not euv_path:
+            euv_path = files_for_date.get("soho_sem")
 
         # 3️⃣ Карты (HDF5)
         timestamps, product_values = self._load_maps(
@@ -98,18 +110,16 @@ class PlotDataLoader:
         )
 
         # 6️⃣ Список вспышек
-        flare_list: List[FlareData] = []
-        for idx, row in day_flares.iterrows():
-            flare_list.append(
-                FlareData(
-                    flare_id=idx,
-                    duration=(row.end_time - row.start_time).total_seconds() / 60,
-                    start_time=row.start_time,
-                    peak_time=row.peak_time,
-                    end_time=row.end_time,
-                    location=(row.hpc_x, row.hpc_y)
-                )
+        flare_list: List[FlareData] = [
+            FlareData(
+                flare_id=flare_key,
+                duration=(flare_row.end_time - flare_row.start_time).total_seconds() / 60,
+                start_time=flare_row.start_time,
+                peak_time=flare_row.peak_time,
+                end_time=flare_row.end_time,
+                location=(flare_row.hpc_x, flare_row.hpc_y),
             )
+        ]
 
         # 7️⃣ Результат
         return PlotData(

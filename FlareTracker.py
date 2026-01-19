@@ -81,9 +81,10 @@ class FlareTracker:
             "flare_dates": [],
             "total_flares": 0,
             "data_downloaded": [],
-            "files_by_date": {}
+            "files_by_date": {},
+            "files_by_flare": {}
         }
-    
+
     def register_files_for_date(self, date: date, files: dict):
         """
         Регистрирует файлы, связанные с конкретной датой вспышек.
@@ -119,10 +120,56 @@ class FlareTracker:
         # Сохраняем состояние сразу после регистрации
         self._save_state(message=f"Файлы зарегистрированы для {date_str} (DEBUG)")
 
+    def register_files_for_flare(self, flare_key: str, files: dict):
+        if "files_by_flare" not in self.state:
+            self.state["files_by_flare"] = {}
+
+        if flare_key not in self.state["files_by_flare"]:
+            self.state["files_by_flare"][flare_key] = {}
+
+        for key, value in files.items():
+            if isinstance(value, Path):
+                self.state["files_by_flare"][flare_key][key] = str(value)
+            elif isinstance(value, list):
+                self.state["files_by_flare"][flare_key][key] = [str(p) if isinstance(p, Path) else p for p in value]
+            elif isinstance(value, dict):
+                self.state["files_by_flare"][flare_key][key] = {
+                    k: str(v) if isinstance(v, Path) else v for k, v in value.items()
+                }
+            else:
+                self.state["files_by_flare"][flare_key][key] = str(value)
+
+        print(f"\n🛠️ [DEBUG] Файлы зарегистрированы для вспышки {flare_key}:")
+        for k, v in self.state["files_by_flare"][flare_key].items():
+            print(f"   {k}: {v}")
+
+        self._save_state(message=f"Файлы зарегистрированы для вспышки {flare_key} (DEBUG)")
+
 
     def get_files_for_flare_date(self, flare_date: date) -> dict:
         date_str = flare_date.strftime("%Y-%m-%d")
         return self.state.get("files_by_date", {}).get(date_str, {})
+
+    def get_files_for_flare(self, flare_key: str) -> dict:
+        return self.state.get("files_by_flare", {}).get(flare_key, {})
+
+    def get_flares_for_date(self, flare_date: date) -> List[Dict[str, Any]]:
+        all_flares = self._load_all_flares()
+        if all_flares.empty:
+            return []
+
+        day_flares = all_flares[all_flares["date"] == flare_date]
+        flares = []
+        for _, row in day_flares.iterrows():
+            flares.append(
+                {
+                    "class": row.get("class"),
+                    "start_time": row.get("start_time"),
+                    "peak_time": row.get("peak_time"),
+                    "end_time": row.get("end_time"),
+                }
+            )
+        return flares
 
     def _sync_state_with_files(self):
         """Синхронизирует состояние с реально существующими файлами"""
