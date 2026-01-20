@@ -6,6 +6,7 @@ import pandas as pd
 from sunpy.net import Fido, attrs as a
 from astropy.time import Time
 from DataManager import DataManager
+from flare_utils import build_flare_key
 import os
 
 
@@ -163,6 +164,7 @@ class FlareTracker:
         for _, row in day_flares.iterrows():
             flares.append(
                 {
+                    "flare_key": row.get("flare_key"),
                     "class": row.get("class"),
                     "start_time": row.get("start_time"),
                     "peak_time": row.get("peak_time"),
@@ -288,6 +290,17 @@ class FlareTracker:
     
     def _save_all_flares(self, df: pd.DataFrame):
         try:
+            df = df.copy()
+            if "flare_key" not in df.columns:
+                df["flare_key"] = df.apply(
+                    lambda row: build_flare_key(
+                        row.get("start_time"),
+                        row.get("peak_time"),
+                        row.get("end_time"),
+                        row.get("class"),
+                    ),
+                    axis=1,
+                )
             df.to_csv(self.all_flares_file, index=False)
             print(f"💾 Все вспышки сохранены в {self.all_flares_file}")
             print(f"   📊 Всего записей: {len(df)}")
@@ -310,6 +323,17 @@ class FlareTracker:
                 for col in time_columns:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col])
+
+                if "flare_key" not in df.columns:
+                    df["flare_key"] = df.apply(
+                        lambda row: build_flare_key(
+                            row.get("start_time"),
+                            row.get("peak_time"),
+                            row.get("end_time"),
+                            row.get("class"),
+                        ),
+                        axis=1,
+                    )
                 
                 return df
             except Exception as e:
@@ -317,7 +341,7 @@ class FlareTracker:
 
         return pd.DataFrame(columns=[
             'class', 'class_value', 'start_time', 'peak_time', 'end_time',
-            'duration_min', 'hpc_x', 'hpc_y', 'peak_flux', 'date'
+            'duration_min', 'hpc_x', 'hpc_y', 'peak_flux', 'date', 'flare_key'
         ])
     
     def get_all_flares_in_range(self) -> pd.DataFrame:

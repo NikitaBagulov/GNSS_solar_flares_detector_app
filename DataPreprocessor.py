@@ -84,7 +84,7 @@ class DataPreprocessor:
         print(f"Products to process: {self.data_products}")
         print(file_path)
         for flare in flares_for_date:
-            flare_key = build_flare_key(
+            flare_key = flare.get("flare_key") or build_flare_key(
                 flare["start_time"],
                 flare["peak_time"],
                 flare["end_time"],

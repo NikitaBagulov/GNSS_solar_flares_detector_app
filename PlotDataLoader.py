@@ -22,15 +22,16 @@ class PlotDataLoader:
             self.flares_file,
             parse_dates=["start_time", "peak_time", "end_time"]
         )
-        self.flares_df["flare_key"] = self.flares_df.apply(
-            lambda row: build_flare_key(
-                row.start_time,
-                row.peak_time,
-                row.end_time,
-                row.get("class"),
-            ),
-            axis=1,
-        )
+        if "flare_key" not in self.flares_df.columns:
+            self.flares_df["flare_key"] = self.flares_df.apply(
+                lambda row: build_flare_key(
+                    row.start_time,
+                    row.peak_time,
+                    row.end_time,
+                    row.get("class"),
+                ),
+                axis=1,
+            )
 
         # JSON с путями к данным
         with open(self.state_file, "r", encoding="utf-8") as f:
