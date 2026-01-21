@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, Any
 import pandas as pd
 from sunpy.net import Fido, attrs as a
 from astropy.time import Time
+from dateutil import tz
 from DataManager import DataManager
 from flare_utils import build_flare_key
 import os
@@ -322,7 +323,7 @@ class FlareTracker:
                 time_columns = ['start_time', 'peak_time', 'end_time']
                 for col in time_columns:
                     if col in df.columns:
-                        df[col] = pd.to_datetime(df[col])
+                        df[col] = pd.to_datetime(df[col], utc=True)
 
                 if "flare_key" not in df.columns:
                     df["flare_key"] = df.apply(
@@ -379,9 +380,9 @@ class FlareTracker:
                     if not flare_class:
                         continue
                     
-                    start_dt = Time(flare['event_starttime']).to_datetime()
-                    peak_dt = Time(flare['event_peaktime']).to_datetime()
-                    end_dt = Time(flare['event_endtime']).to_datetime()
+                    start_dt = Time(flare['event_starttime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
+                    peak_dt = Time(flare['event_peaktime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
+                    end_dt = Time(flare['event_endtime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
                     flare_date = start_dt.date()
                     
                     flares_data.append({
