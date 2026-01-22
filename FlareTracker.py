@@ -175,6 +175,9 @@ class FlareTracker:
             return []
 
         day_flares = all_flares[all_flares["date"] == flare_date]
+        if "class_value" in day_flares.columns:
+            min_class_value = self._flare_class_to_numeric(self.min_flare_class)
+            day_flares = day_flares[day_flares["class_value"] >= min_class_value]
         flares = []
         for _, row in day_flares.iterrows():
             flares.append(
@@ -383,6 +386,9 @@ class FlareTracker:
                 for col in time_columns:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col], utc=True)
+
+                if "class_value" not in df.columns and "class" in df.columns:
+                    df["class_value"] = df["class"].apply(self._flare_class_to_numeric)
 
                 if "flare_key" not in df.columns:
                     df["flare_key"] = df.apply(
