@@ -118,6 +118,7 @@ try:
     print("\nЗавершено успешно!")
     loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
     for flare_key in flare_keys:
+        print("LOAD PLOT DATA")
         plot_data = loader.load_flare(flare_key)
         if not plot_data:
             print(f"Нет данных для вспышки {flare_key}, пропуск.")

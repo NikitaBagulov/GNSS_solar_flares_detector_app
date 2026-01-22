@@ -1,12 +1,15 @@
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
-from dateutil import tz
+
 import time
+import numpy as np
 from simurg_core.storage.hdf_query import get_map_chunked
 from simurg_core.storage.hdf_storage import get_sites_attrs
 from simurg_core.storage.hdf_maps import store_maps_time_based
 from flare_utils import build_flare_key, get_flare_window
+
+from dateutil import tz
 
 class DataPreprocessor:
     DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})")
@@ -64,7 +67,7 @@ class DataPreprocessor:
             raise ValueError(f"Could not find {file_path}")
 
         study_date = self.extract_date_from_filename(file_path)
-
+        print(study_date)
         sites_description = get_sites_attrs(file_path)
         n_sites = len(sites_description)
         print(f"Processing file {file_path.name} for {n_sites} sites on {study_date.date()}")
@@ -108,9 +111,11 @@ class DataPreprocessor:
             )
 
             times = []
+            print(f"TEST: {start_interval} {end_interval}")
+           
             current = start_interval
             while current <= end_interval:
-                times.append(current.to_pydatetime())
+                times.append(current)
                 current += timedelta(seconds=30)
 
             if not times:
@@ -125,7 +130,7 @@ class DataPreprocessor:
                 file_path=file_path,
                 product_types=self.data_products,
                 roti_type='simple',
-                chunk=120
+                chunk=40
             )
             for chunk_idx, data in enumerate(generator, 1):
 

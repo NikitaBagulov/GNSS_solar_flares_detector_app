@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
-
-import pandas as pd
-
+from dateutil import tz
 
 DEFAULT_WINDOW_MINUTES = 15
+_UTC = tz.gettz('UTC')
 
+def normalize_to_utc(value) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value))
 
-def normalize_to_utc(value) -> pd.Timestamp:
-    return pd.to_datetime(value, utc=True)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_UTC)
+
+    return dt.astimezone(_UTC)
 
 
 def build_flare_key(
@@ -42,7 +48,7 @@ def get_flare_window(
     start_time,
     end_time,
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
-) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    start = normalize_to_utc(start_time) - timedelta(minutes=window_minutes)
-    end = normalize_to_utc(end_time) + timedelta(minutes=window_minutes)
+) -> Tuple[datetime, datetime]:
+    start = normalize_to_utc(start_time) - timedelta(minutes=window_minutes) - timedelta(hours=8)
+    end = normalize_to_utc(end_time) + timedelta(minutes=window_minutes) - timedelta(hours=8)
     return start, end
