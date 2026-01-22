@@ -327,6 +327,7 @@ class FlareTracker:
     def _save_all_flares(self, df: pd.DataFrame):
         try:
             df = df.copy()
+            df = self._dedupe_flares(df)
             if "flare_key" not in df.columns:
                 df["flare_key"] = df.apply(
                     lambda row: build_flare_key(
@@ -346,6 +347,29 @@ class FlareTracker:
             
         except Exception as e:
             print(f"❌ Ошибка сохранения всех вспышек: {e}")
+
+    def _dedupe_flares(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+
+        df = df.copy()
+        time_columns = ["start_time", "peak_time", "end_time"]
+        for col in time_columns:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], utc=True)
+
+        if "class_value" in df.columns:
+            df = df.sort_values("class_value", ascending=False)
+
+        dedupe_keys = [col for col in time_columns if col in df.columns]
+        if dedupe_keys:
+            before = len(df)
+            df = df.drop_duplicates(subset=dedupe_keys, keep="first")
+            removed = before - len(df)
+            if removed > 0:
+                print(f"🧹 Удалено дубликатов вспышек: {removed}")
+
+        return df
     
     def _load_all_flares(self) -> pd.DataFrame:
         if self.all_flares_file.exists():
