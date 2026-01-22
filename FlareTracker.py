@@ -5,7 +5,9 @@ from typing import List, Dict, Optional, Any
 import pandas as pd
 from sunpy.net import Fido, attrs as a
 from astropy.time import Time
+from dateutil import tz
 from DataManager import DataManager
+from flare_utils import build_flare_key
 import os
 
 
@@ -81,9 +83,10 @@ class FlareTracker:
             "flare_dates": [],
             "total_flares": 0,
             "data_downloaded": [],
-            "files_by_date": {}
+            "files_by_date": {},
+            "files_by_flare": {}
         }
-    
+
     def register_files_for_date(self, date: date, files: dict):
         """
         Регистрирует файлы, связанные с конкретной датой вспышек.
@@ -119,10 +122,57 @@ class FlareTracker:
         # Сохраняем состояние сразу после регистрации
         self._save_state(message=f"Файлы зарегистрированы для {date_str} (DEBUG)")
 
+    def register_files_for_flare(self, flare_key: str, files: dict):
+        if "files_by_flare" not in self.state:
+            self.state["files_by_flare"] = {}
+
+        if flare_key not in self.state["files_by_flare"]:
+            self.state["files_by_flare"][flare_key] = {}
+
+        for key, value in files.items():
+            if isinstance(value, Path):
+                self.state["files_by_flare"][flare_key][key] = str(value)
+            elif isinstance(value, list):
+                self.state["files_by_flare"][flare_key][key] = [str(p) if isinstance(p, Path) else p for p in value]
+            elif isinstance(value, dict):
+                self.state["files_by_flare"][flare_key][key] = {
+                    k: str(v) if isinstance(v, Path) else v for k, v in value.items()
+                }
+            else:
+                self.state["files_by_flare"][flare_key][key] = str(value)
+
+        print(f"\n🛠️ [DEBUG] Файлы зарегистрированы для вспышки {flare_key}:")
+        for k, v in self.state["files_by_flare"][flare_key].items():
+            print(f"   {k}: {v}")
+
+        self._save_state(message=f"Файлы зарегистрированы для вспышки {flare_key} (DEBUG)")
+
 
     def get_files_for_flare_date(self, flare_date: date) -> dict:
         date_str = flare_date.strftime("%Y-%m-%d")
         return self.state.get("files_by_date", {}).get(date_str, {})
+
+    def get_files_for_flare(self, flare_key: str) -> dict:
+        return self.state.get("files_by_flare", {}).get(flare_key, {})
+
+    def get_flares_for_date(self, flare_date: date) -> List[Dict[str, Any]]:
+        all_flares = self._load_all_flares()
+        if all_flares.empty:
+            return []
+
+        day_flares = all_flares[all_flares["date"] == flare_date]
+        flares = []
+        for _, row in day_flares.iterrows():
+            flares.append(
+                {
+                    "flare_key": row.get("flare_key"),
+                    "class": row.get("class"),
+                    "start_time": row.get("start_time"),
+                    "peak_time": row.get("peak_time"),
+                    "end_time": row.get("end_time"),
+                }
+            )
+        return flares
 
     def _sync_state_with_files(self):
         """Синхронизирует состояние с реально существующими файлами"""
@@ -241,6 +291,17 @@ class FlareTracker:
     
     def _save_all_flares(self, df: pd.DataFrame):
         try:
+            df = df.copy()
+            if "flare_key" not in df.columns:
+                df["flare_key"] = df.apply(
+                    lambda row: build_flare_key(
+                        row.get("start_time"),
+                        row.get("peak_time"),
+                        row.get("end_time"),
+                        row.get("class"),
+                    ),
+                    axis=1,
+                )
             df.to_csv(self.all_flares_file, index=False)
             print(f"💾 Все вспышки сохранены в {self.all_flares_file}")
             print(f"   📊 Всего записей: {len(df)}")
@@ -262,7 +323,18 @@ class FlareTracker:
                 time_columns = ['start_time', 'peak_time', 'end_time']
                 for col in time_columns:
                     if col in df.columns:
-                        df[col] = pd.to_datetime(df[col])
+                        df[col] = pd.to_datetime(df[col], utc=True)
+
+                if "flare_key" not in df.columns:
+                    df["flare_key"] = df.apply(
+                        lambda row: build_flare_key(
+                            row.get("start_time"),
+                            row.get("peak_time"),
+                            row.get("end_time"),
+                            row.get("class"),
+                        ),
+                        axis=1,
+                    )
                 
                 return df
             except Exception as e:
@@ -270,7 +342,7 @@ class FlareTracker:
 
         return pd.DataFrame(columns=[
             'class', 'class_value', 'start_time', 'peak_time', 'end_time',
-            'duration_min', 'hpc_x', 'hpc_y', 'peak_flux', 'date'
+            'duration_min', 'hpc_x', 'hpc_y', 'peak_flux', 'date', 'flare_key'
         ])
     
     def get_all_flares_in_range(self) -> pd.DataFrame:
@@ -308,9 +380,9 @@ class FlareTracker:
                     if not flare_class:
                         continue
                     
-                    start_dt = Time(flare['event_starttime']).to_datetime()
-                    peak_dt = Time(flare['event_peaktime']).to_datetime()
-                    end_dt = Time(flare['event_endtime']).to_datetime()
+                    start_dt = Time(flare['event_starttime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
+                    peak_dt = Time(flare['event_peaktime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
+                    end_dt = Time(flare['event_endtime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
                     flare_date = start_dt.date()
                     
                     flares_data.append({

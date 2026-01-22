@@ -57,22 +57,14 @@ class IndexCalculator:
         self.registry.register("isfai_index",    lambda dates, t: compute_index(dates, t, compute_isfai_index))
         self.available_products = []
 
-    # -------- NEW --------
-    def scan_all_dates(self):
-        dates = []
+    def scan_all_flares(self):
+        flare_keys = []
         for folder in self.base_folder.iterdir():
             if folder.is_dir():
-                try:
-                    d = datetime.datetime.strptime(folder.name, "%Y-%m-%d").date()
-                    dates.append(d)
-                except ValueError:
-                    pass
-        return sorted(dates)
+                flare_keys.append(folder.name)
+        return sorted(flare_keys)
 
-    def detect_products(self, date: datetime.date):
-        print(date)
-        folder_path = self.base_folder / date.strftime("%Y-%m-%d")
-        print(folder_path)
+    def detect_products(self, folder_path: Path):
         if not folder_path.exists():
             return []
         product_files = folder_path.glob("map_*.h5")
@@ -80,28 +72,25 @@ class IndexCalculator:
         self.available_products = products
         return products
 
-    # -------- UPDATED --------
     def process_all_folders(self):
-        all_dates = self.scan_all_dates()
+        flare_keys = self.scan_all_flares()
 
-        if not all_dates:
-            print("Нет папок с датами.")
+        if not flare_keys:
+            print("Нет папок с данными вспышек.")
             return
 
-        print(f"Найдено {len(all_dates)} дат: {all_dates}")
+        print(f"Найдено {len(flare_keys)} вспышек: {flare_keys}")
 
-        for date in all_dates:
-            print(f"\n=== Обработка даты {date} ===")
-            self.process_single_date(date)
+        for flare_key in flare_keys:
+            print(f"\n=== Обработка вспышки {flare_key} ===")
+            self.process_single_flare(flare_key)
 
-    # оставляем старую функцию, но делаем её внутренней
-    def process_single_date(self, date: datetime.date, tracker=None):
-        products = self.detect_products(date)
+    def process_single_flare(self, flare_key: str, tracker=None):
+        folder_path = self.base_folder / flare_key
+        products = self.detect_products(folder_path)
         if not products:
-            print(f"Нет файлов данных для даты {date}")
+            print(f"Нет файлов данных для вспышки {flare_key}")
             return
-
-        folder_path = self.base_folder / date.strftime("%Y-%m-%d")
 
         indices_for_date = {}  # собираем все пути к индексам
 
@@ -140,10 +129,9 @@ class IndexCalculator:
             else:
                 print(f"Нет данных для сохранения для продукта {product_type}")
 
-        # Регистрируем все файлы разом
         if tracker is not None and indices_for_date:
-            tracker.register_files_for_date(
-                date,
+            tracker.register_files_for_flare(
+                flare_key,
                 {"indices": indices_for_date}
             )
 
