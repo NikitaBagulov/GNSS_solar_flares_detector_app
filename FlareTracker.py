@@ -248,7 +248,17 @@ class FlareTracker:
         # Получаем список источников
         available_sources = list(self.data_manager.download_functions.keys())
         print(f"   📁 Проверяемые источники: {available_sources}")
-        
+
+        for flare_date in flare_dates:
+            date_str = flare_date.strftime("%Y-%m-%d")
+            self.state.setdefault("files_by_date", {}).setdefault(date_str, {})
+            for source in available_sources:
+                if source in self.state["files_by_date"][date_str]:
+                    continue
+                existing_path = self._find_source_file(flare_date, source)
+                if existing_path:
+                    self.state["files_by_date"][date_str][source] = str(existing_path)
+
         # Проверяем какие даты действительно скачаны
         actually_downloaded_dates = []
         dates_with_missing_files = []
@@ -409,6 +419,17 @@ class FlareTracker:
             'class', 'class_value', 'start_time', 'peak_time', 'end_time',
             'duration_min', 'hpc_x', 'hpc_y', 'peak_flux', 'date', 'flare_key'
         ])
+
+    def _find_source_file(self, flare_date: date, source_name: str) -> Optional[Path]:
+        date_dir = self.data_manager.base_download_dir / flare_date.strftime("%Y-%m-%d") / source_name
+        if not date_dir.exists():
+            return None
+
+        candidates = sorted([p for p in date_dir.iterdir() if p.is_file()])
+        for candidate in candidates:
+            if self.data_manager._is_file_valid(candidate, source_name):
+                return candidate
+        return None
     
     def get_all_flares_in_range(self) -> pd.DataFrame:
         print(f"\n{'='*70}")
