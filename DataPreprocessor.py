@@ -9,8 +9,6 @@ from simurg_core.storage.hdf_storage import get_sites_attrs
 from simurg_core.storage.hdf_maps import store_maps_time_based
 from flare_utils import build_flare_key, get_flare_window
 
-from dateutil import tz
-
 class DataPreprocessor:
     DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})")
     _UTC = tz.gettz('UTC')
@@ -67,7 +65,7 @@ class DataPreprocessor:
             raise ValueError(f"Could not find {file_path}")
 
         study_date = self.extract_date_from_filename(file_path)
-        print(study_date)
+
         sites_description = get_sites_attrs(file_path)
         n_sites = len(sites_description)
         print(f"Processing file {file_path.name} for {n_sites} sites on {study_date.date()}")
@@ -109,6 +107,55 @@ class DataPreprocessor:
                 flare["end_time"],
                 window_minutes=self.window_minutes,
             )
+
+            times = []
+            current = start_interval
+            while current <= end_interval:
+                times.append(current)
+                current = current + timedelta(seconds=30)
+
+            if not times:
+                print(f"Empty time window for flare {flare_key}, skipping.")
+                continue
+
+            print(f"Flare {flare_key}: {times[0]} ... {times[-1]}")
+            start_time = time.time()
+            generator = get_map_chunked(
+                sites_description,
+                times,
+                file_path=file_path,
+                product_types=self.data_products,
+                roti_type='simple',
+                chunk=120
+            )
+
+            maps_files = []
+            for prod in self.data_products:
+                maps_file = (flare_dir / f"map_{prod}.h5").resolve()
+                maps_file.parent.mkdir(parents=True, exist_ok=True)
+                maps_files.append(maps_file)
+
+            iprod = 0
+            for chunk_idx, data in enumerate(generator, 1):
+                took = time.time() - start_time
+                print(f"Chunk {chunk_idx}. Time {took:.2f} seconds.")
+
+                if not data:
+                    print(f"Chunk {chunk_idx} is empty. Skipping.\n")
+                    continue
+
+                # ✅ текущий продукт определяется номером чанка
+                out_file = maps_files[iprod % len(maps_files)]
+                current_prod = self.data_products[iprod % len(self.data_products)]
+
+                try:
+                    store_maps_time_based({'sites': 'sites'}, data, str(out_file), lock=False)
+                except Exception as e:
+                    print(f"Failed to save {out_file.name} (prod={current_prod}): {e}")
+                else:
+                    print(f"Saved {out_file.name} successfully (prod={current_prod})")
+
+                iprod += 1
 
             times = []
             print(f"TEST: {start_interval} {end_interval}")

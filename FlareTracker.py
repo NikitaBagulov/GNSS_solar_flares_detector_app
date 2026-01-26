@@ -122,6 +122,20 @@ class FlareTracker:
         # Сохраняем состояние сразу после регистрации
         self._save_state(message=f"Файлы зарегистрированы для {date_str} (DEBUG)")
 
+        if any(key in files for key in ("goes_xray", "soho_sem")):
+            for flare in self.get_flares_for_date(date):
+                flare_key = flare.get("flare_key")
+                if not flare_key:
+                    continue
+                self.register_files_for_flare(
+                    flare_key,
+                    {
+                        key: value
+                        for key, value in files.items()
+                        if key in ("goes_xray", "soho_sem")
+                    },
+                )
+
     def register_files_for_flare(self, flare_key: str, files: dict):
         if "files_by_flare" not in self.state:
             self.state["files_by_flare"] = {}
@@ -161,6 +175,9 @@ class FlareTracker:
             return []
 
         day_flares = all_flares[all_flares["date"] == flare_date]
+        if "class_value" in day_flares.columns:
+            min_class_value = self._flare_class_to_numeric(self.min_flare_class)
+            day_flares = day_flares[day_flares["class_value"] >= min_class_value]
         flares = []
         for _, row in day_flares.iterrows():
             flares.append(
@@ -204,13 +221,44 @@ class FlareTracker:
                 continue
         
         flare_dates = sorted(flare_dates_set)
-        
+
         print(f"   📊 Всего дней со вспышками: {len(flare_dates)}")
+
+        if "files_by_flare" not in self.state:
+            self.state["files_by_flare"] = {}
+
+        for _, flare in all_flares.iterrows():
+            flare_key = flare.get("flare_key")
+            if not flare_key:
+                continue
+            flare_date = flare.get("date")
+            if isinstance(flare_date, pd.Timestamp):
+                flare_date = flare_date.date()
+            if not isinstance(flare_date, date):
+                continue
+            date_str = flare_date.strftime("%Y-%m-%d")
+            date_files = self.state.get("files_by_date", {}).get(date_str, {})
+            if not date_files:
+                continue
+            for key in ("goes_xray", "soho_sem"):
+                if key in date_files:
+                    self.state["files_by_flare"].setdefault(flare_key, {})
+                    self.state["files_by_flare"][flare_key][key] = date_files[key]
         
         # Получаем список источников
         available_sources = list(self.data_manager.download_functions.keys())
         print(f"   📁 Проверяемые источники: {available_sources}")
-        
+
+        for flare_date in flare_dates:
+            date_str = flare_date.strftime("%Y-%m-%d")
+            self.state.setdefault("files_by_date", {}).setdefault(date_str, {})
+            for source in available_sources:
+                if source in self.state["files_by_date"][date_str]:
+                    continue
+                existing_path = self._find_source_file(flare_date, source)
+                if existing_path:
+                    self.state["files_by_date"][date_str][source] = str(existing_path)
+
         # Проверяем какие даты действительно скачаны
         actually_downloaded_dates = []
         dates_with_missing_files = []
@@ -292,6 +340,7 @@ class FlareTracker:
     def _save_all_flares(self, df: pd.DataFrame):
         try:
             df = df.copy()
+            df = self._dedupe_flares(df)
             if "flare_key" not in df.columns:
                 df["flare_key"] = df.apply(
                     lambda row: build_flare_key(
@@ -311,6 +360,29 @@ class FlareTracker:
             
         except Exception as e:
             print(f"❌ Ошибка сохранения всех вспышек: {e}")
+
+    def _dedupe_flares(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+
+        df = df.copy()
+        time_columns = ["start_time", "peak_time", "end_time"]
+        for col in time_columns:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], utc=True)
+
+        if "class_value" in df.columns:
+            df = df.sort_values("class_value", ascending=False)
+
+        dedupe_keys = [col for col in time_columns if col in df.columns]
+        if dedupe_keys:
+            before = len(df)
+            df = df.drop_duplicates(subset=dedupe_keys, keep="first")
+            removed = before - len(df)
+            if removed > 0:
+                print(f"🧹 Удалено дубликатов вспышек: {removed}")
+
+        return df
     
     def _load_all_flares(self) -> pd.DataFrame:
         if self.all_flares_file.exists():
@@ -324,6 +396,9 @@ class FlareTracker:
                 for col in time_columns:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col], utc=True)
+
+                if "class_value" not in df.columns and "class" in df.columns:
+                    df["class_value"] = df["class"].apply(self._flare_class_to_numeric)
 
                 if "flare_key" not in df.columns:
                     df["flare_key"] = df.apply(
@@ -344,6 +419,17 @@ class FlareTracker:
             'class', 'class_value', 'start_time', 'peak_time', 'end_time',
             'duration_min', 'hpc_x', 'hpc_y', 'peak_flux', 'date', 'flare_key'
         ])
+
+    def _find_source_file(self, flare_date: date, source_name: str) -> Optional[Path]:
+        date_dir = self.data_manager.base_download_dir / flare_date.strftime("%Y-%m-%d") / source_name
+        if not date_dir.exists():
+            return None
+
+        candidates = sorted([p for p in date_dir.iterdir() if p.is_file()])
+        for candidate in candidates:
+            if self.data_manager._is_file_valid(candidate, source_name):
+                return candidate
+        return None
     
     def get_all_flares_in_range(self) -> pd.DataFrame:
         print(f"\n{'='*70}")

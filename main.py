@@ -118,7 +118,6 @@ try:
     print("\nЗавершено успешно!")
     loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
     for flare_key in flare_keys:
-        print("LOAD PLOT DATA")
         plot_data = loader.load_flare(flare_key)
         if not plot_data:
             print(f"Нет данных для вспышки {flare_key}, пропуск.")
@@ -133,12 +132,6 @@ try:
             print("X-ray значение:", plot_data.xray_values[0])
         if plot_data.euv_values:
             print("EUV значение:", plot_data.euv_values[0])
-        if plot_data.day_night_index:
-            print("Индекс day_night:", plot_data.day_night_index[0])
-        if plot_data.gsflai_index:
-            print("Индекс gsflai:", plot_data.gsflai_index[0])
-        if plot_data.isfai_index:
-            print("Индекс isfai:", plot_data.isfai_index[0])
 
         first_flare = plot_data.flare[0]
         print("Вспышка:")
@@ -148,7 +141,7 @@ try:
         print(f"  Конец: {first_flare.end_time}")
         print(f"  Локация: {first_flare.location}")
 
-        plotter = Plotter(plot_data)
+        plotter = Plotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
         plotter.plot_all()
     
 except Exception as e:

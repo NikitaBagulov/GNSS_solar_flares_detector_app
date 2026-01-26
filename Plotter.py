@@ -42,45 +42,57 @@ class Plotter:
         elif plot_data.product_values:
             self.products_to_plot = list(plot_data.product_values[0].keys())
         else:
-            self.products_to_plot = []
+            self.products_to_plot = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def plot_all(self):
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+
         for i, map_time in enumerate(self.data.timestamps):
-            fig = plt.figure(figsize=(15, 11), constrained_layout=False)
-            gs = fig.add_gridspec(
-                3,
-                2,
-                height_ratios=[7, 2.5, 2.5],
-                width_ratios=[3.6, 1.4],
-                wspace=0.25,
-                hspace=0.45,
-            )
-
-            ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
-            ax_sun = fig.add_subplot(gs[0, 1])
-            ax_indices = fig.add_subplot(gs[1, :])
-            ax_solar = fig.add_subplot(gs[2, :])
-
-            self._plot_map(ax_map, i, map_time=map_time)
             flare = self._select_nearest_flare(map_time)
-            self._plot_sun(ax_sun, flare)
-            self._plot_indices(ax_indices, map_time, flare)
-            self._plot_solar(ax_solar, map_time)
-            self._format_time_axis(ax_indices)
-            self._format_time_axis(ax_solar)
 
-            title = f"GNSS Solar Flare Analysis — {map_time:%Y-%m-%d %H:%M UTC}"
-            if flare:
-                title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
-            fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
-            fig.subplots_adjust(top=0.9, bottom=0.08)
+            for product_name in products:
+                fig = plt.figure(figsize=(15, 11), constrained_layout=False)
+                gs = fig.add_gridspec(
+                    3,
+                    2,
+                    height_ratios=[7, 2.5, 2.5],
+                    width_ratios=[3.6, 1.4],
+                    wspace=0.25,
+                    hspace=0.45,
+                )
 
-            output_path = self._build_output_path(map_time, flare)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(output_path, dpi=200, bbox_inches="tight")
-            plt.close(fig)
+                ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
+                ax_sun = fig.add_subplot(gs[0, 1])
+                ax_indices = fig.add_subplot(gs[1, :])
+                ax_solar = fig.add_subplot(gs[2, :])
+
+                # ⬇️ рисуем карту конкретного продукта
+                self._plot_map(ax_map, i, product_name=product_name, map_time=map_time)
+
+                self._plot_sun(ax_sun, flare)
+
+                # ⬇️ индексы конкретного продукта
+                self._plot_indices(ax_indices, highlight_time=map_time, product_name=product_name, flare=flare)
+
+                self._plot_solar(ax_solar, highlight_time=map_time)
+
+                self._format_time_axis(ax_indices)
+                self._format_time_axis(ax_solar)
+
+                title = f"{self._format_product_name(product_name)} — {map_time:%Y-%m-%d %H:%M UTC}"
+                if flare:
+                    title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
+                fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
+                fig.subplots_adjust(top=0.9, bottom=0.08)
+
+                # ⬇️ путь теперь включает папку продукта
+                output_path = self._build_output_path(map_time, flare, product_name=product_name)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(output_path, dpi=200, bbox_inches="tight")
+                plt.close(fig)
+
 
     def _plot_map(self, ax, time_index, product_name="dtec_2_10", map_time=None):
         if not self.data.product_values or time_index >= len(self.data.product_values):
@@ -172,20 +184,33 @@ class Plotter:
                     bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6),
                 )
 
-    def _plot_indices(self, ax, highlight_time=None, flare=None):
+    def _plot_indices(self, ax, highlight_time=None, product_name="dtec_2_10", flare=None):
         times = self._to_naive(self.data.index_times)
-        data_lists = [
-            ("Day/Night", self.data.day_night_index, "orange"),
-            ("GSFLAI", self.data.gsflai_index, "green"),
-            ("ISFAI", self.data.isfai_index, "blue")
-        ]
 
-        # Нормализация в [0,1] для каждого набора
-        for label, values, color in data_lists:
+        prod_block = getattr(self.data, "indices", {}).get(product_name)
+        # print( "prod block",prod_block)
+        if not prod_block:
+            ax.set_title(f"No indices for {product_name}")
+            ax.grid(True)
+            return
+
+        data_lists = [
+            ("Day/Night", prod_block.get("day_night_index", [])),
+            ("GSFLAI", prod_block.get("gsflai_index", [])),
+            ("ISFAI", prod_block.get("isfai_index", [])),
+        ]
+        # print("Daa lists",data_lists)
+        for label, values in data_lists:
             if values:
-                values = np.array(values)
-                norm_values = (values - np.nanmin(values)) / (np.nanmax(values) - np.nanmin(values))
-                ax.plot(times, norm_values, label=label, color=color)
+                values = np.asarray(values, dtype=float)
+                vmin = np.nanmin(values)
+                vmax = np.nanmax(values)
+                if np.isfinite(vmin) and np.isfinite(vmax) and vmax > vmin:
+                    norm_values = (values - vmin) / (vmax - vmin)
+                else:
+                    norm_values = values * 0.0  # если всё одинаковое
+
+                ax.plot(times, norm_values, label=label)
 
         if highlight_time:
             ax.axvline(
@@ -200,10 +225,11 @@ class Plotter:
             self._plot_flare_markers(ax, flare)
 
         ax.set_ylabel("Normalized Index")
-        ax.set_title("Indices (Normalized)")
+        ax.set_title(f"Indices (Normalized) — {self._format_product_name(product_name)}")
         ax.legend(ncol=3, loc="upper left", frameon=True, fontsize=10)
         ax.grid(True)
-        ax.set_ylim(0, 1)  # Все линии в одной высоте
+        ax.set_ylim(0, 1)
+
 
     def _plot_solar(self, ax, highlight_time=None):
         times_values = [
@@ -412,14 +438,19 @@ class Plotter:
                 closest = flare
         return closest or self.data.flare[0]
 
-    def _build_output_path(self, map_time, flare):
+    def _build_output_path(self, map_time, flare, product_name):
         date_folder = map_time.strftime("%Y-%m-%d")
+
         if flare and flare.peak_time:
             flare_label = f"flare_{flare.peak_time:%H%M%S}"
         elif flare and flare.start_time:
             flare_label = f"flare_{flare.start_time:%H%M%S}"
         else:
             flare_label = "flare_unknown"
+
         time_label = map_time.strftime("%H%M%S")
         filename = f"map_{time_label}.png"
-        return self.output_dir / date_folder / flare_label / filename
+
+        # ⬇️ добавили папку product_name
+        return self.output_dir / date_folder / flare_label / product_name / filename
+

@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from dateutil import tz
 
 DEFAULT_WINDOW_MINUTES = 15
-_UTC = tz.gettz('UTC')
+
 
 def normalize_to_utc(value) -> datetime:
     if isinstance(value, datetime):
@@ -15,9 +15,9 @@ def normalize_to_utc(value) -> datetime:
         dt = datetime.fromisoformat(str(value))
 
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=_UTC)
+        return dt.replace(tzinfo=tz.UTC)
 
-    return dt.astimezone(_UTC)
+    return dt.astimezone(tz.UTC)
 
 
 def build_flare_key(
