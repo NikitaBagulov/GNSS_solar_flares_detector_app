@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from datetime import datetime
 
 # Класс для вспышки
@@ -24,9 +24,7 @@ class PlotData:
     euv_values: List[float] = field(default_factory=list)
 
     index_times: List[datetime] = field(default_factory=list)
-    day_night_index: List[float] = field(default_factory=list)
-    gsflai_index: List[float] = field(default_factory=list)
-    isfai_index: List[float] = field(default_factory=list)
+    indices: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)
 
     flare: List[FlareData] = field(default_factory=list)
     sun_image: Optional[object] = None

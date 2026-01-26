@@ -110,8 +110,8 @@ class DataPreprocessor:
             times = []
             current = start_interval
             while current <= end_interval:
-                times.append(current.to_pydatetime())
-                current += timedelta(seconds=30)
+                times.append(current)
+                current = current + timedelta(seconds=30)
 
             if not times:
                 print(f"Empty time window for flare {flare_key}, skipping.")
@@ -127,32 +127,34 @@ class DataPreprocessor:
                 roti_type='simple',
                 chunk=120
             )
+
+            maps_files = []
+            for prod in self.data_products:
+                maps_file = (flare_dir / f"map_{prod}.h5").resolve()
+                maps_file.parent.mkdir(parents=True, exist_ok=True)
+                maps_files.append(maps_file)
+
+            iprod = 0
             for chunk_idx, data in enumerate(generator, 1):
+                took = time.time() - start_time
+                print(f"Chunk {chunk_idx}. Time {took:.2f} seconds.")
 
                 if not data:
-                    print(f"Chunk {chunk_idx} is empty: {data}. Time {time.time() - start_time:.2f} seconds\n") 
+                    print(f"Chunk {chunk_idx} is empty. Skipping.\n")
                     continue
 
-                print(f"Chunk {chunk_idx}. Time {time.time() - start_time:.2f} seconds.")
-                for prod in self.data_products:
-                    maps_file = (flare_dir / f"map_{prod}.h5").resolve()
-                    maps_file.parent.mkdir(parents=True, exist_ok=True)
-                    try:
-                        store_maps_time_based({'sites': 'sites'}, data, str(maps_file), lock=False)
-                    except Exception as e:
-                        print(f"Failed to save {maps_file.name}: {e}")
-                    else:
-                        print(f"Saved {maps_file.name} successfully")
-            if tracker is not None:
-                tracker.register_files_for_flare(
-                    flare_key,
-                    {
-                        "maps": {
-                            prod: flare_dir / f"map_{prod}.h5"
-                            for prod in self.data_products
-                        }
-                    }
-                )
+                # ✅ текущий продукт определяется номером чанка
+                out_file = maps_files[iprod % len(maps_files)]
+                current_prod = self.data_products[iprod % len(self.data_products)]
+
+                try:
+                    store_maps_time_based({'sites': 'sites'}, data, str(out_file), lock=False)
+                except Exception as e:
+                    print(f"Failed to save {out_file.name} (prod={current_prod}): {e}")
+                else:
+                    print(f"Saved {out_file.name} successfully (prod={current_prod})")
+
+                iprod += 1
 
        
 

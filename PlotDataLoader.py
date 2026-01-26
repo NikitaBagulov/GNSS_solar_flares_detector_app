@@ -7,6 +7,8 @@ import pandas as pd
 import h5py
 import matplotlib.image as mpimg
 
+from datetime import timedelta
+
 from PlotData import PlotData, FlareData
 from flare_utils import build_flare_key, get_flare_window
 
@@ -16,6 +18,7 @@ class PlotDataLoader:
         self.flares_file = Path(flares_file)
         self.state_file = Path(state_file)
         self.sun_image_path = Path(sun_image_path) if sun_image_path else None
+        self.products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
 
         # CSV со вспышками
         self.flares_df = pd.read_csv(
@@ -68,46 +71,53 @@ class PlotDataLoader:
         if not euv_path:
             euv_path = files_for_date.get("soho_sem")
 
-        # 3️⃣ Карты (HDF5)
+        print("maps path", maps_paths)
         timestamps, product_values = self._load_maps(
             maps_paths, start_interval, end_interval
         )
+        indices = {
+        p: {"day_night_index": [], "gsflai_index": [], "isfai_index": []}
+        for p in self.products
+        }
+        index_times = None
+        for product in self.products:
+            times, day_night_index = self._load_index_csv(
+                indices_paths.get(product),
+                "day_night_index",
+                start_interval,
+                end_interval
+            )
 
-        # 4️⃣ Индексы
-        index_times, day_night_index = self._load_index_csv(
-            indices_paths.get("roti"),
-            "day_night_index",
-            start_interval,
-            end_interval
-        )
+            _, gsflai_index = self._load_index_csv(
+                indices_paths.get(product),
+                "gsflai_index",
+                start_interval,
+                end_interval
+            )
 
-        _, gsflai_index = self._load_index_csv(
-            indices_paths.get("roti"),
-            "gsflai_index",
-            start_interval,
-            end_interval
-        )
-
-        _, isfai_index = self._load_index_csv(
-            indices_paths.get("roti"),
-            "isfai_index",
-            start_interval,
-            end_interval
-        )
-
+            _, isfai_index = self._load_index_csv(
+                indices_paths.get(product),
+                "isfai_index",
+                start_interval,
+                end_interval
+            )
+            index_times = times
+            indices[product]["day_night_index"] = day_night_index
+            indices[product]["gsflai_index"] = gsflai_index
+            indices[product]["isfai_index"] = isfai_index
         # 5️⃣ X-ray и EUV
         xray_times, xray_values = self._load_csv_interval(
             xray_path,
             value_col="xrsb",
-            start_interval=start_interval,
-            end_interval=end_interval
+            start_interval=start_interval+timedelta(hours=8),
+            end_interval=end_interval+timedelta(hours=8)
         )
 
         euv_times, euv_values = self._load_csv_interval(
             euv_path,
             value_col="flux_01_50",
-            start_interval=start_interval,
-            end_interval=end_interval
+            start_interval=start_interval+timedelta(hours=8),
+            end_interval=end_interval+timedelta(hours=8)
         )
 
         # 6️⃣ Список вспышек
@@ -127,6 +137,8 @@ class PlotDataLoader:
             timestamps=timestamps,
             product_values=product_values,
 
+
+
             xray_times=xray_times,
             xray_values=xray_values,
 
@@ -134,9 +146,7 @@ class PlotDataLoader:
             euv_values=euv_values,
 
             index_times=index_times,
-            day_night_index=day_night_index,
-            gsflai_index=gsflai_index,
-            isfai_index=isfai_index,
+            indices=indices,
 
             flare=flare_list,
             sun_image=self.sun_image
