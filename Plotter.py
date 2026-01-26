@@ -94,7 +94,7 @@ class Plotter:
                 plt.close(fig)
 
 
-    def _plot_map(self, ax, time_index, product_name="dtec_2_10", map_time=None):
+    def _plot_map(self, ax, time_index, product_name="dtec_2_10", map_time=None, vmin=None, vmax=None, show_colorbar=True):
         if not self.data.product_values or time_index >= len(self.data.product_values):
             ax.set_title("No map data or invalid index")
             return
@@ -112,6 +112,7 @@ class Plotter:
         sc = ax.scatter(
             all_lons, all_lats, c=all_vals,
             s=MAP_POINT_SIZE, cmap=MAP_CMAP,
+            vmin=vmin, vmax=vmax,
             alpha=0.85,
             transform=ccrs.PlateCarree()
         )
@@ -129,8 +130,9 @@ class Plotter:
             fontsize=14,
             pad=6,
         )
-        cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
-        plt.colorbar(sc, cax=cbar_ax, label=self._format_product_name(product_name))
+        if show_colorbar:
+            cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
+            plt.colorbar(sc, cax=cbar_ax, label=self._format_product_name(product_name))
         if map_time:
             self._plot_terminator(ax, map_time)
 
@@ -454,3 +456,82 @@ class Plotter:
         # ⬇️ добавили папку product_name
         return self.output_dir / date_folder / flare_label / product_name / filename
 
+
+class CombinedPlotter(Plotter):
+    def plot_all(self):
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+        product_slots = products[:4]
+        axis_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        index_positions = [(2, 0), (2, 1), (3, 0), (3, 1)]
+
+        for i, map_time in enumerate(self.data.timestamps):
+            flare = self._select_nearest_flare(map_time)
+
+            fig = plt.figure(figsize=(18, 16), constrained_layout=False)
+            gs = fig.add_gridspec(
+                5,
+                2,
+                height_ratios=[4.2, 4.2, 2.8, 2.8, 2.8],
+                width_ratios=[1, 1],
+                wspace=0.25,
+                hspace=0.5,
+            )
+
+            map_axes = [
+                fig.add_subplot(gs[row, col], projection=ccrs.PlateCarree())
+                for row, col in axis_positions
+            ]
+            index_axes = [fig.add_subplot(gs[row, col]) for row, col in index_positions]
+            solar_axis = fig.add_subplot(gs[4, :])
+
+            for idx, product_name in enumerate(product_slots):
+                vmin, vmax = self._get_product_color_range(product_name)
+                self._plot_map(
+                    map_axes[idx],
+                    i,
+                    product_name=product_name,
+                    map_time=map_time,
+                    vmin=vmin,
+                    vmax=vmax,
+                )
+                self._plot_indices(
+                    index_axes[idx],
+                    highlight_time=map_time,
+                    product_name=product_name,
+                    flare=flare,
+                )
+                self._format_time_axis(index_axes[idx])
+
+            self._plot_solar(solar_axis, highlight_time=map_time)
+            self._format_time_axis(solar_axis)
+
+            title = f"All Products — {map_time:%Y-%m-%d %H:%M UTC}"
+            if flare:
+                title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
+            fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
+            fig.subplots_adjust(top=0.92, bottom=0.06)
+
+            output_path = self._build_combined_output_path(map_time, flare)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(output_path, dpi=200, bbox_inches="tight")
+            plt.close(fig)
+
+    def _get_product_color_range(self, product_name):
+        if product_name == "roti":
+            return 0, 10
+        return -5, 5
+
+    def _build_combined_output_path(self, map_time, flare):
+        date_folder = map_time.strftime("%Y-%m-%d")
+
+        if flare and flare.peak_time:
+            flare_label = f"flare_{flare.peak_time:%H%M%S}"
+        elif flare and flare.start_time:
+            flare_label = f"flare_{flare.start_time:%H%M%S}"
+        else:
+            flare_label = "flare_unknown"
+
+        time_label = map_time.strftime("%H%M%S")
+        filename = f"combined_{time_label}.png"
+
+        return self.output_dir / date_folder / flare_label / "combined" / filename
