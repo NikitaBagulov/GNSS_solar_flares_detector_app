@@ -1,8 +1,9 @@
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
-from dateutil import tz
+
 import time
+import numpy as np
 from simurg_core.storage.hdf_query import get_map_chunked
 from simurg_core.storage.hdf_storage import get_sites_attrs
 from simurg_core.storage.hdf_maps import store_maps_time_based
@@ -155,6 +156,55 @@ class DataPreprocessor:
                     print(f"Saved {out_file.name} successfully (prod={current_prod})")
 
                 iprod += 1
+
+            times = []
+            print(f"TEST: {start_interval} {end_interval}")
+           
+            current = start_interval
+            while current <= end_interval:
+                times.append(current)
+                current += timedelta(seconds=30)
+
+            if not times:
+                print(f"Empty time window for flare {flare_key}, skipping.")
+                continue
+
+            print(f"Flare {flare_key}: {times[0]} ... {times[-1]}")
+            start_time = time.time()
+            generator = get_map_chunked(
+                sites_description,
+                times,
+                file_path=file_path,
+                product_types=self.data_products,
+                roti_type='simple',
+                chunk=40
+            )
+            for chunk_idx, data in enumerate(generator, 1):
+
+                if not data:
+                    print(f"Chunk {chunk_idx} is empty: {data}. Time {time.time() - start_time:.2f} seconds\n") 
+                    continue
+
+                print(f"Chunk {chunk_idx}. Time {time.time() - start_time:.2f} seconds.")
+                for prod in self.data_products:
+                    maps_file = (flare_dir / f"map_{prod}.h5").resolve()
+                    maps_file.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        store_maps_time_based({'sites': 'sites'}, data, str(maps_file), lock=False)
+                    except Exception as e:
+                        print(f"Failed to save {maps_file.name}: {e}")
+                    else:
+                        print(f"Saved {maps_file.name} successfully")
+            if tracker is not None:
+                tracker.register_files_for_flare(
+                    flare_key,
+                    {
+                        "maps": {
+                            prod: flare_dir / f"map_{prod}.h5"
+                            for prod in self.data_products
+                        }
+                    }
+                )
 
        
 
