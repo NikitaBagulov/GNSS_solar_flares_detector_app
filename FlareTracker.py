@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import pandas as pd
@@ -369,7 +369,7 @@ class FlareTracker:
         time_columns = ["start_time", "peak_time", "end_time"]
         for col in time_columns:
             if col in df.columns:
-                df[col] = pd.to_datetime(df[col], utc=True)
+                df[col] = pd.to_datetime(df[col])
 
         if "class_value" in df.columns:
             df = df.sort_values("class_value", ascending=False)
@@ -395,7 +395,7 @@ class FlareTracker:
                 time_columns = ['start_time', 'peak_time', 'end_time']
                 for col in time_columns:
                     if col in df.columns:
-                        df[col] = pd.to_datetime(df[col], utc=True)
+                        df[col] = pd.to_datetime(df[col])
 
                 if "class_value" not in df.columns and "class" in df.columns:
                     df["class_value"] = df["class"].apply(self._flare_class_to_numeric)
@@ -466,9 +466,9 @@ class FlareTracker:
                     if not flare_class:
                         continue
                     
-                    start_dt = Time(flare['event_starttime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
-                    peak_dt = Time(flare['event_peaktime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
-                    end_dt = Time(flare['event_endtime']).to_datetime().replace(tzinfo=tz.gettz('UTC'))
+                    start_dt = Time(flare['event_starttime']).to_datetime().tz_localize('UTC')
+                    peak_dt  = Time(flare['event_peaktime']).to_datetime().tz_localize('UTC')
+                    end_dt   = Time(flare['event_endtime']).to_datetime().tz_localize('UTC')
                     flare_date = start_dt.date()
                     
                     flares_data.append({

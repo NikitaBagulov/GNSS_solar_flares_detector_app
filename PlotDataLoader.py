@@ -7,11 +7,14 @@ import pandas as pd
 import h5py
 import matplotlib.image as mpimg
 
-from datetime import timedelta
+from datetime import datetime
+from dateutil import tz
 
 from PlotData import PlotData, FlareData
 from flare_utils import build_flare_key, get_flare_window
 
+_UTC = tz.gettz('UTC')
+SIMURG_MAP_TIME_KEY_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
 
 class PlotDataLoader:
     def __init__(self, flares_file: str, state_file: str, sun_image_path: Optional[str] = None):
@@ -111,15 +114,15 @@ class PlotDataLoader:
         xray_times, xray_values = self._load_csv_interval(
             xray_path,
             value_col="xrsb",
-            start_interval=start_interval+timedelta(hours=8),
-            end_interval=end_interval+timedelta(hours=8)
+            start_interval=start_interval,
+            end_interval=end_interval
         )
 
         euv_times, euv_values = self._load_csv_interval(
             euv_path,
             value_col="flux_01_50",
-            start_interval=start_interval+timedelta(hours=8),
-            end_interval=end_interval+timedelta(hours=8)
+            start_interval=start_interval,
+            end_interval=end_interval
         )
         print("AFTER LOAD CSV")
         # 6️⃣ Список вспышек
@@ -161,11 +164,12 @@ class PlotDataLoader:
     def _load_maps(self, maps_paths, start_interval, end_interval):
         """
         Загружает карты из HDF5 и возвращает:
-        - timestamps: общий список всех уникальных временных меток
-        - product_values: список словарей для каждого времени, ключи — названия продуктов
+        - timestamps: отсортированный список datetime
+        - product_values: список словарей {product_name: ndarray}
         """
-        timestamps = set()
-        product_data = {}
+
+        timestamps: set[datetime] = set()
+        product_data: dict[str, dict[datetime, np.ndarray]] = {}
 
         for prod_name, path in maps_paths.items():
             path = Path(path)
@@ -173,14 +177,21 @@ class PlotDataLoader:
                 continue
 
             product_data[prod_name] = {}
+
             with h5py.File(path, "r") as f:
                 for str_time in f["data"]:
-                    time = pd.to_datetime(str_time, utc=True)
+                    try:
+                        time = datetime.strptime(str_time, SIMURG_MAP_TIME_KEY_FORMAT)
+                        time = time.replace(tzinfo=_UTC)
+                    except ValueError:
+                        # если формат вдруг не совпал — пропускаем
+                        continue
+
                     if start_interval <= time <= end_interval:
                         timestamps.add(time)
-                        # сохраняем все точки
                         product_data[prod_name][time] = f["data"][str_time][:]
 
+        # 🔁 fallback: если ничего не попало в интервал
         if not timestamps and maps_paths:
             for prod_name, path in maps_paths.items():
                 path = Path(path)
@@ -188,9 +199,15 @@ class PlotDataLoader:
                     continue
 
                 product_data.setdefault(prod_name, {})
+
                 with h5py.File(path, "r") as f:
                     for str_time in f["data"]:
-                        time = pd.to_datetime(str_time, utc=True)
+                        try:
+                            time = datetime.strptime(str_time, SIMURG_MAP_TIME_KEY_FORMAT)
+                            time = time.replace(tzinfo=_UTC)
+                        except ValueError:
+                            continue
+
                         timestamps.add(time)
                         product_data[prod_name][time] = f["data"][str_time][:]
 
@@ -200,7 +217,9 @@ class PlotDataLoader:
         for t in timestamps:
             prod_dict = {}
             for prod_name in maps_paths.keys():
-                prod_dict[prod_name] = product_data[prod_name].get(t, np.array([]))
+                prod_dict[prod_name] = product_data.get(prod_name, {}).get(
+                    t, np.array([])
+                )
             product_values.append(prod_dict)
 
         return timestamps, product_values
