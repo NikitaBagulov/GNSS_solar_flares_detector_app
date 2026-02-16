@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -67,9 +67,9 @@ class Plotter:
                 ax_sun = fig.add_subplot(gs[0, 1])
                 ax_indices = fig.add_subplot(gs[1, :])
                 ax_solar = fig.add_subplot(gs[2, :])
-
+                vmin, vmax = CombinedPlotter._get_product_color_range(product_name)
                 # ⬇️ рисуем карту конкретного продукта
-                self._plot_map(ax_map, i, product_name=product_name, map_time=map_time)
+                self._plot_map(ax_map, i, product_name=product_name, map_time=map_time, vmin=vmin, vmax=vmax)
 
                 self._plot_sun(ax_sun, flare)
 
@@ -83,7 +83,7 @@ class Plotter:
 
                 title = f"{self._format_product_name(product_name)} — {map_time:%Y-%m-%d %H:%M UTC}"
                 if flare:
-                    title += f"\nFlare {flare.flare_id}: {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
+                    title += f"{flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
                 fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
                 fig.subplots_adjust(top=0.9, bottom=0.08)
 
@@ -94,7 +94,7 @@ class Plotter:
                 plt.close(fig)
 
 
-    def _plot_map(self, ax, time_index, product_name="dtec_2_10", map_time=None):
+    def _plot_map(self, ax, time_index, product_name="dtec_2_10", map_time=None, vmin=None, vmax=None, show_colorbar=True):
         if not self.data.product_values or time_index >= len(self.data.product_values):
             ax.set_title("No map data or invalid index")
             return
@@ -112,6 +112,7 @@ class Plotter:
         sc = ax.scatter(
             all_lons, all_lats, c=all_vals,
             s=MAP_POINT_SIZE, cmap=MAP_CMAP,
+            vmin=vmin, vmax=vmax,
             alpha=0.85,
             transform=ccrs.PlateCarree()
         )
@@ -129,8 +130,9 @@ class Plotter:
             fontsize=14,
             pad=6,
         )
-        cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
-        plt.colorbar(sc, cax=cbar_ax, label=self._format_product_name(product_name))
+        if show_colorbar:
+            cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
+            plt.colorbar(sc, cax=cbar_ax, label=self._format_product_name(product_name))
         if map_time:
             self._plot_terminator(ax, map_time)
 
@@ -224,8 +226,8 @@ class Plotter:
         if flare:
             self._plot_flare_markers(ax, flare)
 
-        ax.set_ylabel("Normalized Index")
-        ax.set_title(f"Indices (Normalized) — {self._format_product_name(product_name)}")
+        ax.set_ylabel("Index")
+        ax.set_title(f"Indices — {self._format_product_name(product_name)}")
         ax.legend(ncol=3, loc="upper left", frameon=True, fontsize=10)
         ax.grid(True)
         ax.set_ylim(0, 1)
@@ -253,8 +255,8 @@ class Plotter:
                 label="_nolegend_",
             )
 
-        ax.set_ylabel("Normalized Flux")
-        ax.set_title("Solar Activity (Normalized)")
+        ax.set_ylabel("Flux")
+        ax.set_title("Solar Activity")
         ax.grid(True)
         ax.legend(ncol=2, loc="upper left", frameon=True, fontsize=10)
         ax.set_ylim(0, 1)
@@ -263,8 +265,8 @@ class Plotter:
 
 
     def _format_time_axis(self, ax):
-        ax.xaxis.set_major_locator(AutoDateLocator(maxticks=5))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d\n%H:%M"))
+        ax.xaxis.set_major_locator(AutoDateLocator(maxticks=10))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
     def _to_naive(self, times):
         """Конвертирует массив времени в tz-naive (UTC)"""
@@ -306,7 +308,7 @@ class Plotter:
             ax.axvspan(
                 self._ensure_naive_time(flare.start_time),
                 self._ensure_naive_time(flare.end_time),
-                color="#f39c12",
+                color="#e49f31",
                 alpha=0.28,
                 zorder=0,
             )
@@ -315,7 +317,7 @@ class Plotter:
         peak_time = self._ensure_naive_time(flare.peak_time)
         ax.axvline(
             peak_time,
-            color="#e74c3c",
+            color="#ff1900",
             linestyle="--",
             linewidth=1.4,
             label="_nolegend_",
@@ -327,7 +329,7 @@ class Plotter:
             xytext=(6, -4),
             textcoords="offset points",
             fontsize=10,
-            color="#e74c3c",
+            color="#000000",
             ha="left",
             va="top",
             bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
@@ -354,16 +356,18 @@ class Plotter:
         ax.fill(x, y, transform=rotated_pole, color=color, alpha=alpha, zorder=3)
 
     def _get_latlon(self, time_value=None):
+        print(time_value, time_value.tzinfo)
         if time_value is None:
             time_value = datetime.now(timezone.utc)
         time_value = self._to_utc_datetime(time_value)
+        print(time_value, time_value.tzinfo, time_value.timestamp())
         sub_lat, sub_lon = self._subsolar_point(time_value)
         return sub_lat, sub_lon
 
     def _to_utc_datetime(self, dt_value):
         if dt_value.tzinfo is None:
             return dt_value.replace(tzinfo=timezone.utc)
-        return dt_value.astimezone(timezone.utc)
+        return dt_value
 
     def _subsolar_point(self, dt_value):
         year, month = dt_value.year, dt_value.month
@@ -405,16 +409,16 @@ class Plotter:
         ) % 360.0
 
         gha = (gmst - ra_deg) % 360.0
-        subsolar_lon = (180.0 - gha)
+        subsolar_lon = -gha
         subsolar_lon = (subsolar_lon + 180.0) % 360.0 - 180.0
 
         return subsolar_lat, subsolar_lon
 
     def _format_product_name(self, product_name):
         mapping = {
-            "dtec_2_10": "TEC variations 2–10 minutes",
-            "dtec_10_20": "TEC variations 10–20 minutes",
-            "dtec_20_60": "TEC variations 20–60 minutes",
+            "dtec_2_10": "TEC var. 2–10 min.",
+            "dtec_10_20": "TEC var. 10–20 min.",
+            "dtec_20_60": "TEC var. 20–60 min.",
             "roti": "ROTI",
         }
         return mapping.get(product_name, product_name)
@@ -454,3 +458,82 @@ class Plotter:
         # ⬇️ добавили папку product_name
         return self.output_dir / date_folder / flare_label / product_name / filename
 
+
+class CombinedPlotter(Plotter):
+    def plot_all(self):
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+        product_slots = products[:4]
+        axis_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+
+        for i, map_time in enumerate(self.data.timestamps):
+            flare = self._select_nearest_flare(map_time)
+
+            fig = plt.figure(figsize=(18, 16), constrained_layout=False)
+            gs = fig.add_gridspec(
+                7,
+                2,
+                height_ratios=[6.2, 6.2, 2.1, 2.1, 2.1, 2.1, 2.6],
+                width_ratios=[1, 1],
+                wspace=0.25,
+                hspace=0.5,
+            )
+
+            map_axes = [
+                fig.add_subplot(gs[row, col], projection=ccrs.PlateCarree())
+                for row, col in axis_positions
+            ]
+            index_axes = [fig.add_subplot(gs[row, :]) for row in range(2, 6)]
+            solar_axis = fig.add_subplot(gs[6, :])
+
+            for idx, product_name in enumerate(product_slots):
+                vmin, vmax = self._get_product_color_range(product_name)
+                self._plot_map(
+                    map_axes[idx],
+                    i,
+                    product_name=product_name,
+                    map_time=map_time,
+                    vmin=vmin,
+                    vmax=vmax,
+                )
+                self._plot_indices(
+                    index_axes[idx],
+                    highlight_time=map_time,
+                    product_name=product_name,
+                    flare=flare,
+                )
+                self._format_time_axis(index_axes[idx])
+
+            self._plot_solar(solar_axis, highlight_time=map_time)
+            self._format_time_axis(solar_axis)
+            title = ""
+            if flare:
+                    title += f"Flare {flare.start_time:%H:%M}–{flare.end_time:%H:%M}\n"
+            title += f"{map_time:%Y-%m-%d %H:%M UTC}"
+            fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
+            fig.subplots_adjust(top=0.92, bottom=0.06)
+
+            output_path = self._build_combined_output_path(map_time, flare)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(output_path, dpi=200, bbox_inches="tight")
+            plt.close(fig)
+
+    @staticmethod
+    def _get_product_color_range(product_name):
+        if product_name == "roti":
+            return 0, 1
+        return -1, 1
+
+    def _build_combined_output_path(self, map_time, flare):
+        date_folder = map_time.strftime("%Y-%m-%d")
+
+        if flare and flare.peak_time:
+            flare_label = f"flare_{flare.peak_time:%H%M%S}"
+        elif flare and flare.start_time:
+            flare_label = f"flare_{flare.start_time:%H%M%S}"
+        else:
+            flare_label = "flare_unknown"
+
+        time_label = map_time.strftime("%H%M%S")
+        filename = f"combined_{time_label}.png"
+
+        return self.output_dir / date_folder / flare_label / "combined" / filename
