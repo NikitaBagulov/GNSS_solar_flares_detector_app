@@ -29,30 +29,30 @@ def _to_utc_datetime(dt: datetime.datetime) -> datetime.datetime:
     return dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 
 
-def _subsolar_point(dt: datetime.datetime):
-    dt = _to_utc_datetime(dt)
-
-    year, month = dt.year, dt.month
-    day = dt.day + (dt.hour + (dt.minute + dt.second / 60.0) / 60.0) / 24.0
+def _subsolar_point(dt_value):
+    year, month = dt_value.year, dt_value.month
+    day = dt_value.day + (dt_value.hour + (dt_value.minute + dt_value.second / 60.0) / 60.0) / 24.0
     if month <= 2:
         year -= 1
         month += 12
-
     A = year // 100
     B = 2 - A + (A // 4)
-    JD = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
+    jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
 
-    T = (JD - 2451545.0) / 36525.0
-
-    L0 = (280.46646 + 36000.76983 * T) % 360.0
-    M = (357.52911 + 35999.05029 * T) % 360.0
+    T = (jd - 2451545.0) / 36525.0
+    L0 = (280.46646 + 36000.76983 * T + 0.0003032 * T * T) % 360.0
+    M = (357.52911 + 35999.05029 * T - 0.0001537 * T * T) % 360.0
 
     Mrad = math.radians(M)
-    C = 1.914602 * math.sin(Mrad) + 0.019993 * math.sin(2 * Mrad)
-
+    C = (
+        (1.914602 - 0.004817 * T - 0.000014 * T * T) * math.sin(Mrad)
+        + (0.019993 - 0.000101 * T) * math.sin(2 * Mrad)
+        + 0.000289 * math.sin(3 * Mrad)
+    )
     true_long = L0 + C
-    eps = math.radians(23.439291)
 
+    eps0 = 23.439291 - 0.0130042 * T
+    eps = math.radians(eps0)
     lam = math.radians(true_long)
 
     dec = math.asin(math.sin(eps) * math.sin(lam))
@@ -61,15 +61,39 @@ def _subsolar_point(dt: datetime.datetime):
     ra = math.atan2(math.cos(eps) * math.sin(lam), math.cos(lam))
     ra_deg = (math.degrees(ra) + 360.0) % 360.0
 
-    GMST = (280.46061837
-            + 360.98564736629 * (JD - 2451545.0)) % 360.0
+    gmst = (
+        280.46061837
+        + 360.98564736629 * (jd - 2451545.0)
+        + 0.000387933 * T * T
+        - (T * T * T) / 38710000.0
+    ) % 360.0
 
-    GHA = (GMST - ra_deg) % 360.0
-
-    subsolar_lon = (180.0 - GHA)
+    gha = (gmst - ra_deg) % 360.0
+    subsolar_lon = -gha
     subsolar_lon = (subsolar_lon + 180.0) % 360.0 - 180.0
 
     return subsolar_lat, subsolar_lon
+
+
+def _weighted_percentile(x, w, q):
+    x = np.asarray(x, dtype=float)
+    w = np.asarray(w, dtype=float)
+
+    m = np.isfinite(x) & np.isfinite(w) & (w > 0)
+    if not np.any(m):
+        return np.nan
+
+    x = x[m]
+    w = w[m]
+
+    idx = np.argsort(x)
+    x = x[idx]
+    w = w[idx]
+
+    cdf = np.cumsum(w)
+    cdf /= cdf[-1]
+
+    return float(np.interp(q / 100.0, cdf, x))
 
 
 def compute_day_night_index(dates, time_key):
@@ -92,13 +116,9 @@ def compute_day_night_index(dates, time_key):
     lon = lon[valid]
     values = values[valid]
 
-    if np.nanmin(values) < 0:
-        activity = np.abs(values)
-    else:
-        activity = values
+    activity = np.abs(values) if np.nanmin(values) < 0 else values
 
     sub_lat, sub_lon = _subsolar_point(time_key)
-
     distances = great_circle_distance_vec(lat, lon, lat0=sub_lat, lon0=sub_lon)
 
     ok = np.isfinite(distances) & np.isfinite(activity)
@@ -108,42 +128,37 @@ def compute_day_night_index(dates, time_key):
     distances = distances[ok]
     activity = activity[ok]
 
-    # ---------- ВАЖНОЕ ИЗМЕНЕНИЕ НАЧИНАЕТСЯ ЗДЕСЬ ----------
-
-    # зенитный угол Солнца (рад)
     chi = distances / RE_meters
-
-    # косинус зенитного угла
     cos_chi = np.cos(chi)
 
-    # день / ночь
-    day_limit = math.pi / 2
-    day_mask = chi < day_limit
+    day_mask = chi < (math.pi / 2)
     night_mask = ~day_mask
 
-    total_day = 0.0
-    if np.any(day_mask):
-        d_day = distances[day_mask]
-        a_day = activity[day_mask]
-        mu = cos_chi[day_mask]
-
-        # старый линейный вес
-        w_geom = 1.0 - (d_day / (day_limit * RE_meters))
-        w_geom = np.clip(w_geom, 0.0, 1.0)
-
-        # НОВОЕ: физический вес cos(χ)
-        w = w_geom * np.clip(mu, 0.0, 1.0)
-
-        total_day = float(np.sum(w * a_day))
-
-    # ночь — слабый фон
-    night_gain = 0.15
-    total_night = 0.0
-    if np.any(night_mask):
-        total_night = float(np.mean(activity[night_mask])) * night_gain
-
     eps = 1e-12
-    if total_night <= eps:
-        return float(total_day)
 
-    return float(math.log(total_day / (total_night + eps)))
+    # ---- DAY: взвешенное СРЕДНЕЕ (устойчиво к числу точек) ----
+    day_mean = 0.0
+    if np.any(day_mask):
+        a = activity[day_mask]
+        mu = np.clip(cos_chi[day_mask], 0.0, 1.0)
+
+        # мягкий вес по освещённости (не душим терминатор как w_geom)
+        w_day = mu ** 0.5  # можно 1.0, если хочешь ровно cos(chi)
+
+        wsum = float(np.sum(w_day))
+        if wsum > 0.0:
+            day_mean = float(np.sum(w_day * a) / (wsum + eps))
+
+    # ---- NIGHT: обычное СРЕДНЕЕ (без gain) ----
+    night_mean = 0.0
+    if np.any(night_mask):
+        night_mean = float(np.mean(activity[night_mask]))
+
+    # если ночи нет — вернём просто дневной уровень
+    if night_mean <= eps:
+        return float(max(day_mean, 0.0))
+
+    # ---- Индекс режима "2": насколько день выше ночного среднего, всегда >= 0 ----
+    excess = (day_mean - night_mean) / (night_mean + eps)  # относительное превышение
+    excess = max(excess, 0.0)
+    return float(math.log1p(excess))

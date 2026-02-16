@@ -142,9 +142,9 @@ try:
         print(f"  Локация: {first_flare.location}")
 
         plotter = Plotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
-        plotter.plot_all()
-        # combined_plotter = CombinedPlotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
-        # combined_plotter.plot_all()
+        # plotter.plot_all()
+        combined_plotter = CombinedPlotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
+        combined_plotter.plot_all()
     
 except Exception as e:
     print(f"\nПроизошла ошибка: {e}")

@@ -356,9 +356,11 @@ class Plotter:
         ax.fill(x, y, transform=rotated_pole, color=color, alpha=alpha, zorder=3)
 
     def _get_latlon(self, time_value=None):
+        print(time_value, time_value.tzinfo)
         if time_value is None:
             time_value = datetime.now(timezone.utc)
-        time_value = self._to_utc_datetime(time_value) - timedelta(hours=8)
+        time_value = self._to_utc_datetime(time_value)
+        print(time_value, time_value.tzinfo, time_value.timestamp())
         sub_lat, sub_lon = self._subsolar_point(time_value)
         return sub_lat, sub_lon
 
@@ -407,7 +409,7 @@ class Plotter:
         ) % 360.0
 
         gha = (gmst - ra_deg) % 360.0
-        subsolar_lon = (180.0 - gha)
+        subsolar_lon = -gha
         subsolar_lon = (subsolar_lon + 180.0) % 360.0 - 180.0
 
         return subsolar_lat, subsolar_lon
