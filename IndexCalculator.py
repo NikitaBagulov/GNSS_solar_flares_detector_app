@@ -57,22 +57,14 @@ class IndexCalculator:
         self.registry.register("isfai_index",    lambda dates, t: compute_index(dates, t, compute_isfai_index))
         self.available_products = []
 
-    # -------- NEW --------
-    def scan_all_dates(self):
-        dates = []
+    def scan_all_flares(self):
+        flare_keys = []
         for folder in self.base_folder.iterdir():
             if folder.is_dir():
-                try:
-                    d = datetime.datetime.strptime(folder.name, "%Y-%m-%d").date()
-                    dates.append(d)
-                except ValueError:
-                    pass
-        return sorted(dates)
+                flare_keys.append(folder.name)
+        return sorted(flare_keys)
 
-    def detect_products(self, date: datetime.date):
-        print(date)
-        folder_path = self.base_folder / date.strftime("%Y-%m-%d")
-        print(folder_path)
+    def detect_products(self, folder_path: Path):
         if not folder_path.exists():
             return []
         product_files = folder_path.glob("map_*.h5")
@@ -80,32 +72,38 @@ class IndexCalculator:
         self.available_products = products
         return products
 
-    # -------- UPDATED --------
     def process_all_folders(self):
-        all_dates = self.scan_all_dates()
+        flare_keys = self.scan_all_flares()
 
-        if not all_dates:
-            print("Нет папок с датами.")
+        if not flare_keys:
+            print("Нет папок с данными вспышек.")
             return
 
-        print(f"Найдено {len(all_dates)} дат: {all_dates}")
+        print(f"Найдено {len(flare_keys)} вспышек: {flare_keys}")
 
-        for date in all_dates:
-            print(f"\n=== Обработка даты {date} ===")
-            self.process_single_date(date)
+        for flare_key in flare_keys:
+            print(f"\n=== Обработка вспышки {flare_key} ===")
+            self.process_single_flare(flare_key)
 
-    # оставляем старую функцию, но делаем её внутренней
-    def process_single_date(self, date: datetime.date):
-        products = self.detect_products(date)
-        print(products)
+    def process_single_flare(self, flare_key: str, tracker=None):
+        folder_path = self.base_folder / flare_key
+        products = self.detect_products(folder_path)
         if not products:
-            print(f"Нет файлов данных для даты {date}")
+            print(f"Нет файлов данных для вспышки {flare_key}")
             return
+
+        indices_for_date = {}  # собираем все пути к индексам
 
         for product_type in products:
             print(f"\nОбработка продукта: {product_type}")
-            folder_path = self.base_folder / date.strftime("%Y-%m-%d")
             file_path = folder_path / f"map_{product_type}.h5"
+            output_file = folder_path / f"indices_{product_type}.csv"
+
+            # Проверка существующего CSV
+            if output_file.exists():
+                print(f"Индексы для {product_type} уже существуют, пропускаем вычисление.")
+                indices_for_date[product_type] = output_file
+                continue
 
             try:
                 data_dict = retrieve_data(file_path)
@@ -120,7 +118,6 @@ class IndexCalculator:
                 indices["time"] = time_key
                 all_results.append(indices)
 
-            output_file = folder_path / f"indices_{product_type}.csv"
             if all_results:
                 fieldnames = ["time"] + list(self.registry.index_functions.keys())
                 with open(output_file, "w", newline="", encoding="utf-8") as f:
@@ -128,8 +125,17 @@ class IndexCalculator:
                     writer.writeheader()
                     writer.writerows(all_results)
                 print(f"Индексы сохранены в {output_file}")
+                indices_for_date[product_type] = output_file
             else:
                 print(f"Нет данных для сохранения для продукта {product_type}")
+
+        if tracker is not None and indices_for_date:
+            tracker.register_files_for_flare(
+                flare_key,
+                {"indices": indices_for_date}
+            )
+
+
 
 
 

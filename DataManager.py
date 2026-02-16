@@ -156,13 +156,14 @@ class DataManager:
         target_date: date,
         sources: Optional[List[str]] = None,
         force_redownload: bool = False,
+        tracker=None,
         **kwargs
     ) -> Dict[str, Any]:
         print(f"\n📥 ЗАГРУЗКА ДАННЫХ ЗА {target_date}")
         results = {}
 
         sources_to_download = sources or list(self.download_functions.keys())
-        
+        print(f"Tracker: {tracker}")
         for source_name in sources_to_download:
             if source_name not in self.download_functions:
                 print(f"⚠️ Источник '{source_name}' не зарегистрирован, пропускаем")
@@ -175,10 +176,12 @@ class DataManager:
 
                 filename = f"{source_name}_{target_date.strftime('%Y%m%d')}{extension}"
                 final_path = self.get_download_path(source_name, target_date, filename)
-
+                if tracker is not None:
+                    tracker.register_files_for_date(target_date, {source_name: str(final_path)})
                 if not force_redownload and final_path.exists():
                     try:
                         if self._is_file_valid(final_path, source_name):
+                        
                             results[source_name] = {
                                 'status': 'skipped',
                                 'result': str(final_path),
@@ -213,6 +216,8 @@ class DataManager:
                     temp_path.rename(final_path)
 
                     self._complete_download_transaction(source_name, temp_path)
+                    if tracker is not None:
+                        tracker.register_files_for_date(target_date, {source_name: str(final_path)})
 
                     results[source_name] = {
                         'status': 'success',

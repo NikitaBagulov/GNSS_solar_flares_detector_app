@@ -2,6 +2,8 @@ from DataManager import DataManager
 from FlareTracker import FlareTracker
 from DataPreprocessor import DataPreprocessor
 from IndexCalculator import IndexCalculator
+from PlotDataLoader import PlotDataLoader
+from Plotter import Plotter, CombinedPlotter
 
 from datetime import date, timedelta
 from download_functions.euv import download_soho_sem
@@ -100,32 +102,49 @@ try:
     else:
         print("Ошибка: у tracker нет метода download_missed_data")
     preprocessor = DataPreprocessor(input_root=str(data_download_path))
-    processed_files = preprocessor.process_all()
+    processed_files = preprocessor.process_all(tracker)
 
     calculator = IndexCalculator()
 
-    flare_dates = tracker.state.get("flare_dates", [])
+    flare_keys = list(tracker.state.get("files_by_flare", {}).keys())
 
-    if not flare_dates:
-        print("Нет дат вспышек для обработки индексов.")
+    if not flare_keys:
+        print("Нет данных по вспышкам для обработки индексов.")
     else:
-        for date_str in flare_dates:
-            try:
-                flare_date = date.fromisoformat(date_str)
-            except ValueError:
-                print(f"Некорректная дата в состоянии: {date_str}")
-                continue
-
-            folder_path = Path(data_download_path) / flare_date.strftime("%Y-%m-%d")
-
-            if not folder_path.exists():
-                print(f"Нет папки данных для даты {flare_date}, пропуск.")
-                continue
-
-            print(f"\n=== Индексы для даты вспышки {flare_date} ===")
-            calculator.process_single_date(flare_date)
+        for flare_key in flare_keys:
+            print(f"\n=== Индексы для вспышки {flare_key} ===")
+            calculator.process_single_flare(flare_key, tracker=tracker)
 
     print("\nЗавершено успешно!")
+    loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
+    for flare_key in flare_keys:
+        plot_data = loader.load_flare(flare_key)
+        if not plot_data:
+            print(f"Нет данных для вспышки {flare_key}, пропуск.")
+            continue
+
+        print(f"Найдено {len(plot_data.timestamps)} таймстемпов")
+        print(f"Количество вспышек в наборе: {len(plot_data.flare)}")
+
+        if plot_data.product_values:
+            print("Продуктовые значения для первого таймстемпа:", plot_data.product_values[0])
+        if plot_data.xray_values:
+            print("X-ray значение:", plot_data.xray_values[0])
+        if plot_data.euv_values:
+            print("EUV значение:", plot_data.euv_values[0])
+
+        first_flare = plot_data.flare[0]
+        print("Вспышка:")
+        print(f"  ID: {first_flare.flare_id}")
+        print(f"  Начало: {first_flare.start_time}")
+        print(f"  Пик: {first_flare.peak_time}")
+        print(f"  Конец: {first_flare.end_time}")
+        print(f"  Локация: {first_flare.location}")
+
+        plotter = Plotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
+        # plotter.plot_all()
+        combined_plotter = CombinedPlotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
+        combined_plotter.plot_all()
     
 except Exception as e:
     print(f"\nПроизошла ошибка: {e}")
