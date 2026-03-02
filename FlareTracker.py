@@ -466,9 +466,13 @@ class FlareTracker:
                     if not flare_class:
                         continue
                     
-                    start_dt = Time(flare['event_starttime']).to_datetime().tz_localize('UTC')
-                    peak_dt  = Time(flare['event_peaktime']).to_datetime().tz_localize('UTC')
-                    end_dt   = Time(flare['event_endtime']).to_datetime().tz_localize('UTC')
+                    start_ts = pd.Timestamp(Time(flare['event_starttime']).to_datetime())
+                    peak_ts = pd.Timestamp(Time(flare['event_peaktime']).to_datetime())
+                    end_ts = pd.Timestamp(Time(flare['event_endtime']).to_datetime())
+
+                    start_dt = (start_ts.tz_localize('UTC') if start_ts.tz is None else start_ts.tz_convert('UTC')).to_pydatetime()
+                    peak_dt = (peak_ts.tz_localize('UTC') if peak_ts.tz is None else peak_ts.tz_convert('UTC')).to_pydatetime()
+                    end_dt = (end_ts.tz_localize('UTC') if end_ts.tz is None else end_ts.tz_convert('UTC')).to_pydatetime()
                     flare_date = start_dt.date()
                     
                     flares_data.append({
