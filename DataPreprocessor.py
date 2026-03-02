@@ -178,8 +178,16 @@ class DataPreprocessor:
         h5_files = self.get_h5_files()
         print(f"Found {len(h5_files)} HDF5 files to process.\n")
 
+        processed = 0
+        failed = []
         for file_idx, file_path in enumerate(h5_files, 1):
             print(f"[{file_idx}/{len(h5_files)}] {file_path.name}")
-            self.process_file(file_path, tracker)
+            try:
+                self.process_file(file_path, tracker)
+                processed += 1
+            except Exception as e:
+                print(f"Failed to process {file_path.name}: {e}")
+                failed.append(str(file_path))
 
-        print("All files processed successfully!")
+        print(f"All files processed. Success: {processed}, failed: {len(failed)}")
+        return {"processed": processed, "failed": failed}

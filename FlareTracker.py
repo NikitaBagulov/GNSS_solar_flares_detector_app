@@ -598,16 +598,15 @@ class FlareTracker:
         
         return {'new_flares': 0, 'total_flares': len(existing_flares)}
     
-    def download_missed_data(self):
+    def download_missed_data(self, parallel_downloads: bool = True, max_workers: int = 4):
         print(f"\n{'='*70}")
         print(f"📥 ОБРАБОТКА ДАННЫХ")
         print(f"📅 Диапазон: {self.start_date} - {self.end_date}")
         print(f"{'='*70}")
 
-        # 1. Всегда проверяем API на новые вспышки
         print(f"\n🔍 ВСЕГДА ПРОВЕРЯЕМ API НА НОВЫЕ ВСПЫШКИ")
         api_result = self._update_flares_from_api()
-        
+
         if api_result['new_flares'] > 0:
             print(f"✅ Найдено {api_result['new_flares']} новых вспышек")
             print(f"📊 Всего вспышек: {api_result['total_flares']}")
@@ -615,33 +614,29 @@ class FlareTracker:
             print(f"📭 Новых вспышек не найдено")
             print(f"📊 Всего вспышек: {api_result['total_flares']}")
 
-        # 2. Загружаем данные через DataManager для дней со вспышками
         print(f"\n{'='*70}")
         print(f"📥 СКАЧИВАНИЕ ДАННЫХ ЧЕРЕЗ DataManager")
         print(f"{'='*70}")
 
-        # Синхронизируем состояние перед началом скачивания
         self._sync_state_with_files()
-        
         all_flares = self._load_all_flares()
-        
+
         if all_flares.empty:
             print(f"📭 Нет вспышек для скачивания данных")
             print(f"{'='*70}\n")
             return None
 
-        # Получаем список дат для скачивания (тех, что в state как не скачанные)
         flare_dates = self.get_flare_dates()
         downloaded_dates = set(self.state.get("data_downloaded", []))
-        
+
         dates_to_download = []
         for flare_date in flare_dates:
             date_str = flare_date.strftime("%Y-%m-%d")
             if date_str not in downloaded_dates:
                 dates_to_download.append(flare_date)
-        
+
         total_dates = len(dates_to_download)
-        
+
         if total_dates == 0:
             print(f"📭 Нет дат для скачивания (все уже скачаны)")
             print(f"{'='*70}\n")
@@ -649,100 +644,97 @@ class FlareTracker:
                 'status': 'all_downloaded',
                 'downloaded_dates': len(downloaded_dates)
             }
-        
+
         print(f"📊 Найдено дней для скачивания: {total_dates}")
         print(f"📅 С {dates_to_download[0]} по {dates_to_download[-1]}")
 
-        # Получаем список источников
         available_sources = list(self.data_manager.download_functions.keys())
         print(f"\n📁 Доступные источники: {available_sources}")
 
-        # 3. Скачиваем данные для каждого дня
         print(f"\n📥 НАЧИНАЕМ СКАЧИВАНИЕ...")
-        
+
         success_count = 0
         failed_dates = []
-        
+
         for i, flare_date in enumerate(dates_to_download, 1):
             date_str = flare_date.strftime("%Y-%m-%d")
             print(f"\n[{i}/{len(dates_to_download)}] 📅 {date_str}")
-            
+
             try:
-                # Скачиваем все типы данных через DataManager
-                download_result = self.data_manager.download_by_date(target_date=flare_date, tracker=self)
-                
-                if download_result:
-                    # Проверяем результаты для каждого источника
-                    all_sources_success = True
-                    for source, result in download_result.items():
-                        status = result.get('status', 'unknown')
-                        
-                        if status == 'success':
-                            print(f"   ✅ {source}: скачан")
-                        elif status == 'skipped':
-                            print(f"   ⏭️ {source}: уже существует")
-                        elif status == 'error':
-                            print(f"   ❌ {source}: ошибка - {result.get('error', 'неизвестно')}")
-                            all_sources_success = False
-                        else:
-                            print(f"   ❓ {source}: неизвестный статус - {status}")
-                            all_sources_success = False
-                    
-                    if all_sources_success:
-                        files_exist = True
-                        missing_sources = []
-                        
-                        for source in available_sources:
-                            if not self._check_source_has_data(source, flare_date):
-                                print(f"   ⚠️ Отсутствует файл для источника: {source}")
-                                files_exist = False
-                                missing_sources.append(source)
-                        
-                        if files_exist:
-                            date_str = flare_date.strftime("%Y-%m-%d")
-                            if date_str not in self.state["data_downloaded"]:
-                                self.state["data_downloaded"].append(date_str)
-                                self.state["data_downloaded"] = sorted(self.state["data_downloaded"])
-                                self._save_state(message=f"Дата {date_str} подтверждена как полностью скачанная")
-                            
-                            print(f"   ✅ Все файлы существуют → дата {date_str} подтверждена")
-                            success_count += 1
-                        else:
-                            print(f"   ❌ Не хватает файлов от источников: {missing_sources}")
-                            failed_dates.append(date_str)
-                    else:
-                        print(f"   ⚠️ Не все источники успешно скачаны")
-                        failed_dates.append(date_str)
-                else:
+                download_result = self.data_manager.download_by_date(
+                    target_date=flare_date,
+                    tracker=self,
+                    parallel=parallel_downloads,
+                    max_workers=max_workers,
+                )
+
+                if not download_result:
                     print(f"   ⚠️ Результат скачивания пустой")
                     failed_dates.append(date_str)
-                    
+                    continue
+
+                all_sources_success = True
+                for source, result in download_result.items():
+                    status = result.get('status', 'unknown')
+                    if status == 'success':
+                        print(f"   ✅ {source}: скачан")
+                    elif status == 'skipped':
+                        print(f"   ⏭️ {source}: уже существует")
+                    elif status == 'error':
+                        print(f"   ❌ {source}: ошибка - {result.get('error', 'неизвестно')}")
+                        all_sources_success = False
+                    else:
+                        print(f"   ❓ {source}: неизвестный статус - {status}")
+                        all_sources_success = False
+
+                if all_sources_success:
+                    files_exist = True
+                    missing_sources = []
+                    for source in available_sources:
+                        if not self._check_source_has_data(source, flare_date):
+                            print(f"   ⚠️ Отсутствует файл для источника: {source}")
+                            files_exist = False
+                            missing_sources.append(source)
+
+                    if files_exist:
+                        if date_str not in self.state["data_downloaded"]:
+                            self.state["data_downloaded"].append(date_str)
+                            self.state["data_downloaded"] = sorted(self.state["data_downloaded"])
+                            self._save_state(message=f"Дата {date_str} подтверждена как полностью скачанная")
+
+                        print(f"   ✅ Все файлы существуют → дата {date_str} подтверждена")
+                        success_count += 1
+                    else:
+                        print(f"   ❌ Не хватает файлов от источников: {missing_sources}")
+                        failed_dates.append(date_str)
+                else:
+                    print(f"   ⚠️ Не все источники успешно скачаны")
+                    failed_dates.append(date_str)
+
             except Exception as e:
                 print(f"   ❌ Ошибка скачивания: {e}")
                 failed_dates.append(date_str)
-            
-            # Дополнительное сохранение каждые 2 дня для надежности
+
             self._save_state_if_needed(i, every_n=2)
 
-        # 4. Финальная синхронизация и сохранение
         print(f"\n🔄 ФИНАЛЬНАЯ СИНХРОНИЗАЦИЯ СОСТОЯНИЯ...")
         self._sync_state_with_files()
-        
+
         print(f"\n{'='*70}")
         print(f"📊 ИТОГИ СКАЧИВАНИЯ:")
         print(f"   ✅ Успешно скачано: {success_count} дней")
         print(f"   ❌ Не удалось скачать: {len(failed_dates)} дней")
         print(f"   💾 Всего дней со скачанными данными: {len(self.state.get('data_downloaded', []))}")
-        
+
         if failed_dates:
             print(f"\n📝 Даты с ошибками:")
             for date_str in failed_dates[:10]:
                 print(f"   - {date_str}")
             if len(failed_dates) > 10:
                 print(f"   ... и еще {len(failed_dates) - 10} дней")
-        
+
         print(f"{'='*70}\n")
-        
+
         return {
             'status': 'completed',
             'success_count': success_count,
