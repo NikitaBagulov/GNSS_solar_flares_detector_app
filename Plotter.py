@@ -42,12 +42,12 @@ class Plotter:
         elif plot_data.product_values:
             self.products_to_plot = list(plot_data.product_values[0].keys())
         else:
-            self.products_to_plot = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+            self.products_to_plot = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def plot_all(self):
-        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
 
         for i, map_time in enumerate(self.data.timestamps):
             flare = self._select_nearest_flare(map_time)
@@ -420,6 +420,7 @@ class Plotter:
             "dtec_10_20": "TEC var. 10–20 min.",
             "dtec_20_60": "TEC var. 20–60 min.",
             "roti": "ROTI",
+            "tec": "TEC/VTEC",
         }
         return mapping.get(product_name, product_name)
 
@@ -461,7 +462,7 @@ class Plotter:
 
 class CombinedPlotter(Plotter):
     def plot_all(self):
-        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
         product_slots = products[:4]
         axis_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
 
@@ -521,6 +522,8 @@ class CombinedPlotter(Plotter):
     def _get_product_color_range(product_name):
         if product_name == "roti":
             return 0, 1
+        if product_name == "tec":
+            return 0, 120
         return -1, 1
 
     def _build_combined_output_path(self, map_time, flare):

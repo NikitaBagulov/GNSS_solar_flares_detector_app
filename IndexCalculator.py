@@ -3,11 +3,11 @@ import numpy as np
 from pathlib import Path
 import datetime
 import csv
-import glob
 from index_functions.day_night_index import compute_day_night_index
 from index_functions.gsflai import compute_gsflai_index
 from index_functions.isfai import compute_isfai_index
 from dateutil import tz
+
 
 def compute_index(dates, time_key, index_func):
     try:
@@ -16,13 +16,43 @@ def compute_index(dates, time_key, index_func):
         print(f"Ошибка при вычислении индекса: {e}")
         return np.nan
 
+
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 
+def _mapping_function(elev_deg: np.ndarray, shell_height_km: float = 350.0) -> np.ndarray:
+    """Single-layer mapping function M(E): STEC = M(E) * VTEC."""
+    re_km = 6371.0
+    elev_rad = np.radians(np.clip(elev_deg, 0.1, 90.0))
+    cos_e = np.cos(elev_rad)
+    ratio = re_km / (re_km + shell_height_km)
+    denom = np.sqrt(np.maximum(1.0 - (ratio * cos_e) ** 2, 1e-8))
+    return 1.0 / denom
+
+
+def _convert_stec_to_vtec(array: np.ndarray) -> np.ndarray:
+    """Converts map rows [lat, lon, tec(, elevation)] to [lat, lon, vtec]."""
+    arr = np.asarray(array, dtype=float)
+    if arr.ndim != 2 or arr.shape[1] < 3:
+        return arr
+
+    out = arr.copy()
+    if arr.shape[1] < 4:
+        # Нет угла возвышения — оставляем TEC как есть.
+        return out
+
+    elev = arr[:, 3]
+    valid_elev = np.isfinite(elev) & (elev > 0.0) & (elev <= 90.0)
+    if not np.any(valid_elev):
+        return out
+
+    mapping = _mapping_function(elev[valid_elev])
+    out[valid_elev, 2] = arr[valid_elev, 2] / mapping
+    return out
+
+
 def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
-    """
-    Загружает данные из HDF5 и возвращает словарь {datetime: NDArray}.
-    """
+    """Загружает данные из HDF5 и возвращает словарь {datetime: NDArray}."""
     f_in = h5py.File(file, 'r')
     data = {}
     times = list(f_in['data'])[:]
@@ -30,9 +60,9 @@ def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
         time = datetime.datetime.strptime(str_time, TIME_FORMAT).replace(tzinfo=tz.gettz('UTC'))
         if time.second != 0:
             continue
-        # time = time.replace(microsecond=0)
         data[time] = f_in['data'][str_time][:]
     return data
+
 
 class IndexRegistry:
     def __init__(self):
@@ -53,8 +83,8 @@ class IndexCalculator:
         self.base_folder = Path(base_folder)
         self.registry = IndexRegistry()
         self.registry.register("day_night_index", lambda dates, t: compute_index(dates, t, compute_day_night_index))
-        self.registry.register("gsflai_index",   lambda dates, t: compute_index(dates, t, compute_gsflai_index))
-        self.registry.register("isfai_index",    lambda dates, t: compute_index(dates, t, compute_isfai_index))
+        self.registry.register("gsflai_index", lambda dates, t: compute_index(dates, t, compute_gsflai_index))
+        self.registry.register("isfai_index", lambda dates, t: compute_index(dates, t, compute_isfai_index))
         self.available_products = []
 
     def scan_all_flares(self):
@@ -92,14 +122,13 @@ class IndexCalculator:
             print(f"Нет файлов данных для вспышки {flare_key}")
             return
 
-        indices_for_date = {}  # собираем все пути к индексам
+        indices_for_date = {}
 
         for product_type in products:
             print(f"\nОбработка продукта: {product_type}")
             file_path = folder_path / f"map_{product_type}.h5"
             output_file = folder_path / f"indices_{product_type}.csv"
 
-            # Проверка существующего CSV
             if output_file.exists():
                 print(f"Индексы для {product_type} уже существуют, пропускаем вычисление.")
                 indices_for_date[product_type] = output_file
@@ -113,7 +142,14 @@ class IndexCalculator:
 
             all_results = []
             for time_key, array in data_dict.items():
-                dates = [tuple(row) for row in array]
+                work_array = np.asarray(array, dtype=float)
+                if product_type == "tec":
+                    work_array = _convert_stec_to_vtec(work_array)
+
+                if work_array.ndim != 2 or work_array.shape[1] < 3:
+                    continue
+
+                dates = [tuple(row) for row in work_array[:, :3]]
                 indices = self.registry.compute_all(dates, time_key)
                 indices["time"] = time_key
                 all_results.append(indices)
@@ -134,18 +170,3 @@ class IndexCalculator:
                 flare_key,
                 {"indices": indices_for_date}
             )
-
-
-
-
-
-
-# # ---------------- Пример использования ---------------- #
-# if __name__ == "__main__":
-#     calculator = IndexCalculator()
-#     date = datetime.date(2012, 1, 27)
-
-#     products = calculator.detect_products(date)
-#     print(f"Найденные продукты: {products}")
-
-#     calculator.process_folder(date)

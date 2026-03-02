@@ -21,7 +21,7 @@ class PlotDataLoader:
         self.flares_file = Path(flares_file)
         self.state_file = Path(state_file)
         self.sun_image_path = Path(sun_image_path) if sun_image_path else None
-        self.products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+        self.products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
 
         # CSV со вспышками
         self.flares_df = pd.read_csv(

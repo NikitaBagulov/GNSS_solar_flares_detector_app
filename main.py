@@ -124,7 +124,7 @@ def run_pipeline_cycle(tracker, data_download_path):
             plot_data = loader.load_flare(flare_key)
             if not plot_data:
                 continue
-            combined_plotter = CombinedPlotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
+            combined_plotter = CombinedPlotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"])
             combined_plotter.plot_all()
     except Exception as e:
         print(f"❌ Ошибка в модуле визуализации: {e}")

@@ -22,7 +22,7 @@ class DataPreprocessor:
         self.window_minutes = window_minutes
 
         if data_products is None:
-            self.data_products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+            self.data_products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
             # self.data_products = ["roti"]
         else:
             self.data_products = data_products
