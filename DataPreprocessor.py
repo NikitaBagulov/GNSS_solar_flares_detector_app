@@ -61,6 +61,20 @@ class DataPreprocessor:
                 return False
         return True
 
+    def _resolve_flare_key(self, flare: dict) -> str:
+        raw_key = flare.get("flare_key")
+        if raw_key is not None:
+            key_str = str(raw_key).strip()
+            if key_str and key_str.lower() != "nan":
+                return key_str
+
+        return build_flare_key(
+            flare["start_time"],
+            flare["peak_time"],
+            flare["end_time"],
+            flare.get("class"),
+        )
+
     def process_file(self, file_path, tracker):
         file_path = Path(file_path)
         if not file_path.exists():
@@ -87,12 +101,7 @@ class DataPreprocessor:
         print(f"Products to process: {self.data_products}")
         print(file_path)
         for flare in flares_for_date:
-            flare_key = flare.get("flare_key") or build_flare_key(
-                flare["start_time"],
-                flare["peak_time"],
-                flare["end_time"],
-                flare.get("class"),
-            )
+            flare_key = self._resolve_flare_key(flare)
             flare_dir = self.get_output_dir_for_flare(flare_key)
 
             if self.is_flare_already_processed(flare_dir):
