@@ -1,12 +1,18 @@
+import csv
+import datetime
+from pathlib import Path
+
 import h5py
 import numpy as np
-from pathlib import Path
-import datetime
-import csv
+from dateutil import tz
+
 from index_functions.day_night_index import compute_day_night_index
 from index_functions.gsflai import compute_gsflai_index
 from index_functions.isfai import compute_isfai_index
-from dateutil import tz
+
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+DAY_NIGHT_PRODUCTS = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+TEC_PRODUCT = "tec"
 
 
 def compute_index(dates, time_key, index_func):
@@ -15,9 +21,6 @@ def compute_index(dates, time_key, index_func):
     except Exception as e:
         print(f"Ошибка при вычислении индекса: {e}")
         return np.nan
-
-
-TIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 
 def _mapping_function(elev_deg: np.ndarray, shell_height_km: float = 350.0) -> np.ndarray:
@@ -38,7 +41,6 @@ def _convert_stec_to_vtec(array: np.ndarray) -> np.ndarray:
 
     out = arr.copy()
     if arr.shape[1] < 4:
-        # Нет угла возвышения — оставляем TEC как есть.
         return out
 
     elev = arr[:, 3]
@@ -52,7 +54,6 @@ def _convert_stec_to_vtec(array: np.ndarray) -> np.ndarray:
 
 
 def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
-    """Загружает данные из HDF5 и возвращает словарь {datetime: NDArray}."""
     f_in = h5py.File(file, 'r')
     data = {}
     times = list(f_in['data'])[:]
@@ -64,27 +65,9 @@ def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
     return data
 
 
-class IndexRegistry:
-    def __init__(self):
-        self.index_functions = {}
-
-    def register(self, name: str, func):
-        self.index_functions[name] = func
-
-    def compute_all(self, dates, time_key=None):
-        results = {}
-        for name, func in self.index_functions.items():
-            results[name] = func(dates, time_key)
-        return results
-
-
 class IndexCalculator:
     def __init__(self, base_folder="preprocessed_maps"):
         self.base_folder = Path(base_folder)
-        self.registry = IndexRegistry()
-        self.registry.register("day_night_index", lambda dates, t: compute_index(dates, t, compute_day_night_index))
-        self.registry.register("gsflai_index", lambda dates, t: compute_index(dates, t, compute_gsflai_index))
-        self.registry.register("isfai_index", lambda dates, t: compute_index(dates, t, compute_isfai_index))
         self.available_products = []
 
     def scan_all_flares(self):
@@ -104,16 +87,44 @@ class IndexCalculator:
 
     def process_all_folders(self):
         flare_keys = self.scan_all_flares()
-
         if not flare_keys:
             print("Нет папок с данными вспышек.")
             return
 
         print(f"Найдено {len(flare_keys)} вспышек: {flare_keys}")
-
         for flare_key in flare_keys:
             print(f"\n=== Обработка вспышки {flare_key} ===")
             self.process_single_flare(flare_key)
+
+    @staticmethod
+    def _prepare_rows(array: np.ndarray, product_type: str) -> list[tuple]:
+        work_array = np.asarray(array, dtype=float)
+        if work_array.ndim != 2 or work_array.shape[1] < 3:
+            return []
+
+        if product_type == TEC_PRODUCT:
+            work_array = _convert_stec_to_vtec(work_array)
+
+        return [tuple(row) for row in work_array[:, :3]]
+
+    def _build_indices_for_product(self, product_type: str, data_dict: dict) -> list[dict]:
+        all_results = []
+        for time_key, array in data_dict.items():
+            rows = self._prepare_rows(array, product_type)
+            if not rows:
+                continue
+
+            result = {"time": time_key}
+            if product_type in DAY_NIGHT_PRODUCTS:
+                result["day_night_index"] = compute_index(rows, time_key, compute_day_night_index)
+            elif product_type == TEC_PRODUCT:
+                result["gsflai_index"] = compute_index(rows, time_key, compute_gsflai_index)
+                result["isfai_index"] = compute_index(rows, time_key, compute_isfai_index)
+            else:
+                continue
+
+            all_results.append(result)
+        return all_results
 
     def process_single_flare(self, flare_key: str, tracker=None):
         folder_path = self.base_folder / flare_key
@@ -122,51 +133,48 @@ class IndexCalculator:
             print(f"Нет файлов данных для вспышки {flare_key}")
             return
 
-        indices_for_date = {}
+        indices_for_flare = {
+            "day_night": {},
+            "flare_activity": {},
+        }
 
         for product_type in products:
-            print(f"\nОбработка продукта: {product_type}")
+            if product_type in DAY_NIGHT_PRODUCTS:
+                output_file = folder_path / f"indices_day_night_{product_type}.csv"
+                fieldnames = ["time", "day_night_index"]
+            elif product_type == TEC_PRODUCT:
+                output_file = folder_path / "indices_flare_activity_tec.csv"
+                fieldnames = ["time", "gsflai_index", "isfai_index"]
+            else:
+                continue
+
             file_path = folder_path / f"map_{product_type}.h5"
-            output_file = folder_path / f"indices_{product_type}.csv"
+            print(f"\nОбработка продукта: {product_type}")
 
             if output_file.exists():
                 print(f"Индексы для {product_type} уже существуют, пропускаем вычисление.")
-                indices_for_date[product_type] = output_file
-                continue
-
-            try:
-                data_dict = retrieve_data(file_path)
-            except Exception as e:
-                print(f"Не удалось загрузить файл {file_path}: {e}")
-                continue
-
-            all_results = []
-            for time_key, array in data_dict.items():
-                work_array = np.asarray(array, dtype=float)
-                if product_type == "tec":
-                    work_array = _convert_stec_to_vtec(work_array)
-
-                if work_array.ndim != 2 or work_array.shape[1] < 3:
+            else:
+                try:
+                    data_dict = retrieve_data(file_path)
+                except Exception as e:
+                    print(f"Не удалось загрузить файл {file_path}: {e}")
                     continue
 
-                dates = [tuple(row) for row in work_array[:, :3]]
-                indices = self.registry.compute_all(dates, time_key)
-                indices["time"] = time_key
-                all_results.append(indices)
+                all_results = self._build_indices_for_product(product_type, data_dict)
+                if not all_results:
+                    print(f"Нет данных для сохранения для продукта {product_type}")
+                    continue
 
-            if all_results:
-                fieldnames = ["time"] + list(self.registry.index_functions.keys())
                 with open(output_file, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
                     writer.writeheader()
                     writer.writerows(all_results)
                 print(f"Индексы сохранены в {output_file}")
-                indices_for_date[product_type] = output_file
-            else:
-                print(f"Нет данных для сохранения для продукта {product_type}")
 
-        if tracker is not None and indices_for_date:
-            tracker.register_files_for_flare(
-                flare_key,
-                {"indices": indices_for_date}
-            )
+            if product_type in DAY_NIGHT_PRODUCTS:
+                indices_for_flare["day_night"][product_type] = output_file
+            elif product_type == TEC_PRODUCT:
+                indices_for_flare["flare_activity"][product_type] = output_file
+
+        if tracker is not None and (indices_for_flare["day_night"] or indices_for_flare["flare_activity"]):
+            tracker.register_files_for_flare(flare_key, {"indices": indices_for_flare})

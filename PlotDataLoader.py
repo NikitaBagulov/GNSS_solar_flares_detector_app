@@ -83,27 +83,45 @@ class PlotDataLoader:
             for p in self.products
         }
         index_times = None
+
+        day_night_paths = indices_paths.get("day_night", {}) if isinstance(indices_paths, dict) else {}
+        flare_activity_paths = indices_paths.get("flare_activity", {}) if isinstance(indices_paths, dict) else {}
+
         for product in self.products:
-            times, day_night_index = self._load_index_csv(
-                indices_paths.get(product),
-                "day_night_index",
-                start_interval,
-                end_interval
-            )
+            # New schema
+            dn_path = day_night_paths.get(product) if isinstance(day_night_paths, dict) else None
+            fa_path = flare_activity_paths.get(product) if isinstance(flare_activity_paths, dict) else None
 
-            _, gsflai_index = self._load_index_csv(
-                indices_paths.get(product),
-                "gsflai_index",
-                start_interval,
-                end_interval
-            )
+            # Backward compatibility with old schema: indices[product] -> csv with all columns
+            legacy_path = indices_paths.get(product) if isinstance(indices_paths, dict) else None
 
-            _, isfai_index = self._load_index_csv(
-                indices_paths.get(product),
-                "isfai_index",
-                start_interval,
-                end_interval
-            )
+            times = []
+            day_night_index = []
+            gsflai_index = []
+            isfai_index = []
+
+            if product in ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]:
+                times, day_night_index = self._load_index_csv(
+                    dn_path or legacy_path,
+                    "day_night_index",
+                    start_interval,
+                    end_interval,
+                )
+
+            if product == "tec":
+                times, gsflai_index = self._load_index_csv(
+                    fa_path or legacy_path,
+                    "gsflai_index",
+                    start_interval,
+                    end_interval,
+                )
+                _, isfai_index = self._load_index_csv(
+                    fa_path or legacy_path,
+                    "isfai_index",
+                    start_interval,
+                    end_interval,
+                )
+
             if times:
                 index_times = times
             indices[product]["times"] = times
@@ -239,6 +257,8 @@ class PlotDataLoader:
             df = pd.read_csv(path)
             df["time"] = pd.to_datetime(df["time"], utc=True)
 
+        if column_name not in df.columns:
+            return df["time"].tolist(), []
         return df["time"].tolist(), df[column_name].tolist()
 
 

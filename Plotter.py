@@ -196,11 +196,15 @@ class Plotter:
         prod_times = prod_block.get("times") or self.data.index_times
         times = np.asarray(self._to_naive(prod_times), dtype=object)
 
-        data_lists = [
-            ("Day/Night", prod_block.get("day_night_index", [])),
-            ("GSFLAI", prod_block.get("gsflai_index", [])),
-            ("ISFAI", prod_block.get("isfai_index", [])),
-        ]
+        if product_name == "tec":
+            data_lists = [
+                ("GSFLAI", prod_block.get("gsflai_index", [])),
+                ("ISFAI", prod_block.get("isfai_index", [])),
+            ]
+        else:
+            data_lists = [
+                ("Day/Night", prod_block.get("day_night_index", [])),
+            ]
 
         has_lines = False
         for label, values in data_lists:
@@ -474,8 +478,12 @@ class Plotter:
 class CombinedPlotter(Plotter):
     def plot_all(self):
         products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
-        product_slots = products[:4]
         axis_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        if "tec" in products:
+            non_tec = [p for p in products if p != "tec"]
+            product_slots = ["tec"] + non_tec[:3]
+        else:
+            product_slots = products[:4]
 
         for i, map_time in enumerate(self.data.timestamps):
             flare = self._select_nearest_flare(map_time)
