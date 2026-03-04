@@ -42,12 +42,12 @@ class Plotter:
         elif plot_data.product_values:
             self.products_to_plot = list(plot_data.product_values[0].keys())
         else:
-            self.products_to_plot = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+            self.products_to_plot = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def plot_all(self):
-        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
 
         for i, map_time in enumerate(self.data.timestamps):
             flare = self._select_nearest_flare(map_time)
@@ -187,32 +187,46 @@ class Plotter:
                 )
 
     def _plot_indices(self, ax, highlight_time=None, product_name="dtec_2_10", flare=None):
-        times = self._to_naive(self.data.index_times)
-
         prod_block = getattr(self.data, "indices", {}).get(product_name)
-        # print( "prod block",prod_block)
         if not prod_block:
             ax.set_title(f"No indices for {product_name}")
             ax.grid(True)
             return
 
-        data_lists = [
-            ("Day/Night", prod_block.get("day_night_index", [])),
-            ("GSFLAI", prod_block.get("gsflai_index", [])),
-            ("ISFAI", prod_block.get("isfai_index", [])),
-        ]
-        # print("Daa lists",data_lists)
-        for label, values in data_lists:
-            if values:
-                values = np.asarray(values, dtype=float)
-                vmin = np.nanmin(values)
-                vmax = np.nanmax(values)
-                if np.isfinite(vmin) and np.isfinite(vmax) and vmax > vmin:
-                    norm_values = (values - vmin) / (vmax - vmin)
-                else:
-                    norm_values = values * 0.0  # если всё одинаковое
+        prod_times = prod_block.get("times") or self.data.index_times
+        times = np.asarray(self._to_naive(prod_times), dtype=object)
 
-                ax.plot(times, norm_values, label=label)
+        if product_name == "tec":
+            data_lists = [
+                ("GSFLAI", prod_block.get("gsflai_index", [])),
+                ("ISFAI", prod_block.get("isfai_index", [])),
+            ]
+        else:
+            data_lists = [
+                ("Day/Night", prod_block.get("day_night_index", [])),
+            ]
+
+        has_lines = False
+        for label, values in data_lists:
+            if not values:
+                continue
+
+            values = np.asarray(values, dtype=float)
+            n = min(len(times), len(values))
+            if n == 0:
+                continue
+
+            x = times[:n]
+            y = values[:n]
+            vmin = np.nanmin(y)
+            vmax = np.nanmax(y)
+            if np.isfinite(vmin) and np.isfinite(vmax) and vmax > vmin:
+                norm_values = (y - vmin) / (vmax - vmin)
+            else:
+                norm_values = y * 0.0
+
+            ax.plot(x, norm_values, label=label)
+            has_lines = True
 
         if highlight_time:
             ax.axvline(
@@ -228,7 +242,8 @@ class Plotter:
 
         ax.set_ylabel("Index")
         ax.set_title(f"Indices — {self._format_product_name(product_name)}")
-        ax.legend(ncol=3, loc="upper left", frameon=True, fontsize=10)
+        if has_lines:
+            ax.legend(ncol=3, loc="upper left", frameon=True, fontsize=10)
         ax.grid(True)
         ax.set_ylim(0, 1)
 
@@ -420,6 +435,7 @@ class Plotter:
             "dtec_10_20": "TEC var. 10–20 min.",
             "dtec_20_60": "TEC var. 20–60 min.",
             "roti": "ROTI",
+            "tec": "TEC/VTEC",
         }
         return mapping.get(product_name, product_name)
 
@@ -461,9 +477,13 @@ class Plotter:
 
 class CombinedPlotter(Plotter):
     def plot_all(self):
-        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
-        product_slots = products[:4]
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60", "tec"]
         axis_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        if "tec" in products:
+            non_tec = [p for p in products if p != "tec"]
+            product_slots = ["tec"] + non_tec[:3]
+        else:
+            product_slots = products[:4]
 
         for i, map_time in enumerate(self.data.timestamps):
             flare = self._select_nearest_flare(map_time)
@@ -521,6 +541,8 @@ class CombinedPlotter(Plotter):
     def _get_product_color_range(product_name):
         if product_name == "roti":
             return 0, 1
+        if product_name == "tec":
+            return 0, 120
         return -1, 1
 
     def _build_combined_output_path(self, map_time, flare):

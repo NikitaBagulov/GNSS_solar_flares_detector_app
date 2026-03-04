@@ -7,6 +7,7 @@ import sys
 import json
 import pandas as pd
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class DataManager:
@@ -157,6 +158,8 @@ class DataManager:
         sources: Optional[List[str]] = None,
         force_redownload: bool = False,
         tracker=None,
+        parallel: bool = False,
+        max_workers: Optional[int] = None,
         **kwargs
     ) -> Dict[str, Any]:
         print(f"\n📥 ЗАГРУЗКА ДАННЫХ ЗА {target_date}")
@@ -164,94 +167,47 @@ class DataManager:
 
         sources_to_download = sources or list(self.download_functions.keys())
         print(f"Tracker: {tracker}")
-        for source_name in sources_to_download:
-            if source_name not in self.download_functions:
-                print(f"⚠️ Источник '{source_name}' не зарегистрирован, пропускаем")
-                continue
-            
-            try:
-                download_func = self.download_functions[source_name]
 
-                extension = self.source_extensions.get(source_name, '.csv')
+        if parallel and len(sources_to_download) > 1:
+            worker_count = max_workers or min(len(sources_to_download), 4)
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_map = {
+                    executor.submit(
+                        self._download_single_source,
+                        source_name,
+                        target_date,
+                        force_redownload,
+                        None,
+                        kwargs,
+                    ): source_name
+                    for source_name in sources_to_download
+                }
 
-                filename = f"{source_name}_{target_date.strftime('%Y%m%d')}{extension}"
-                final_path = self.get_download_path(source_name, target_date, filename)
-                if tracker is not None:
-                    tracker.register_files_for_date(target_date, {source_name: str(final_path)})
-                if not force_redownload and final_path.exists():
+                for future in as_completed(future_map):
+                    source_name = future_map[future]
                     try:
-                        if self._is_file_valid(final_path, source_name):
-                        
-                            results[source_name] = {
-                                'status': 'skipped',
-                                'result': str(final_path),
-                                'date': target_date,
-                                'message': 'Файл уже существует',
-                                'size': final_path.stat().st_size
-                            }
-                            print(f"   ⏭️ {source_name}: файл уже существует")
-                            continue
-                        else:
-                            print(f"   ⚠️ {source_name}: файл поврежден, перезагружаем...")
+                        result = future.result()
                     except Exception as e:
-                        print(f"   ⚠️ {source_name}: не удалось проверить файл ({e}), перезагружаем...")
+                        result = {
+                            'status': 'error',
+                            'error': str(e),
+                            'date': target_date
+                        }
 
-                temp_path = final_path.with_suffix(extension + '.tmp')
-
-                self._start_download_transaction(source_name, temp_path)
-
-                print(f"   📥 {source_name}: скачивание...")
-                result = download_func(
-                    date=target_date,
-                    data_manager=self,
-                    force_redownload=force_redownload,
-                    temp_path=temp_path,
-                    **kwargs
+                    results[source_name] = result
+                    file_path = result.get('result')
+                    if tracker is not None and file_path:
+                        tracker.register_files_for_date(target_date, {source_name: str(file_path)})
+        else:
+            for source_name in sources_to_download:
+                results[source_name] = self._download_single_source(
+                    source_name,
+                    target_date,
+                    force_redownload,
+                    tracker,
+                    kwargs,
                 )
 
-                if result and isinstance(result, Path) and temp_path.exists():
-                    if temp_path.stat().st_size == 0:
-                        raise Exception("Временный файл пустой")
-
-                    temp_path.rename(final_path)
-
-                    self._complete_download_transaction(source_name, temp_path)
-                    if tracker is not None:
-                        tracker.register_files_for_date(target_date, {source_name: str(final_path)})
-
-                    results[source_name] = {
-                        'status': 'success',
-                        'result': str(final_path),
-                        'date': target_date,
-                        'size': final_path.stat().st_size
-                    }
-                    print(f"   ✅ {source_name}: успешно скачан ({final_path.stat().st_size / 1024:.1f} KB)")
-                    
-                else:
-                    if temp_path.exists():
-                        temp_path.unlink()
-
-                    self._complete_download_transaction(source_name, temp_path)
-                    
-                    results[source_name] = {
-                        'status': 'error',
-                        'error': 'Не удалось скачать файл',
-                        'date': target_date
-                    }
-                    print(f"   ❌ {source_name}: ошибка скачивания")
-                    
-            except Exception as e:
-                if 'temp_path' in locals() and temp_path.exists():
-                    temp_path.unlink(missing_ok=True)
-                    self._complete_download_transaction(source_name, temp_path)
-                
-                results[source_name] = {
-                    'status': 'error',
-                    'error': str(e),
-                    'date': target_date
-                }
-                print(f"   ❌ {source_name}: ошибка - {e}")
-        
         print(f"📊 ИТОГИ ЗАГРУЗКИ ЗА {target_date}:")
         for source, result in results.items():
             status = result.get('status', 'unknown')
@@ -261,8 +217,103 @@ class DataManager:
                 print(f"   ⏭️ {source}: пропущен")
             elif status == 'error':
                 print(f"   ❌ {source}: ошибка")
-        
+
         return results
+
+    def _download_single_source(
+        self,
+        source_name: str,
+        target_date: date,
+        force_redownload: bool,
+        tracker,
+        kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if source_name not in self.download_functions:
+            print(f"⚠️ Источник '{source_name}' не зарегистрирован, пропускаем")
+            return {
+                'status': 'error',
+                'error': f"Источник '{source_name}' не зарегистрирован",
+                'date': target_date,
+            }
+
+        try:
+            download_func = self.download_functions[source_name]
+
+            extension = self.source_extensions.get(source_name, '.csv')
+
+            filename = f"{source_name}_{target_date.strftime('%Y%m%d')}{extension}"
+            final_path = self.get_download_path(source_name, target_date, filename)
+            if tracker is not None:
+                tracker.register_files_for_date(target_date, {source_name: str(final_path)})
+
+            if not force_redownload and final_path.exists():
+                try:
+                    if self._is_file_valid(final_path, source_name):
+                        print(f"   ⏭️ {source_name}: файл уже существует")
+                        return {
+                            'status': 'skipped',
+                            'result': str(final_path),
+                            'date': target_date,
+                            'message': 'Файл уже существует',
+                            'size': final_path.stat().st_size
+                        }
+                    print(f"   ⚠️ {source_name}: файл поврежден, перезагружаем...")
+                except Exception as e:
+                    print(f"   ⚠️ {source_name}: не удалось проверить файл ({e}), перезагружаем...")
+
+            temp_path = final_path.with_suffix(extension + '.tmp')
+
+            self._start_download_transaction(source_name, temp_path)
+
+            print(f"   📥 {source_name}: скачивание...")
+            result = download_func(
+                date=target_date,
+                data_manager=self,
+                force_redownload=force_redownload,
+                temp_path=temp_path,
+                **kwargs
+            )
+
+            if result and isinstance(result, Path) and temp_path.exists():
+                if temp_path.stat().st_size == 0:
+                    raise Exception("Временный файл пустой")
+
+                temp_path.rename(final_path)
+
+                self._complete_download_transaction(source_name, temp_path)
+                if tracker is not None:
+                    tracker.register_files_for_date(target_date, {source_name: str(final_path)})
+
+                print(f"   ✅ {source_name}: успешно скачан ({final_path.stat().st_size / 1024:.1f} KB)")
+                return {
+                    'status': 'success',
+                    'result': str(final_path),
+                    'date': target_date,
+                    'size': final_path.stat().st_size
+                }
+
+            if temp_path.exists():
+                temp_path.unlink()
+
+            self._complete_download_transaction(source_name, temp_path)
+            print(f"   ❌ {source_name}: ошибка скачивания")
+            return {
+                'status': 'error',
+                'error': 'Не удалось скачать файл',
+                'date': target_date
+            }
+
+        except Exception as e:
+            if 'temp_path' in locals() and temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+                self._complete_download_transaction(source_name, temp_path)
+
+            print(f"   ❌ {source_name}: ошибка - {e}")
+            return {
+                'status': 'error',
+                'error': str(e),
+                'date': target_date
+            }
     
     def _is_file_valid(self, file_path: Path, source_name: str) -> bool:
         if not file_path.exists():
