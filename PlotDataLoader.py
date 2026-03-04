@@ -79,8 +79,8 @@ class PlotDataLoader:
             maps_paths, start_interval, end_interval
         )
         indices = {
-        p: {"day_night_index": [], "gsflai_index": [], "isfai_index": []}
-        for p in self.products
+            p: {"times": [], "day_night_index": [], "gsflai_index": [], "isfai_index": []}
+            for p in self.products
         }
         index_times = None
         for product in self.products:
@@ -104,7 +104,9 @@ class PlotDataLoader:
                 start_interval,
                 end_interval
             )
-            index_times = times
+            if times:
+                index_times = times
+            indices[product]["times"] = times
             indices[product]["day_night_index"] = day_night_index
             indices[product]["gsflai_index"] = gsflai_index
             indices[product]["isfai_index"] = isfai_index
