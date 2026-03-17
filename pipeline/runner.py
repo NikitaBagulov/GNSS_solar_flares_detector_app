@@ -10,7 +10,7 @@ from DataPreprocessor import DataPreprocessor
 from FlareTracker import FlareTracker
 from IndexCalculator import IndexCalculator
 from PlotDataLoader import PlotDataLoader
-from Plotter import CombinedPlotter
+from Plotter import Plotter, CombinedPlotter
 from download_functions.euv import download_soho_sem
 from download_functions.simurg_hdf import download_simurg_hdf
 from download_functions.xray import download_goes_xray
@@ -133,7 +133,8 @@ def run_plotting(config: PipelineConfig) -> PlottingResult:
         plot_data = loader.load_flare(flare_key)
         if not plot_data:
             continue
-
+        plotter = Plotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
+        plotter.plot_all()    
         combined_plotter = CombinedPlotter(
             plot_data,
             products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],

@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state_json_path",
         type=str,
-        default="flare_tracker_state.json",
+        default="./data/state.json",
         help="Путь к файлу состояния JSON (относительный или абсолютный)",
     )
     parser.add_argument(
