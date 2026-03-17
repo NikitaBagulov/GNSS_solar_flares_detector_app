@@ -1,8 +1,11 @@
 import argparse
+import logging
+import signal
 import sys
-import traceback
+import time
 from datetime import date
 from pathlib import Path
+from typing import List
 
 from pipeline.runner import (
     PipelineConfig,
@@ -52,6 +55,18 @@ def parse_args() -> argparse.Namespace:
         default=["discovery", "preprocessing", "index", "plotting"],
         help="Шаги pipeline для выполнения",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["once", "service"],
+        default="once",
+        help="Режим выполнения: once (один прогон) или service (периодический запуск)",
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=int,
+        default=3600,
+        help="Интервал в секундах между прогонами в service-режиме (по умолчанию: 3600)",
+    )
     return parser.parse_args()
 
 
@@ -66,6 +81,10 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     except ValueError as error:
         print(f"Ошибка в параметрах дат: {error}")
         print("Используйте формат YYYY-MM-DD")
+        sys.exit(1)
+
+    if args.poll_interval_seconds <= 0:
+        print("Ошибка: --poll-interval-seconds должен быть положительным целым числом")
         sys.exit(1)
 
     state_json_path = Path(args.state_json_path)
@@ -88,36 +107,108 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     )
 
 
+def run_pipeline_once(config: PipelineConfig, steps: List[str]) -> None:
+    if "discovery" in steps:
+        run_discovery_and_download(config)
+
+    if "preprocessing" in steps:
+        run_preprocessing(config)
+
+    if "index" in steps:
+        run_index_calculation(config)
+
+    if "plotting" in steps:
+        run_plotting(config)
+
+
+def run_orchestration(
+    config: PipelineConfig,
+    steps: List[str],
+    mode: str,
+    poll_interval_seconds: int,
+) -> None:
+    logger = logging.getLogger(__name__)
+    stop_requested = False
+
+    def _handle_signal(signum: int, _frame: object) -> None:
+        nonlocal stop_requested
+        signal_name = signal.Signals(signum).name
+        logger.info("Получен сигнал %s. Запрошена корректная остановка.", signal_name)
+        stop_requested = True
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    consecutive_errors = 0
+
+    while not stop_requested:
+        try:
+            run_pipeline_once(config=config, steps=steps)
+            consecutive_errors = 0
+
+            if mode == "once":
+                logger.info("Pipeline завершен успешно в режиме once.")
+                return
+
+            sleep_seconds = poll_interval_seconds
+            logger.info("Итерация завершена. Следующий запуск через %s сек.", sleep_seconds)
+        except Exception:
+            consecutive_errors += 1
+            logger.exception(
+                "Ошибка в итерации pipeline (ошибка #%s подряд).",
+                consecutive_errors,
+            )
+
+            if mode == "once":
+                raise
+
+            sleep_seconds = min(
+                poll_interval_seconds,
+                5 * (2 ** (consecutive_errors - 1)),
+            )
+            logger.info(
+                "Повторный запуск через %s сек (backoff после ошибки).",
+                sleep_seconds,
+            )
+
+        elapsed = 0
+        while elapsed < sleep_seconds and not stop_requested:
+            chunk = min(1, sleep_seconds - elapsed)
+            time.sleep(chunk)
+            elapsed += chunk
+
+    logger.info("Pipeline остановлен корректно.")
+
+
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
     args = parse_args()
     config = build_config(args)
 
-    print("Параметры запуска:")
-    print(f"  Начальная дата: {config.start_date}")
-    print(f"  Конечная дата: {config.end_date}")
-    print(f"  Минимальный класс вспышки: {config.min_flare_class}")
-    print(f"  Файл состояния: {config.state_json_path}")
-    print(f"  Директория данных: {config.data_download_path}")
-    print(f"  Шаги: {', '.join(args.steps)}")
-    print()
+    logging.info("Параметры запуска:")
+    logging.info("  Начальная дата: %s", config.start_date)
+    logging.info("  Конечная дата: %s", config.end_date)
+    logging.info("  Минимальный класс вспышки: %s", config.min_flare_class)
+    logging.info("  Файл состояния: %s", config.state_json_path)
+    logging.info("  Директория данных: %s", config.data_download_path)
+    logging.info("  Шаги: %s", ", ".join(args.steps))
+    logging.info("  Режим: %s", args.mode)
+    logging.info("  Интервал опроса (сек): %s", args.poll_interval_seconds)
 
     try:
-        if "discovery" in args.steps:
-            run_discovery_and_download(config)
-
-        if "preprocessing" in args.steps:
-            run_preprocessing(config)
-
-        if "index" in args.steps:
-            run_index_calculation(config)
-
-        if "plotting" in args.steps:
-            run_plotting(config)
-
-        print("\nЗавершено успешно!")
-    except Exception as error:
-        print(f"\nПроизошла ошибка: {error}")
-        traceback.print_exc()
+        run_orchestration(
+            config=config,
+            steps=args.steps,
+            mode=args.mode,
+            poll_interval_seconds=args.poll_interval_seconds,
+        )
+        logging.info("Завершено успешно!")
+    except Exception:
+        logging.exception("Произошла ошибка.")
         sys.exit(1)
 
 
