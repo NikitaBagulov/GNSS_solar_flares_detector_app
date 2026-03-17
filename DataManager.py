@@ -226,13 +226,12 @@ class DataManager:
                         'size': final_path.stat().st_size
                     }
                     print(f"   ✅ {source_name}: успешно скачан ({final_path.stat().st_size / 1024:.1f} KB)")
-                    
                 else:
                     if temp_path.exists():
                         temp_path.unlink()
 
                     self._complete_download_transaction(source_name, temp_path)
-                    
+
                     results[source_name] = {
                         'status': 'error',
                         'error': 'Не удалось скачать файл',
