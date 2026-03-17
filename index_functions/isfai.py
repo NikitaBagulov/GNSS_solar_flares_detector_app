@@ -121,7 +121,7 @@ def compute_isfai_index(dates, time_key):
 
     lat = np.radians(data[:, 0])
     lon = data[:, 1]
-    vals = np.abs(data[:, 2])
+    vals = data[:, 2]
 
     # 🔒 базовая фильтрация
     valid = (

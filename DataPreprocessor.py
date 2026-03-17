@@ -128,7 +128,7 @@ class DataPreprocessor:
                 times,
                 file_path=file_path,
                 product_types=self.data_products,
-                roti_type='simple',
+                roti_type='mapping_function',
                 chunk=120
             )
 

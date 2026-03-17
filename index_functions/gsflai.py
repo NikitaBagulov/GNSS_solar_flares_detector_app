@@ -127,7 +127,7 @@ def compute_gsflai_index(dates, time_key):
     data = np.array(dates, dtype=float)
     lat = np.radians(data[:, 0])
     lon = data[:, 1]
-    vals = np.abs(data[:, 2])
+    vals = data[:, 2]
 
     decl, eq_time = solar_time_params(time_key)
 

@@ -34,6 +34,24 @@ MAP_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "custom_cmap", ["blue", "cyan", "yellow", "red"]
 )
 
+RE_meters = 6371000.0
+
+def great_circle_distance_vec(lat, lon, lat0=0.0, lon0=0.0):
+    lat = np.radians(lat)
+    lon = np.radians(lon)
+    lat0 = np.radians(lat0)
+    lon0 = np.radians(lon0)
+
+    dlon = lon - lon0
+    dlon = (dlon + np.pi) % (2 * np.pi) - np.pi
+
+    cosgamma = (
+        np.sin(lat) * np.sin(lat0)
+        + np.cos(lat) * np.cos(lat0) * np.cos(dlon)
+    )
+    cosgamma = np.clip(cosgamma, -1.0, 1.0)
+    return RE_meters * np.arccos(cosgamma)
+
 class Plotter:
     def __init__(self, plot_data, products_to_plot=None, output_dir="results"):
         self.data = plot_data
@@ -53,7 +71,7 @@ class Plotter:
             flare = self._select_nearest_flare(map_time)
 
             for product_name in products:
-                fig = plt.figure(figsize=(15, 11), constrained_layout=False)
+                fig = plt.figure(figsize=(15, 15), constrained_layout=False)
                 gs = fig.add_gridspec(
                     3,
                     2,
@@ -85,7 +103,7 @@ class Plotter:
                 if flare:
                     title += f"{flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
                 fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
-                fig.subplots_adjust(top=0.9, bottom=0.08)
+                fig.subplots_adjust(top=0.9, bottom=0.08, right=0.88)
 
                 # ⬇️ путь теперь включает папку продукта
                 output_path = self._build_output_path(map_time, flare, product_name=product_name)
@@ -132,7 +150,7 @@ class Plotter:
         )
         if show_colorbar:
             cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
-            plt.colorbar(sc, cax=cbar_ax, label=self._format_product_name(product_name))
+            plt.colorbar(sc, cax=cbar_ax, label=self.get_product_unit(product_name))
         if map_time:
             self._plot_terminator(ax, map_time)
 
@@ -190,76 +208,129 @@ class Plotter:
         times = self._to_naive(self.data.index_times)
 
         prod_block = getattr(self.data, "indices", {}).get(product_name)
-        # print( "prod block",prod_block)
         if not prod_block:
             ax.set_title(f"No indices for {product_name}")
             ax.grid(True)
             return
 
-        data_lists = [
-            ("Day/Night", prod_block.get("day_night_index", [])),
-            ("GSFLAI", prod_block.get("gsflai_index", [])),
-            ("ISFAI", prod_block.get("isfai_index", [])),
+        series = [
+            ("Day/Night", np.asarray(prod_block.get("day_night_index", []), dtype=float), "tab:blue"),
+            ("GSFLAI",   np.asarray(prod_block.get("gsflai_index", []), dtype=float),   "tab:green"),
+            ("ISFAI",    np.asarray(prod_block.get("isfai_index", []), dtype=float),    "tab:red"),
         ]
-        # print("Daa lists",data_lists)
-        for label, values in data_lists:
-            if values:
-                values = np.asarray(values, dtype=float)
-                vmin = np.nanmin(values)
-                vmax = np.nanmax(values)
-                if np.isfinite(vmin) and np.isfinite(vmax) and vmax > vmin:
-                    norm_values = (values - vmin) / (vmax - vmin)
-                else:
-                    norm_values = values * 0.0  # если всё одинаковое
 
-                ax.plot(times, norm_values, label=label)
+        # базовая ось
+        axes = [ax]
+
+        # вторая ось справа
+        ax2 = ax.twinx()
+        axes.append(ax2)
+
+        # третья ось справа со сдвигом
+        ax3 = ax.twinx()
+        ax3.spines["right"].set_position(("axes", 1.10))
+        ax3.spines["right"].set_visible(True)
+        axes.append(ax3)
+
+        lines = []
+        labels = []
+
+        for axis, (label, values, color) in zip(axes, series):
+            if values.size == 0:
+                continue
+
+            line, = axis.plot(times, values, label=label, color=color, linewidth=1.6)
+            axis.set_ylabel(label, color=color)
+            axis.tick_params(axis="y", colors=color)
+            axis.spines["left" if axis is ax else "right"].set_color(color)
+
+            finite_vals = values[np.isfinite(values)]
+            if finite_vals.size > 0:
+                vmin = np.nanmin(finite_vals)
+                vmax = np.nanmax(finite_vals)
+                if np.isfinite(vmin) and np.isfinite(vmax):
+                    if vmin == vmax:
+                        pad = max(1e-6, abs(vmin) * 0.05 + 1e-6)
+                    else:
+                        pad = 0.08 * (vmax - vmin)
+                    axis.set_ylim(vmin - pad, vmax + pad)
+
+            lines.append(line)
+            labels.append(label)
 
         if highlight_time:
-            ax.axvline(
-                self._ensure_naive_time(highlight_time),
-                color='red',
-                linestyle='--',
-                linewidth=1,
-                label="_nolegend_",
-            )
+            t0 = self._ensure_naive_time(highlight_time)
+            for axis in axes:
+                axis.axvline(
+                    t0,
+                    color="red",
+                    linestyle="--",
+                    linewidth=1,
+                    label="_nolegend_",
+                )
 
         if flare:
             self._plot_flare_markers(ax, flare)
 
-        ax.set_ylabel("Index")
         ax.set_title(f"Indices — {self._format_product_name(product_name)}")
-        ax.legend(ncol=3, loc="upper left", frameon=True, fontsize=10)
-        ax.grid(True)
-        ax.set_ylim(0, 1)
+        ax.set_xlabel("Time UTC")
+        ax.grid(True, alpha=0.3)
+
+        if lines:
+            ax.legend(lines, labels, ncol=3, loc="upper left", frameon=True, fontsize=10)
 
 
     def _plot_solar(self, ax, highlight_time=None):
-        times_values = [
-            (self.data.xray_times, self.data.xray_values, 'X-ray', 'purple'),
-            (self.data.euv_times, self.data.euv_values, 'EUV', 'brown')
-        ]
+        # X-ray — левая ось
+        # EUV   — правая ось
+        ax2 = ax.twinx()
 
-        for times, values, label, color in times_values:
-            if values and times:
-                values = np.array(values)
-                naive_times = self._to_naive(times)
-                norm_values = (values - np.nanmin(values)) / (np.nanmax(values) - np.nanmin(values))
-                ax.plot(naive_times, norm_values, label=label, color=color)
+        lines = []
+        labels = []
+
+        if self.data.xray_values and self.data.xray_times:
+            x_times = self._to_naive(self.data.xray_times)
+            x_vals = np.asarray(self.data.xray_values, dtype=float)
+            line1, = ax.plot(x_times, x_vals, label="X-ray", color="purple", linewidth=1.6)
+            ax.set_ylabel("X-ray", color="purple")
+            ax.tick_params(axis="y", colors="purple")
+            ax.spines["left"].set_color("purple")
+            lines.append(line1)
+            labels.append("X-ray")
+
+        if self.data.euv_values and self.data.euv_times:
+            e_times = self._to_naive(self.data.euv_times)
+            e_vals = np.asarray(self.data.euv_values, dtype=float)
+            line2, = ax2.plot(e_times, e_vals, label="EUV", color="brown", linewidth=1.6)
+            ax2.set_ylabel("EUV", color="brown")
+            ax2.tick_params(axis="y", colors="brown")
+            ax2.spines["right"].set_color("brown")
+            lines.append(line2)
+            labels.append("EUV")
 
         if highlight_time:
+            t0 = self._ensure_naive_time(highlight_time)
             ax.axvline(
-                self._ensure_naive_time(highlight_time),
-                color='red',
-                linestyle='--',
+                t0,
+                color="red",
+                linestyle="--",
+                linewidth=1,
+                label="_nolegend_",
+            )
+            ax2.axvline(
+                t0,
+                color="red",
+                linestyle="--",
                 linewidth=1,
                 label="_nolegend_",
             )
 
-        ax.set_ylabel("Flux")
+        # ax.set_ylabel("X-ray / EUV flux")
         ax.set_title("Solar Activity")
-        ax.grid(True)
-        ax.legend(ncol=2, loc="upper left", frameon=True, fontsize=10)
-        ax.set_ylim(0, 1)
+        ax.grid(True, alpha=0.3)
+
+        if lines:
+            ax.legend(lines, labels, ncol=2, loc="upper left", frameon=True, fontsize=10)
 
 
 
@@ -457,6 +528,163 @@ class Plotter:
 
         # ⬇️ добавили папку product_name
         return self.output_dir / date_folder / flare_label / product_name / filename
+    @staticmethod
+    def get_product_unit(product_name):
+        if product_name == "roti":
+            return "TECu/min"
+        return "TECu"
+
+    def plot_maps_with_day_distribution(self, bins=30):
+        products = self.products_to_plot or ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
+
+        for i, map_time in enumerate(self.data.timestamps):
+            flare = self._select_nearest_flare(map_time)
+
+            for product_name in products:
+                fig = plt.figure(figsize=(16, 12), constrained_layout=False)
+                gs = fig.add_gridspec(
+                    2,
+                    2,
+                    height_ratios=[3.8, 1.8],
+                    width_ratios=[1, 1],
+                    hspace=0.35,
+                    wspace=0.25,
+                )
+
+                ax_map = fig.add_subplot(gs[0, :], projection=ccrs.PlateCarree())
+                ax_count = fig.add_subplot(gs[1, 0])
+                ax_vals = fig.add_subplot(gs[1, 1])
+
+                vmin, vmax = CombinedPlotter._get_product_color_range(product_name)
+
+                self._plot_map(
+                    ax_map,
+                    i,
+                    product_name=product_name,
+                    map_time=map_time,
+                    vmin=vmin,
+                    vmax=vmax,
+                    show_colorbar=True,
+                )
+
+                self._plot_day_distance_distribution(
+                    ax_count,
+                    ax_vals,
+                    time_index=i,
+                    product_name=product_name,
+                    map_time=map_time,
+                    bins=bins,
+                )
+
+                title = f"{self._format_product_name(product_name)} — {map_time:%Y-%m-%d %H:%M UTC}"
+                if flare:
+                    title += f"  |  flare {flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
+                fig.suptitle(title, fontsize=16, fontweight="bold", y=0.97)
+                fig.subplots_adjust(top=0.93, bottom=0.07)
+
+                output_path = self._build_distribution_output_path(map_time, flare, product_name)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(output_path, dpi=200, bbox_inches="tight")
+                plt.close(fig)
+    
+    def _plot_day_distance_distribution(self, ax_count, ax_vals, time_index, product_name, map_time=None, bins=30):
+        if not self.data.product_values or time_index >= len(self.data.product_values):
+            ax_count.set_title("No data")
+            ax_vals.set_title("No data")
+            return
+
+        points = self.data.product_values[time_index].get(product_name, np.array([]))
+        if points.size == 0:
+            ax_count.set_title(f"No data for {product_name}")
+            ax_vals.set_title(f"No data for {product_name}")
+            return
+
+        lats, lons, vals = [], [], []
+        for p in points:
+            lats.append(p["lat"])
+            lons.append(p["lon"])
+            vals.append(p["vals"])
+
+        lat = np.asarray(lats, dtype=float)
+        lon = np.asarray(lons, dtype=float)
+        vals = np.asarray(vals, dtype=float)
+
+        valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(vals)
+        if not np.any(valid):
+            ax_count.set_title("No valid data")
+            ax_vals.set_title("No valid data")
+            return
+
+        lat = lat[valid]
+        lon = lon[valid]
+        vals = vals[valid]
+
+        if map_time is None:
+            map_time = self.data.timestamps[time_index]
+
+        sub_lat, sub_lon = self._subsolar_point(self._to_utc_datetime(map_time))
+        distances = great_circle_distance_vec(lat, lon, lat0=sub_lat, lon0=sub_lon)
+
+        gamma = distances / RE_meters
+        delta = (np.pi / 2.0) - gamma
+        day_mask = delta > 0
+        
+        if not np.any(day_mask):
+            ax_count.set_title("No daytime points")
+            ax_vals.set_title("No daytime points")
+            return
+
+        d_day = distances[day_mask] / 1000.0  # км
+        v_day = vals[day_mask]
+
+        # --- 1. Количество дневных точек по расстоянию ---
+        counts, edges = np.histogram(d_day, bins=bins)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+
+        widths = np.diff(edges)
+        ax_count.bar(centers, counts, width=widths, align="center", alpha=0.8)
+        ax_count.set_title("Count of daytime points vs distance to subsolar point")
+        ax_count.set_xlabel("Distance to subsolar point, km")
+        ax_count.set_ylabel("Count")
+        ax_count.grid(True, alpha=0.3)
+
+        # --- 2. Значения дневных точек по расстоянию ---
+        ax_vals.scatter(d_day, v_day, s=10, alpha=0.35, label="Points")
+
+        # среднее по бинам
+        bin_idx = np.digitize(d_day, edges) - 1
+        mean_vals = np.full(len(edges) - 1, np.nan)
+        med_vals = np.full(len(edges) - 1, np.nan)
+
+        for j in range(len(edges) - 1):
+            mask = bin_idx == j
+            if np.any(mask):
+                mean_vals[j] = np.nanmean(v_day[mask])
+                med_vals[j] = np.nanmedian(v_day[mask])
+
+        ax_vals.plot(centers, mean_vals, linewidth=2.0, label="Mean")
+        ax_vals.plot(centers, med_vals, linewidth=2.0, linestyle="--", label="Median")
+
+        ax_vals.set_title("Daytime values vs distance to subsolar point")
+        ax_vals.set_xlabel("Distance to subsolar point, km")
+        ax_vals.set_ylabel(self.get_product_unit(product_name))
+        ax_vals.grid(True, alpha=0.3)
+        ax_vals.legend(frameon=True, fontsize=10)
+
+    def _build_distribution_output_path(self, map_time, flare, product_name):
+        date_folder = map_time.strftime("%Y-%m-%d")
+
+        if flare and flare.peak_time:
+            flare_label = f"flare_{flare.peak_time:%H%M%S}"
+        elif flare and flare.start_time:
+            flare_label = f"flare_{flare.start_time:%H%M%S}"
+        else:
+            flare_label = "flare_unknown"
+
+        time_label = map_time.strftime("%H%M%S")
+        filename = f"map_day_distribution_{time_label}.png"
+
+        return self.output_dir / date_folder / flare_label / product_name / "day_distribution" / filename
 
 
 class CombinedPlotter(Plotter):
@@ -522,6 +750,8 @@ class CombinedPlotter(Plotter):
         if product_name == "roti":
             return 0, 1
         return -1, 1
+
+    
 
     def _build_combined_output_path(self, map_time, flare):
         date_folder = map_time.strftime("%Y-%m-%d")

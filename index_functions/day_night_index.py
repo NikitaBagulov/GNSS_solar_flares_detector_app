@@ -2,7 +2,7 @@ import numpy as np
 import math
 import datetime
 
-RE_meters = 6371000
+RE_meters = 6371000.0
 
 
 def great_circle_distance_vec(lat, lon, lat0=0.0, lon0=0.0):
@@ -18,7 +18,6 @@ def great_circle_distance_vec(lat, lon, lat0=0.0, lon0=0.0):
         np.sin(lat) * np.sin(lat0)
         + np.cos(lat) * np.cos(lat0) * np.cos(dlon)
     )
-
     cosgamma = np.clip(cosgamma, -1.0, 1.0)
     return RE_meters * np.arccos(cosgamma)
 
@@ -30,11 +29,15 @@ def _to_utc_datetime(dt: datetime.datetime) -> datetime.datetime:
 
 
 def _subsolar_point(dt_value):
+    dt_value = _to_utc_datetime(dt_value)
+
     year, month = dt_value.year, dt_value.month
     day = dt_value.day + (dt_value.hour + (dt_value.minute + dt_value.second / 60.0) / 60.0) / 24.0
+
     if month <= 2:
         year -= 1
         month += 12
+
     A = year // 100
     B = 2 - A + (A // 4)
     jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + B - 1524.5
@@ -75,90 +78,114 @@ def _subsolar_point(dt_value):
     return subsolar_lat, subsolar_lon
 
 
-def _weighted_percentile(x, w, q):
+def _mad(x):
     x = np.asarray(x, dtype=float)
-    w = np.asarray(w, dtype=float)
-
-    m = np.isfinite(x) & np.isfinite(w) & (w > 0)
-    if not np.any(m):
-        return np.nan
-
-    x = x[m]
-    w = w[m]
-
-    idx = np.argsort(x)
-    x = x[idx]
-    w = w[idx]
-
-    cdf = np.cumsum(w)
-    cdf /= cdf[-1]
-
-    return float(np.interp(q / 100.0, cdf, x))
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        return 0.0
+    med = np.median(x)
+    return float(np.median(np.abs(x - med)))
 
 
-def compute_day_night_index(dates, time_key):
-    if not dates:
+def calculate_index(points, is_day=True):
+    if len(points) == 0:
         return 0.0
 
-    data = np.asarray(dates, dtype=float)
-    if data.ndim != 2 or data.shape[1] < 3:
+    d = np.array([p[0] for p in points], dtype=float)
+    values = np.array([p[1] for p in points], dtype=float)
+
+    if is_day:
+        weights = np.maximum(0.0, 1.0 - d / (2 * np.pi * RE_meters / 4.0))
+        I = weights * values
+    else:
+         I = np.mean(values) #* np.mean(np.maximum(0.0, 1.0 - d / (2 * np.pi * RE_meters / 4.0)))
+
+    I = np.round(I, 10)
+    I = np.nan_to_num(I, nan=0.0)
+    return np.sum(I)
+
+def compute_day_night_index(
+        points,
+        time_key,
+        debug=True,
+        log_file="day_night_debug_log.csv",
+        eps_abs=1e-6):
+
+    data = np.asarray(points, dtype=float)
+    if data.size == 0 or data.ndim != 2 or data.shape[1] < 3:
         return 0.0
 
     lat = data[:, 0]
     lon = data[:, 1]
-    values = data[:, 2]
+    vals = data[:, 2]
 
-    valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(values)
+    valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(vals)
     if not np.any(valid):
         return 0.0
 
     lat = lat[valid]
     lon = lon[valid]
-    values = values[valid]
-
-    activity = np.abs(values) if np.nanmin(values) < 0 else values
+    vals = vals[valid]
 
     sub_lat, sub_lon = _subsolar_point(time_key)
+
     distances = great_circle_distance_vec(lat, lon, lat0=sub_lat, lon0=sub_lon)
 
-    ok = np.isfinite(distances) & np.isfinite(activity)
-    if not np.any(ok):
-        return 0.0
+    gamma = distances / RE_meters
+    delta = (np.pi / 2.0) - gamma
 
-    distances = distances[ok]
-    activity = activity[ok]
-
-    chi = distances / RE_meters
-    cos_chi = np.cos(chi)
-
-    day_mask = chi < (math.pi / 2)
+    day_mask = delta > 0
     night_mask = ~day_mask
 
-    eps = 1e-12
+    if np.sum(day_mask) == 0 or np.sum(night_mask) == 0:
+        return 0.0
 
-    # ---- DAY: взвешенное СРЕДНЕЕ (устойчиво к числу точек) ----
-    day_mean = 0.0
-    if np.any(day_mask):
-        a = activity[day_mask]
-        mu = np.clip(cos_chi[day_mask], 0.0, 1.0)
+    d_term = np.abs(delta) * RE_meters
 
-        # мягкий вес по освещённости (не душим терминатор как w_geom)
-        w_day = mu ** 0.5  # можно 1.0, если хочешь ровно cos(chi)
+    d_day = d_term[day_mask]
+    v_day = vals[day_mask]
+    v_night = vals[night_mask]
 
-        wsum = float(np.sum(w_day))
-        if wsum > 0.0:
-            day_mean = float(np.sum(w_day * a) / (wsum + eps))
+    quarter_circ = 2 * np.pi * RE_meters / 4.0
+    w_day = np.maximum(0.0, 1.0 - d_day / quarter_circ)
 
-    # ---- NIGHT: обычное СРЕДНЕЕ (без gain) ----
-    night_mean = 0.0
-    if np.any(night_mask):
-        night_mean = float(np.mean(activity[night_mask]))
+    if np.sum(w_day) > 0:
+        mu_day = np.sum(v_day * w_day) / np.sum(w_day)
+    else:
+        mu_day = 0.0
 
-    # если ночи нет — вернём просто дневной уровень
-    if night_mean <= eps:
-        return float(max(day_mean, 0.0))
+    mu_night = np.median(v_night)
 
-    # ---- Индекс режима "2": насколько день выше ночного среднего, всегда >= 0 ----
-    excess = (day_mean - night_mean) / (night_mean + eps)  # относительное превышение
-    excess = max(excess, 0.0)
-    return float(math.log1p(excess))
+    num = mu_day - mu_night
+    den = abs(mu_day) + abs(mu_night) + 0.05
+    I_B = num / den
+
+    # ---- DEBUG ----
+    if debug:
+
+        N_day = int(np.sum(day_mask))
+        N_night = int(np.sum(night_mask))
+
+        print("\n" + "=" * 80)
+        print("DEBUG day/night index B")
+        print("time:", time_key)
+        print("N_day:", N_day)
+        print("N_night:", N_night)
+        print("mu_day:", mu_day)
+        print("mu_night:", mu_night)
+        print("num:", num)
+        print("den:", den)
+        print("index:", I_B)
+        print("=" * 80)
+
+        # запись в файл
+        with open(log_file, "a") as f:
+            f.write(
+                f"{time_key},"
+                f"{sub_lat:.6f},{sub_lon:.6f},"
+                f"{N_day},{N_night},"
+                f"{mu_day:.6f},{mu_night:.6f},"
+                f"{num:.6f},{den:.6f},{I_B:.6f}\n"
+            )
+
+    return float(I_B)
