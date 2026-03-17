@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
+import h5py
 
 import time
 import numpy as np
@@ -15,11 +16,12 @@ class DataPreprocessor:
     DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})")
     _UTC = tz.gettz('UTC')
 
-    def __init__(self, input_root="./data", output_dir="./preprocessed_maps", data_products=None, window_minutes: int = 15):
+    def __init__(self, input_root="./data", output_dir="./preprocessed_maps", data_products=None, window_minutes: int = 15, existing_data_policy: str = "validate"):
         self.input_root = Path(input_root)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.window_minutes = window_minutes
+        self.existing_data_policy = existing_data_policy
 
         if data_products is None:
             self.data_products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
@@ -54,12 +56,38 @@ class DataPreprocessor:
         flare_dir.mkdir(parents=True, exist_ok=True)
         return flare_dir
 
-    def is_flare_already_processed(self, flare_dir: Path):
+    def _is_map_file_valid(self, path: Path) -> bool:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        try:
+            with h5py.File(path, "r") as h5:
+                return bool(h5.keys())
+        except Exception:
+            return False
+
+    def _select_products_to_generate(self, flare_dir: Path):
+        selected = []
         for prod in self.data_products:
             maps_file = flare_dir / f"map_{prod}.h5"
+            if self.existing_data_policy == "overwrite":
+                maps_file.unlink(missing_ok=True)
+                selected.append(prod)
+                continue
+
             if not maps_file.exists():
-                return False
-        return True
+                selected.append(prod)
+                continue
+
+            if self.existing_data_policy == "skip":
+                continue
+
+            if self._is_map_file_valid(maps_file):
+                continue
+
+            maps_file.unlink(missing_ok=True)
+            selected.append(prod)
+
+        return selected
 
     def process_file(self, file_path, tracker):
         file_path = Path(file_path)
@@ -95,12 +123,14 @@ class DataPreprocessor:
             )
             flare_dir = self.get_output_dir_for_flare(flare_key)
 
-            if self.is_flare_already_processed(flare_dir):
-                print(f"Data for flare {flare_key} already processed, skipping.")
+            products_to_generate = self._select_products_to_generate(flare_dir)
+            if not products_to_generate:
+                print(f"Data for flare {flare_key} already processed for policy={self.existing_data_policy}, skipping.")
                 if tracker is not None:
-                    tracker.register_files_for_flare(
+                    tracker.set_files_for_flare_section(
                         flare_key,
-                        {"maps": {prod: flare_dir / f"map_{prod}.h5" for prod in self.data_products}},
+                        "maps",
+                        {prod: flare_dir / f"map_{prod}.h5" for prod in self.data_products if (flare_dir / f"map_{prod}.h5").exists()},
                     )
                 continue
 
@@ -127,13 +157,13 @@ class DataPreprocessor:
                 sites_description,
                 times,
                 file_path=file_path,
-                product_types=self.data_products,
+                product_types=products_to_generate,
                 roti_type='mapping_function',
                 chunk=120
             )
 
             maps_files = []
-            for prod in self.data_products:
+            for prod in products_to_generate:
                 maps_file = (flare_dir / f"map_{prod}.h5").resolve()
                 maps_file.parent.mkdir(parents=True, exist_ok=True)
                 maps_files.append(maps_file)
@@ -149,7 +179,7 @@ class DataPreprocessor:
 
                 # ✅ текущий продукт определяется номером чанка
                 out_file = maps_files[iprod % len(maps_files)]
-                current_prod = self.data_products[iprod % len(self.data_products)]
+                current_prod = products_to_generate[iprod % len(products_to_generate)]
 
                 try:
                     store_maps_time_based({'sites': 'sites'}, data, str(out_file), lock=False)
@@ -160,13 +190,13 @@ class DataPreprocessor:
 
                 iprod += 1
             if tracker is not None:
-                tracker.register_files_for_flare(
+                tracker.set_files_for_flare_section(
                     flare_key,
+                    "maps",
                     {
-                        "maps": {
-                            prod: flare_dir / f"map_{prod}.h5"
-                            for prod in self.data_products
-                        }
+                        prod: flare_dir / f"map_{prod}.h5"
+                        for prod in self.data_products
+                        if (flare_dir / f"map_{prod}.h5").exists()
                     }
                 )
             
