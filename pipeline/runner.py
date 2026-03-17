@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+import shutil
 from typing import Dict, List
 
 from DataManager import DataManager
@@ -14,6 +15,7 @@ from Plotter import Plotter, CombinedPlotter
 from download_functions.euv import download_soho_sem
 from download_functions.simurg_hdf import download_simurg_hdf
 from download_functions.xray import download_goes_xray
+from pipeline.run_config import RunConfig
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class PipelineConfig:
     min_flare_class: str
     state_json_path: Path
     data_download_path: Path
+    run_config: RunConfig
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,10 @@ class PlottingResult:
 
 
 def _build_data_manager(config: PipelineConfig) -> DataManager:
-    data_manager = DataManager(base_download_dir=str(config.data_download_path))
+    data_manager = DataManager(
+        base_download_dir=str(config.data_download_path),
+        existing_data_policy=config.run_config.policy_for("download"),
+    )
     data_manager.register_download_function("soho_sem", download_func=download_soho_sem)
     data_manager.register_download_function("goes_xray", download_func=download_goes_xray)
     data_manager.register_download_function(
@@ -87,8 +93,12 @@ def run_discovery_and_download(config: PipelineConfig) -> DiscoveryDownloadResul
 
 def run_preprocessing(config: PipelineConfig) -> PreprocessingResult:
     tracker = _load_tracker(config)
-    preprocessor = DataPreprocessor(input_root=str(config.data_download_path))
+    preprocessor = DataPreprocessor(
+        input_root=str(config.data_download_path),
+        existing_data_policy=config.run_config.policy_for("preprocess"),
+    )
     preprocessor.process_all(tracker)
+    tracker.sync_state_with_files()
 
     maps_by_flare: Dict[str, Dict[str, str]] = {}
     for flare_key, files in tracker.state.get("files_by_flare", {}).items():
@@ -104,11 +114,15 @@ def run_preprocessing(config: PipelineConfig) -> PreprocessingResult:
 
 def run_index_calculation(config: PipelineConfig) -> IndexCalculationResult:
     tracker = _load_tracker(config)
-    calculator = IndexCalculator()
+    calculator = IndexCalculator(
+        existing_data_policy=config.run_config.policy_for("index"),
+    )
 
     flare_keys = list(tracker.state.get("files_by_flare", {}).keys())
     for flare_key in flare_keys:
         calculator.process_single_flare(flare_key, tracker=tracker)
+
+    tracker.sync_state_with_files()
 
     indices_by_flare: Dict[str, Dict[str, str]] = {}
     for flare_key, files in tracker.state.get("files_by_flare", {}).items():
@@ -128,18 +142,41 @@ def run_plotting(config: PipelineConfig) -> PlottingResult:
 
     loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
     plotted_flare_keys: List[str] = []
+    plot_policy = config.run_config.policy_for("plot")
 
     for flare_key in flare_keys:
+        flare_plot_dir = Path("results") / flare_key
+        if plot_policy == "skip" and flare_plot_dir.exists():
+            plotted_flare_keys.append(flare_key)
+            continue
+        if plot_policy == "overwrite" and flare_plot_dir.exists():
+            shutil.rmtree(flare_plot_dir)
+        if plot_policy == "validate" and flare_plot_dir.exists():
+            has_valid_plots = any(
+                path.is_file() and path.suffix.lower() == ".png" and path.stat().st_size > 0
+                for path in flare_plot_dir.rglob("*.png")
+            )
+            if has_valid_plots:
+                plotted_flare_keys.append(flare_key)
+                tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
+                continue
+
         plot_data = loader.load_flare(flare_key)
         if not plot_data:
             continue
-        plotter = Plotter(plot_data, products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"])
+        plotter = Plotter(
+            plot_data,
+            products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
+            output_dir=flare_plot_dir,
+        )
         plotter.plot_all()    
         combined_plotter = CombinedPlotter(
             plot_data,
             products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
+            output_dir=flare_plot_dir,
         )
         combined_plotter.plot_all()
+        tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
         plotted_flare_keys.append(flare_key)
 
     return PlottingResult(plotted_flare_keys=plotted_flare_keys)

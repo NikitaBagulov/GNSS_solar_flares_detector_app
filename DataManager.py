@@ -10,7 +10,7 @@ import os
 
 
 class DataManager:
-    def __init__(self, base_download_dir: str = "./data"):
+    def __init__(self, base_download_dir: str = "./data", existing_data_policy: str = "validate"):
         self.base_download_dir = Path(base_download_dir)
         self.base_download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -27,6 +27,7 @@ class DataManager:
         self._recover_interrupted_downloads()
 
         self._register_cleanup_handlers()
+        self.existing_data_policy = existing_data_policy
         
         print(f"📁 DataManager инициализирован в {self.base_download_dir}")
     
@@ -178,23 +179,41 @@ class DataManager:
                 final_path = self.get_download_path(source_name, target_date, filename)
                 if tracker is not None:
                     tracker.register_files_for_date(target_date, {source_name: str(final_path)})
-                if not force_redownload and final_path.exists():
-                    try:
-                        if self._is_file_valid(final_path, source_name):
-                        
-                            results[source_name] = {
-                                'status': 'skipped',
-                                'result': str(final_path),
-                                'date': target_date,
-                                'message': 'Файл уже существует',
-                                'size': final_path.stat().st_size
-                            }
-                            print(f"   ⏭️ {source_name}: файл уже существует")
-                            continue
-                        else:
-                            print(f"   ⚠️ {source_name}: файл поврежден, перезагружаем...")
-                    except Exception as e:
-                        print(f"   ⚠️ {source_name}: не удалось проверить файл ({e}), перезагружаем...")
+                policy = "overwrite" if force_redownload else self.existing_data_policy
+
+                if final_path.exists():
+                    if policy == "skip":
+                        results[source_name] = {
+                            'status': 'skipped',
+                            'result': str(final_path),
+                            'date': target_date,
+                            'message': 'Файл уже существует (skip policy)',
+                            'size': final_path.stat().st_size
+                        }
+                        print(f"   ⏭️ {source_name}: файл уже существует (skip)")
+                        continue
+
+                    if policy == "overwrite":
+                        final_path.unlink(missing_ok=True)
+                        print(f"   ♻️ {source_name}: существующий файл удален (overwrite)")
+
+                    if policy == "validate":
+                        try:
+                            if self._is_file_valid(final_path, source_name):
+                                results[source_name] = {
+                                    'status': 'skipped',
+                                    'result': str(final_path),
+                                    'date': target_date,
+                                    'message': 'Файл уже существует и валиден',
+                                    'size': final_path.stat().st_size
+                                }
+                                print(f"   ⏭️ {source_name}: файл валиден (validate)")
+                                continue
+                            print(f"   ⚠️ {source_name}: файл поврежден, перезагружаем (validate)")
+                            final_path.unlink(missing_ok=True)
+                        except Exception as e:
+                            print(f"   ⚠️ {source_name}: не удалось проверить файл ({e}), перезагружаем")
+                            final_path.unlink(missing_ok=True)
 
                 temp_path = final_path.with_suffix(extension + '.tmp')
 

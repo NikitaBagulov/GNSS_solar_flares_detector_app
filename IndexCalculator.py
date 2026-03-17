@@ -49,13 +49,26 @@ class IndexRegistry:
 
 
 class IndexCalculator:
-    def __init__(self, base_folder="preprocessed_maps"):
+    def __init__(self, base_folder="preprocessed_maps", existing_data_policy: str = "validate"):
         self.base_folder = Path(base_folder)
+        self.existing_data_policy = existing_data_policy
         self.registry = IndexRegistry()
         self.registry.register("day_night_index", lambda dates, t: compute_index(dates, t, compute_day_night_index))
         self.registry.register("gsflai_index",   lambda dates, t: compute_index(dates, t, compute_gsflai_index))
         self.registry.register("isfai_index",    lambda dates, t: compute_index(dates, t, compute_isfai_index))
         self.available_products = []
+
+    def _is_index_file_valid(self, file_path: Path) -> bool:
+        if not file_path.exists() or file_path.stat().st_size == 0:
+            return False
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                required = {"time", "day_night_index", "gsflai_index", "isfai_index"}
+                return bool(rows) and required.issubset(set(reader.fieldnames or []))
+        except Exception:
+            return False
 
     def scan_all_flares(self):
         flare_keys = []
@@ -99,11 +112,23 @@ class IndexCalculator:
             file_path = folder_path / f"map_{product_type}.h5"
             output_file = folder_path / f"indices_{product_type}.csv"
 
-            # Проверка существующего CSV
             if output_file.exists():
-                print(f"Индексы для {product_type} уже существуют, пропускаем вычисление.")
-                indices_for_date[product_type] = output_file
-                continue
+                if self.existing_data_policy == "skip":
+                    print(f"Индексы для {product_type} уже существуют, пропускаем вычисление (skip).")
+                    indices_for_date[product_type] = output_file
+                    continue
+
+                if self.existing_data_policy == "overwrite":
+                    output_file.unlink(missing_ok=True)
+                    print(f"Индексы для {product_type} будут пересозданы (overwrite).")
+
+                if self.existing_data_policy == "validate":
+                    if self._is_index_file_valid(output_file):
+                        print(f"Индексы для {product_type} валидны, пропускаем вычисление (validate).")
+                        indices_for_date[product_type] = output_file
+                        continue
+                    print(f"Индексы для {product_type} невалидны, пересчитываем (validate).")
+                    output_file.unlink(missing_ok=True)
 
             try:
                 data_dict = retrieve_data(file_path)
@@ -130,10 +155,7 @@ class IndexCalculator:
                 print(f"Нет данных для сохранения для продукта {product_type}")
 
         if tracker is not None and indices_for_date:
-            tracker.register_files_for_flare(
-                flare_key,
-                {"indices": indices_for_date}
-            )
+            tracker.set_files_for_flare_section(flare_key, "indices", indices_for_date)
 
 
 

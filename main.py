@@ -14,6 +14,7 @@ from pipeline.runner import (
     run_plotting,
     run_preprocessing,
 )
+from pipeline.run_config import RunConfig, as_module_set
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +63,33 @@ def parse_args() -> argparse.Namespace:
         help="Режим выполнения: once (один прогон) или service (периодический запуск)",
     )
     parser.add_argument(
+        "--existing-data-policy",
+        choices=["skip", "overwrite", "validate"],
+        default="validate",
+        help="Глобальная политика для существующих артефактов",
+    )
+    parser.add_argument(
+        "--skip-modules",
+        nargs="*",
+        default=[],
+        choices=["download", "preprocess", "index", "plot"],
+        help="Модули, которые должны пропускать существующие артефакты",
+    )
+    parser.add_argument(
+        "--overwrite-modules",
+        nargs="*",
+        default=[],
+        choices=["download", "preprocess", "index", "plot"],
+        help="Модули, которые должны перезаписывать артефакты",
+    )
+    parser.add_argument(
+        "--validate-modules",
+        nargs="*",
+        default=[],
+        choices=["download", "preprocess", "index", "plot"],
+        help="Модули, которые должны валидировать артефакты",
+    )
+    parser.add_argument(
         "--poll-interval-seconds",
         type=int,
         default=3600,
@@ -98,12 +126,20 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     data_download_path.mkdir(parents=True, exist_ok=True)
     state_json_path.parent.mkdir(parents=True, exist_ok=True)
 
+    run_config = RunConfig(
+        existing_data_policy=args.existing_data_policy,
+        skip_modules=as_module_set(args.skip_modules),
+        overwrite_modules=as_module_set(args.overwrite_modules),
+        validate_modules=as_module_set(args.validate_modules),
+    )
+
     return PipelineConfig(
         start_date=start_date,
         end_date=end_date,
         min_flare_class=args.min_flare_class,
         state_json_path=state_json_path,
         data_download_path=data_download_path,
+        run_config=run_config,
     )
 
 
@@ -198,6 +234,10 @@ def main() -> None:
     logging.info("  Шаги: %s", ", ".join(args.steps))
     logging.info("  Режим: %s", args.mode)
     logging.info("  Интервал опроса (сек): %s", args.poll_interval_seconds)
+    logging.info("  Глобальная policy: %s", args.existing_data_policy)
+    logging.info("  Skip modules: %s", ", ".join(args.skip_modules) if args.skip_modules else "-")
+    logging.info("  Overwrite modules: %s", ", ".join(args.overwrite_modules) if args.overwrite_modules else "-")
+    logging.info("  Validate modules: %s", ", ".join(args.validate_modules) if args.validate_modules else "-")
 
     try:
         run_orchestration(

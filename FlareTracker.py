@@ -161,6 +161,24 @@ class FlareTracker:
 
         self._save_state(message=f"Файлы зарегистрированы для вспышки {flare_key} (DEBUG)")
 
+    def set_files_for_flare_section(self, flare_key: str, section: str, files: dict):
+        self.state.setdefault("files_by_flare", {}).setdefault(flare_key, {})
+        normalized = {
+            k: str(v) if isinstance(v, Path) else str(v)
+            for k, v in files.items()
+            if Path(v).exists()
+        }
+        if normalized:
+            self.state["files_by_flare"][flare_key][section] = normalized
+        else:
+            self.state["files_by_flare"][flare_key].pop(section, None)
+            if not self.state["files_by_flare"][flare_key]:
+                self.state["files_by_flare"].pop(flare_key, None)
+        self._save_state(message=f"Обновлена секция '{section}' для вспышки {flare_key}")
+
+    def sync_state_with_files(self):
+        self._sync_state_with_files()
+
 
     def get_files_for_flare_date(self, flare_date: date) -> dict:
         date_str = flare_date.strftime("%Y-%m-%d")
@@ -244,6 +262,24 @@ class FlareTracker:
                 if key in date_files:
                     self.state["files_by_flare"].setdefault(flare_key, {})
                     self.state["files_by_flare"][flare_key][key] = date_files[key]
+
+        for flare_key, flare_files in list(self.state.get("files_by_flare", {}).items()):
+            for section in ("maps", "indices", "plots"):
+                section_map = flare_files.get(section)
+                if not isinstance(section_map, dict):
+                    continue
+                existing_only = {
+                    product: path
+                    for product, path in section_map.items()
+                    if Path(path).exists()
+                }
+                if existing_only:
+                    self.state["files_by_flare"][flare_key][section] = existing_only
+                else:
+                    self.state["files_by_flare"][flare_key].pop(section, None)
+
+            if not self.state["files_by_flare"][flare_key]:
+                self.state["files_by_flare"].pop(flare_key, None)
         
         # Получаем список источников
         available_sources = list(self.data_manager.download_functions.keys())
