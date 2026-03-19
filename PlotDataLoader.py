@@ -12,6 +12,7 @@ from dateutil import tz
 
 from PlotData import PlotData, FlareData
 from flare_utils import build_flare_key, get_flare_window
+from map_filters import maybe_filter_roti_points
 
 _UTC = tz.gettz('UTC')
 SIMURG_MAP_TIME_KEY_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
@@ -189,7 +190,10 @@ class PlotDataLoader:
 
                     if start_interval <= time <= end_interval:
                         timestamps.add(time)
-                        product_data[prod_name][time] = f["data"][str_time][:]
+                        product_data[prod_name][time] = maybe_filter_roti_points(
+                            f["data"][str_time][:],
+                            path.name,
+                        )
 
         # 🔁 fallback: если ничего не попало в интервал
         if not timestamps and maps_paths:
@@ -209,7 +213,10 @@ class PlotDataLoader:
                             continue
 
                         timestamps.add(time)
-                        product_data[prod_name][time] = f["data"][str_time][:]
+                        product_data[prod_name][time] = maybe_filter_roti_points(
+                            f["data"][str_time][:],
+                            path.name,
+                        )
 
         timestamps = sorted(timestamps)
 

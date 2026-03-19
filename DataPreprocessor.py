@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import h5py
 
 import time
-import numpy as np
 from simurg_core.storage.hdf_query import get_map_chunked
 from simurg_core.storage.hdf_storage import get_sites_attrs
 from simurg_core.storage.hdf_maps import store_maps_time_based
