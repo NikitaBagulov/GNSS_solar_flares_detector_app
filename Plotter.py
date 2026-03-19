@@ -156,6 +156,7 @@ class Plotter:
             plt.colorbar(sc, cax=cbar_ax, label=self.get_product_unit(product_name))
         if map_time:
             self._plot_terminator(ax, map_time)
+            self._plot_subsolar_point(ax, map_time)
 
     def _plot_sun(self, ax, flare):
         ax.set_title("Solar Disk")
@@ -407,6 +408,31 @@ class Plotter:
             ha="left",
             va="top",
             bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
+        )
+
+    def _plot_subsolar_point(self, ax, map_time):
+        map_time_utc = self._to_utc_datetime(map_time)
+        sub_lat, sub_lon = self._subsolar_point(map_time_utc)
+
+        ax.scatter(
+            [sub_lon],
+            [sub_lat],
+            s=150,
+            color="black",
+            linewidths=10.0,
+            marker="x",
+            zorder=5,
+            transform=ccrs.PlateCarree(),
+        )
+        ax.scatter(
+            [sub_lon],
+            [sub_lat],
+            s=110,
+            color="#ffd54f",
+            linewidths=3.8,
+            marker="x",
+            zorder=6,
+            transform=ccrs.PlateCarree(),
         )
 
     def _plot_terminator(self, ax, time_value=None, color="black", alpha=0.25):
