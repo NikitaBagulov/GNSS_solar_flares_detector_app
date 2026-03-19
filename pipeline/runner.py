@@ -169,7 +169,9 @@ def run_plotting(config: PipelineConfig) -> PlottingResult:
             products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
             output_dir=flare_plot_dir,
         )
+        plotter.plot_maps_with_day_distribution()
         plotter.plot_all()    
+        
         combined_plotter = CombinedPlotter(
             plot_data,
             products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
