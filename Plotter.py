@@ -9,6 +9,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 import matplotlib.patches as patches
 import math
+from map_filters import filter_roti_time_slice
 
 DEFAULT_PARAMS = {
     'font.size': 18,
@@ -117,6 +118,8 @@ class Plotter:
             ax.set_title("No map data or invalid index")
             return
         points = self.data.product_values[time_index].get(product_name, np.array([]))
+        if product_name == "roti":
+            points = filter_roti_time_slice(points)
         if points.size == 0:
             ax.set_title(f"No data for product {product_name}")
             return

@@ -8,6 +8,7 @@ from index_functions.day_night_index import compute_day_night_index
 from index_functions.gsflai import compute_gsflai_index
 from index_functions.isfai import compute_isfai_index
 from dateutil import tz
+from map_filters import maybe_filter_roti_points
 
 def compute_index(dates, time_key, index_func):
     try:
@@ -23,7 +24,8 @@ def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
     """
     Загружает данные из HDF5 и возвращает словарь {datetime: NDArray}.
     """
-    f_in = h5py.File(file, 'r')
+    file_path = Path(file)
+    f_in = h5py.File(file_path, 'r')
     data = {}
     times = list(f_in['data'])[:]
     for str_time in times:
@@ -31,7 +33,7 @@ def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
         if time.second != 0:
             continue
         # time = time.replace(microsecond=0)
-        data[time] = f_in['data'][str_time][:]
+        data[time] = maybe_filter_roti_points(f_in['data'][str_time][:], file_path.stem)
     return data
 
 class IndexRegistry:
