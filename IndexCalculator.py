@@ -33,7 +33,7 @@ def retrieve_data(file) -> dict[datetime.datetime, np.ndarray]:
         if time.second != 0:
             continue
         # time = time.replace(microsecond=0)
-        data[time] = maybe_filter_roti_points(f_in['data'][str_time][:], file_path.name)
+        data[time] = maybe_filter_roti_points(f_in['data'][str_time][:], file_path.stem)
     return data
 
 class IndexRegistry:

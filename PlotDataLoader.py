@@ -192,7 +192,7 @@ class PlotDataLoader:
                         timestamps.add(time)
                         product_data[prod_name][time] = maybe_filter_roti_points(
                             f["data"][str_time][:],
-                            path.name,
+                            prod_name,
                         )
 
         # 🔁 fallback: если ничего не попало в интервал
@@ -215,7 +215,7 @@ class PlotDataLoader:
                         timestamps.add(time)
                         product_data[prod_name][time] = maybe_filter_roti_points(
                             f["data"][str_time][:],
-                            path.name,
+                            prod_name,
                         )
 
         timestamps = sorted(timestamps)

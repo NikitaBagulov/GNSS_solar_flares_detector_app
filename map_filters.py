@@ -43,8 +43,13 @@ def filter_roti_time_slice(points: np.ndarray) -> np.ndarray:
 
 
 def maybe_filter_roti_points(points: np.ndarray, source_name: str | Path) -> np.ndarray:
-    source_name = Path(source_name).name
-    if source_name != "map_roti.h5":
+    source_path = Path(source_name)
+    source_tokens = {
+        source_path.name,
+        source_path.stem,
+        str(source_name),
+    }
+    if "roti" not in source_tokens and "map_roti" not in source_tokens and "map_roti.h5" not in source_tokens:
         return points
 
     filtered_points = filter_roti_time_slice(points)
