@@ -52,6 +52,8 @@ python main.py \
   --mode once
 ```
 
+python main.py --start_date 2024-11-01 --end_date 2025-11-12 --min_flare_class X5.1 --mode once
+
 ### 2) Service-режим (1 час)
 
 ```bash

@@ -14,9 +14,13 @@ def empty_like_time_slice(points: np.ndarray) -> np.ndarray:
 
 def filter_roti_time_slice(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points)
+
     if points.size == 0:
         return empty_like_time_slice(points)
 
+    print(points.shape)
+
+    # --- structured array ---
     if points.dtype.names is not None:
         required_fields = ("lat", "lon", "vals")
         if not all(field in points.dtype.names for field in required_fields):
@@ -28,8 +32,17 @@ def filter_roti_time_slice(points: np.ndarray) -> np.ndarray:
             & np.isfinite(points["vals"])
             & (points["vals"] != 0)
         )
-        return points[mask]
 
+        points = points[mask]
+
+        # 🔥 сортировка ПОСЛЕ фильтрации
+        if points.size > 0:
+            order = np.argsort(points["vals"])
+            points = points[order]
+
+        return points
+
+    # --- обычный ndarray ---
     if points.ndim < 2 or points.shape[1] < 3:
         return points
 
@@ -39,7 +52,15 @@ def filter_roti_time_slice(points: np.ndarray) -> np.ndarray:
         & np.isfinite(points[:, 2])
         & (points[:, 2] != 0)
     )
-    return points[mask]
+
+    points = points[mask]
+
+    # 🔥 сортировка ПОСЛЕ фильтрации
+    if points.size > 0:
+        order = np.argsort(points[:, 2])
+        points = points[order]
+
+    return points
 
 
 def maybe_filter_roti_points(points: np.ndarray, source_name: str | Path) -> np.ndarray:
