@@ -884,7 +884,7 @@ class FlareTracker:
                 dates_to_download.append(flare_date)
         
         return dates_to_download
-    
+
     def force_update_from_api(self):
         print(f"\n{'='*70}")
         print(f"🔄 ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ИЗ API")

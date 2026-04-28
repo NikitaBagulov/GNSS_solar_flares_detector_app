@@ -8,6 +8,7 @@ from simurg_core.storage.hdf_query import get_map_chunked
 from simurg_core.storage.hdf_storage import get_sites_attrs
 from simurg_core.storage.hdf_maps import store_maps_time_based
 from flare_utils import build_flare_key, get_flare_window
+from results_layout import event_results_dir, product_file_name
 
 from dateutil import tz
 
@@ -15,7 +16,7 @@ class DataPreprocessor:
     DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})")
     _UTC = tz.gettz('UTC')
 
-    def __init__(self, input_root="./data", output_dir="./preprocessed_maps", data_products=None, window_minutes: int = 15, existing_data_policy: str = "validate"):
+    def __init__(self, input_root="./data", output_dir="./results", data_products=None, window_minutes: int = 15, existing_data_policy: str = "validate"):
         self.input_root = Path(input_root)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -50,10 +51,13 @@ class DataPreprocessor:
             else:
                 raise e
 
-    def get_output_dir_for_flare(self, flare_key: str):
-        flare_dir = self.output_dir / flare_key
+    def get_output_dir_for_flare(self, flare_key: str, flare_class: str | None = None):
+        flare_dir = event_results_dir(flare_key, flare_class=flare_class, root=self.output_dir) / "maps"
         flare_dir.mkdir(parents=True, exist_ok=True)
         return flare_dir
+
+    def get_map_path(self, flare_dir: Path, flare_key: str, product: str, flare_class: str | None = None) -> Path:
+        return flare_dir / product_file_name("map", product, flare_key, ".h5", flare_class=flare_class)
 
     def _is_map_file_valid(self, path: Path) -> bool:
         if not path.exists() or path.stat().st_size == 0:
@@ -64,10 +68,10 @@ class DataPreprocessor:
         except Exception:
             return False
 
-    def _select_products_to_generate(self, flare_dir: Path):
+    def _select_products_to_generate(self, flare_dir: Path, flare_key: str, flare_class: str | None = None):
         selected = []
         for prod in self.data_products:
-            maps_file = flare_dir / f"map_{prod}.h5"
+            maps_file = self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class)
             if self.existing_data_policy == "overwrite":
                 maps_file.unlink(missing_ok=True)
                 selected.append(prod)
@@ -120,16 +124,21 @@ class DataPreprocessor:
                 flare["end_time"],
                 flare.get("class"),
             )
-            flare_dir = self.get_output_dir_for_flare(flare_key)
+            flare_class = flare.get("class")
+            flare_dir = self.get_output_dir_for_flare(flare_key, flare_class=flare_class)
 
-            products_to_generate = self._select_products_to_generate(flare_dir)
+            products_to_generate = self._select_products_to_generate(flare_dir, flare_key, flare_class=flare_class)
             if not products_to_generate:
                 print(f"Data for flare {flare_key} already processed for policy={self.existing_data_policy}, skipping.")
                 if tracker is not None:
                     tracker.set_files_for_flare_section(
                         flare_key,
                         "maps",
-                        {prod: flare_dir / f"map_{prod}.h5" for prod in self.data_products if (flare_dir / f"map_{prod}.h5").exists()},
+                        {
+                            prod: self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class)
+                            for prod in self.data_products
+                            if self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class).exists()
+                        },
                     )
                 continue
 
@@ -163,7 +172,7 @@ class DataPreprocessor:
 
             maps_files = []
             for prod in products_to_generate:
-                maps_file = (flare_dir / f"map_{prod}.h5").resolve()
+                maps_file = self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class).resolve()
                 maps_file.parent.mkdir(parents=True, exist_ok=True)
                 maps_files.append(maps_file)
 
@@ -193,9 +202,9 @@ class DataPreprocessor:
                     flare_key,
                     "maps",
                     {
-                        prod: flare_dir / f"map_{prod}.h5"
+                        prod: self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class)
                         for prod in self.data_products
-                        if (flare_dir / f"map_{prod}.h5").exists()
+                        if self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class).exists()
                     }
                 )
             

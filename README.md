@@ -52,7 +52,9 @@ python main.py \
   --mode once
 ```
 
+```bash
 python main.py --start_date 2024-11-01 --end_date 2025-11-12 --min_flare_class X5.1 --mode once
+```
 
 ### 2) Service-режим (1 час)
 
@@ -119,9 +121,12 @@ python main.py \
 - **State-файл**: `./data/state.json` (задаётся через `--state_json_path`);
 - **Список всех вспышек**: `all_flares.csv` рядом с state-файлом;
 - **Скачанные данные**: внутри `--data_download_path` (по умолчанию `./data`) в структуре `YYYY-MM-DD/<source>/...`;
-- **Карты препроцессинга**: `./preprocessed_maps/<flare_key>/map_<product>.h5`;
-- **Индексы**: `./preprocessed_maps/<flare_key>/indices_<product>.csv`;
-- **Графики**: `./results/<flare_key>/...`.
+- **Публичные артефакты для directory listing**: `./results/<YYYY-MM-DD>_<class>_<HH-MM-SS>_to_<HH-MM-SS>/...`;
+- **GOES X-ray**: `goes_xray/goes_xray.csv`;
+- **SOHO SEM**: `soho_sem/soho_sem.csv`;
+- **Карты**: `maps/map_<product>.h5`;
+- **Индексы**: `indices/indices_<product>.csv`;
+- **Графики**: `graphs/<product>/map_<product>_<HH-MM-SS>_UTC.png`, `graphs/combined/...`.
 
 ---
 

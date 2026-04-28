@@ -1,9 +1,10 @@
-import pandas as pd
 import datetime
 import requests
-import os
 from DataManager import DataManager
 from pathlib import Path
+
+SIMURG_CHUNK_SIZE = 64 * 1024 * 1024
+
 
 def download_simurg_hdf(
     date: datetime.date,
@@ -45,26 +46,18 @@ def download_simurg_hdf(
         # Создаем директорию для временного файла
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         
-        response = requests.get(url, timeout=timeout, stream=True)
-        response.raise_for_status()
-        
-        # Получаем общий размер файла из заголовков
-        total_size = int(response.headers.get('content-length', 0))
-        
-        print(f"   📊 Размер файла: {total_size / 1024:.1f} KB" if total_size > 0 else "   📊 Размер неизвестен")
-        
-        # Скачиваем во временный файл с прогрессом
-        downloaded = 0
-        with open(temp_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=65536):
-                if chunk:  # фильтруем keep-alive chunks
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    
-                    # Показываем прогресс каждые 5MB
-                    if total_size > 0 and downloaded % (5 * 1024 * 1024) < 65536:
-                        progress = (downloaded / total_size) * 100
-                        print(f"   ⏳ Загружено: {downloaded / 1024:.1f} KB ({progress:.1f}%)", end='\r')
+        with requests.get(url, timeout=timeout, stream=True) as response:
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            print(f"   📊 Размер файла: {total_size / 1024:.1f} KB" if total_size > 0 else "   📊 Размер неизвестен")
+
+            downloaded = 0
+            with open(temp_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=SIMURG_CHUNK_SIZE):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
         
         print(f"   ✅ Загрузка завершена: {downloaded / 1024:.1f} KB")
         
