@@ -121,7 +121,7 @@ python main.py \
 - **State-файл**: `./data/state.json` (задаётся через `--state_json_path`);
 - **Список всех вспышек**: `all_flares.csv` рядом с state-файлом;
 - **Скачанные данные**: внутри `--data_download_path` (по умолчанию `./data`) в структуре `YYYY-MM-DD/<source>/...`;
-- **Публичные артефакты для directory listing**: `./results/<YYYY-MM-DD>_<class>_<HH-MM-SS>_to_<HH-MM-SS>/...`;
+- **Публичные артефакты для directory listing**: `./results/<class-letter>/<YYYY-MM-DD>_<class>/...`, например `./results/X/2025-11-11_X5.2/...`;
 - **GOES X-ray**: `goes_xray/goes_xray.csv`;
 - **SOHO SEM**: `soho_sem/soho_sem.csv`;
 - **Карты**: `maps/map_<product>.h5`;

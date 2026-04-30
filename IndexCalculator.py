@@ -9,7 +9,7 @@ from index_functions.gsflai import compute_gsflai_index
 from index_functions.isfai import compute_isfai_index
 from dateutil import tz
 from map_filters import maybe_filter_roti_points
-from results_layout import event_results_dir, product_file_name
+from results_layout import event_results_dir, legacy_event_results_dir, product_file_name
 
 def compute_index(dates, time_key, index_func):
     try:
@@ -102,15 +102,21 @@ class IndexCalculator:
                 for path in legacy_folder.glob("map_*.h5")
             }
 
-        event_maps_dir = event_results_dir(flare_key, root=self.base_folder) / "maps"
+        event_maps_dirs = [
+            event_results_dir(flare_key, root=self.base_folder) / "maps",
+            legacy_event_results_dir(flare_key, root=self.base_folder) / "maps",
+        ]
         products = ["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"]
         found = {}
-        for product in products:
-            matches = sorted(event_maps_dir.glob(f"map_{product}.h5"))
-            if not matches:
-                matches = sorted(event_maps_dir.glob(f"map_{product}_*.h5"))
-            if matches:
-                found[product] = matches[0]
+        for event_maps_dir in event_maps_dirs:
+            for product in products:
+                if product in found:
+                    continue
+                matches = sorted(event_maps_dir.glob(f"map_{product}.h5"))
+                if not matches:
+                    matches = sorted(event_maps_dir.glob(f"map_{product}_*.h5"))
+                if matches:
+                    found[product] = matches[0]
         return found
 
     def _indices_dir_for_maps(self, flare_key: str, map_paths: dict[str, Path]) -> Path:
