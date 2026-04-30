@@ -132,7 +132,7 @@ python main.py \
 
 ## Directory listing результатов
 
-Обычный просмотр папки `results` через браузер:
+Красивый просмотр папки `results` через браузер:
 
 ```bash
 make serve-results
@@ -149,6 +149,8 @@ http://localhost:8000
 ```bash
 make serve-results RESULTS_PORT=8001
 ```
+
+По умолчанию сервер доступен только локально на `127.0.0.1`.
 
 ---
 

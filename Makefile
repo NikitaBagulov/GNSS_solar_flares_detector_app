@@ -60,7 +60,7 @@ run-service:
 		--steps $(STEPS)
 
 serve-results:
-	$(PYTHON) -m http.server $(RESULTS_PORT) --directory $(RESULTS_DIR)
+	$(PYTHON) results_server.py --port $(RESULTS_PORT) --directory $(RESULTS_DIR)
 
 lint:
 	@echo "Lint target не настроен: в репозитории не найден конфиг линтера."
