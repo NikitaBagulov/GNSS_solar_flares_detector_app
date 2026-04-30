@@ -6,9 +6,10 @@ from download_functions.simurg_hdf import _format_bytes, _timeout_from_kwargs, d
 
 
 class FakeResponse:
-    def __init__(self, chunks, headers=None):
+    def __init__(self, chunks, headers=None, status_code=200):
         self._chunks = chunks
         self.headers = headers or {}
+        self.status_code = status_code
 
     def __enter__(self):
         return self
@@ -44,9 +45,10 @@ def test_download_simurg_hdf_streams_chunks_to_temp_file(tmp_path, monkeypatch):
     manager = _make_manager(tmp_path, monkeypatch)
     chunks = [b"abc", b"def"]
 
-    def fake_get(url, timeout, stream):
+    def fake_get(url, timeout, stream, headers=None):
         assert stream is True
         assert timeout is None
+        assert headers == {}
         return FakeResponse(chunks, headers={"content-length": "6"})
 
     monkeypatch.setattr(simurg_hdf.requests, "get", fake_get)
@@ -58,4 +60,35 @@ def test_download_simurg_hdf_streams_chunks_to_temp_file(tmp_path, monkeypatch):
         chunk_size=2,
     )
 
+    assert result.read_bytes() == b"abcdef"
+
+
+def test_download_simurg_hdf_resumes_existing_temp_file(tmp_path, monkeypatch):
+    manager = _make_manager(tmp_path, monkeypatch)
+    temp_path = manager.get_download_path(
+        "simurg_hdf",
+        datetime.date(2025, 11, 11),
+        "simurg_hdf_20251111.h5.tmp",
+    )
+    temp_path.write_bytes(b"abc")
+    calls = []
+
+    def fake_get(url, timeout, stream, headers=None):
+        calls.append(headers)
+        return FakeResponse(
+            [b"def"],
+            headers={"content-length": "3", "content-range": "bytes 3-5/6"},
+            status_code=206,
+        )
+
+    monkeypatch.setattr(simurg_hdf.requests, "get", fake_get)
+
+    result = download_simurg_hdf(
+        datetime.date(2025, 11, 11),
+        manager,
+        temp_path=temp_path,
+        progress_interval=999,
+    )
+
+    assert calls == [{"Range": "bytes=3-"}]
     assert result.read_bytes() == b"abcdef"
