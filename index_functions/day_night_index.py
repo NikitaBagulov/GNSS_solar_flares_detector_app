@@ -107,7 +107,7 @@ def calculate_index(points, is_day=True):
 def compute_day_night_index(
         points,
         time_key,
-        debug=True,
+        debug=False,
         log_file="day_night_debug_log.csv",
         eps_abs=1e-6):
 
@@ -165,18 +165,6 @@ def compute_day_night_index(
 
         N_day = int(np.sum(day_mask))
         N_night = int(np.sum(night_mask))
-
-        print("\n" + "=" * 80)
-        print("DEBUG day/night index B")
-        print("time:", time_key)
-        print("N_day:", N_day)
-        print("N_night:", N_night)
-        print("mu_day:", mu_day)
-        print("mu_night:", mu_night)
-        print("num:", num)
-        print("den:", den)
-        print("index:", I_B)
-        print("=" * 80)
 
         # запись в файл
         with open(log_file, "a") as f:

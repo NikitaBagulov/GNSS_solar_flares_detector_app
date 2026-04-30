@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from dateutil import tz
 import pandas as pd
@@ -61,36 +61,16 @@ def _as_utc_timestamp(dt_like: object) -> pd.Timestamp:
     return t
 
 
-from datetime import datetime, timedelta, timezone
-
 def get_flare_window(
     start_time: datetime,
     end_time: datetime,
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
 ) -> tuple[datetime, datetime]: 
-    print(f"start {start_time} {start_time.timestamp()} {start_time.tzinfo}")
-    print(f"end   {end_time} {end_time.timestamp()} {end_time.tzinfo}")
-
-    start_time = start_time.tz_localize("UTC").to_pydatetime()
-    end = end_time.tz_localize("UTC").to_pydatetime()
-    print(f"start {start_time} {start_time.timestamp()}")
-    print(f"end   {end_time} {end_time.timestamp()}")
-    # гарантируем UTC
-    if start_time.tzinfo is None:
-        start_time = start_time.replace(tzinfo=timezone.utc)
-
-    if end_time.tzinfo is None:
-        end_time = end_time.replace(tzinfo=timezone.utc)
-
-    print(f"start {start_time} {start_time.timestamp()}")
-    print(f"end   {end_time} {end_time.timestamp()}")
-
+    start_time = _as_utc_timestamp(start_time).to_pydatetime()
+    end_time = _as_utc_timestamp(end_time).to_pydatetime()
 
     start = start_time - timedelta(minutes=window_minutes)
-    end   = end_time + timedelta(minutes=window_minutes)
-
-    print(f"start {start} {start.timestamp()}")
-    print(f"end   {end} {end.timestamp()}")
+    end = end_time + timedelta(minutes=window_minutes)
 
     return start, end
 

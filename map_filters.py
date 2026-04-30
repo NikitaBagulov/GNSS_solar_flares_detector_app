@@ -18,8 +18,6 @@ def filter_roti_time_slice(points: np.ndarray) -> np.ndarray:
     if points.size == 0:
         return empty_like_time_slice(points)
 
-    print(points.shape)
-
     # --- structured array ---
     if points.dtype.names is not None:
         required_fields = ("lat", "lon", "vals")

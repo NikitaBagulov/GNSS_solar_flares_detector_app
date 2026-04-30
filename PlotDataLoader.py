@@ -75,7 +75,6 @@ class PlotDataLoader:
         if not euv_path:
             euv_path = files_for_date.get("soho_sem")
 
-        print("maps path", maps_paths)
         timestamps, product_values = self._load_maps(
             maps_paths, start_interval, end_interval
         )
@@ -110,8 +109,6 @@ class PlotDataLoader:
             indices[product]["gsflai_index"] = gsflai_index
             indices[product]["isfai_index"] = isfai_index
         # 5️⃣ X-ray и EUV
-        print("BEFORE LOAD CSV")
-        print(euv_path, xray_path)
         xray_times, xray_values = self._load_csv_interval(
             xray_path,
             value_col="xrsb",
@@ -125,7 +122,6 @@ class PlotDataLoader:
             start_interval=start_interval,
             end_interval=end_interval
         )
-        print("AFTER LOAD CSV")
         # 6️⃣ Список вспышек
         flare_list: List[FlareData] = [
             FlareData(
@@ -248,7 +244,6 @@ class PlotDataLoader:
 
 
     def _load_csv_interval(self, path, value_col, start_interval, end_interval):
-        print("LOAD CSV", start_interval, end_interval)
         if not path or not Path(path).exists():
             return [], []
         

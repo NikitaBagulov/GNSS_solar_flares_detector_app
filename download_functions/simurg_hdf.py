@@ -28,8 +28,6 @@ def download_simurg_hdf(
             import h5py
             with h5py.File(final_path, 'r') as f:
                 if len(f.keys()) > 0:
-                    file_size = final_path.stat().st_size
-                    print(f"   ⏭️ Файл Simurg HDF уже существует: {final_path} ({file_size / 1024:.1f} KB)")
                     return final_path
                 else:
                     print(f"⚠️ Файл {final_path} пустой или поврежден, перезагружаем...")
@@ -41,7 +39,6 @@ def download_simurg_hdf(
         url = f"https://simurg.iszf.irk.ru/gen_file?data={data_type}&date={date_str}"
 
         print(f"📡 Загрузка Simurg HDF ({data_type}) за {date}...")
-        print(f"   📥 URL: {url}")
         
         # Создаем директорию для временного файла
         temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,17 +46,10 @@ def download_simurg_hdf(
         with requests.get(url, timeout=timeout, stream=True) as response:
             response.raise_for_status()
 
-            total_size = int(response.headers.get('content-length', 0))
-            print(f"   📊 Размер файла: {total_size / 1024:.1f} KB" if total_size > 0 else "   📊 Размер неизвестен")
-
-            downloaded = 0
             with open(temp_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=SIMURG_CHUNK_SIZE):
                     if chunk:
                         f.write(chunk)
-                        downloaded += len(chunk)
-        
-        print(f"   ✅ Загрузка завершена: {downloaded / 1024:.1f} KB")
         
         # Проверяем, что временный файл создан и не пустой
         if not temp_path.exists():
@@ -88,5 +78,4 @@ def download_simurg_hdf(
         if 'temp_path' in locals() and temp_path.exists():
             temp_path.unlink()
         error_msg = f"Ошибка загрузки Simurg HDF ({data_type}) за {date}: {str(e)}"
-        print(f"❌ {error_msg}")
         raise Exception(error_msg)

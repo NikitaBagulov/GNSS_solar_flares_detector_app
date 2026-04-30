@@ -29,7 +29,6 @@ class DataManager:
         self._register_cleanup_handlers()
         self.existing_data_policy = existing_data_policy
         
-        print(f"📁 DataManager инициализирован в {self.base_download_dir}")
     
     def _register_cleanup_handlers(self):
         atexit.register(self._cleanup_all_downloads)
@@ -45,8 +44,6 @@ class DataManager:
         sys.exit(1)
     
     def _cleanup_orphaned_temp_files(self):
-        print("🧹 Поиск старых временных файлов...")
-
         tmp_files = list(self.base_download_dir.rglob("*.tmp"))
         
         files_removed = 0
@@ -56,7 +53,6 @@ class DataManager:
                 if file_age > 3600:
                     tmp_file.unlink()
                     files_removed += 1
-                    print(f"   🗑️ Удален старый временный файл: {tmp_file}")
             except Exception as e:
                 print(f"   ⚠️ Не удалось удалить {tmp_file}: {e}")
         
@@ -91,7 +87,6 @@ class DataManager:
                         try:
                             temp_file.unlink()
                             files_removed += 1
-                            print(f"   🗑️ Удален недокаченный файл: {temp_file}")
                         except Exception as e:
                             print(f"   ⚠️ Не удалось удалить {temp_file}: {e}")
 
@@ -105,7 +100,6 @@ class DataManager:
             self._transaction_file.unlink(missing_ok=True)
     
     def _cleanup_all_downloads(self):
-        print("🧹 Очистка активных загрузок...")
         files_removed = 0
         
         for source, temp_files in list(self._active_downloads.items()):
@@ -114,7 +108,6 @@ class DataManager:
                     try:
                         temp_file.unlink()
                         files_removed += 1
-                        print(f"   🗑️ Удален временный файл: {temp_file}")
                     except Exception as e:
                         print(f"   ⚠️ Не удалось удалить {temp_file}: {e}")
                 self._active_downloads[source].remove(temp_file)
@@ -150,7 +143,6 @@ class DataManager:
         if config:
             self.sources_config[source_name] = config
         
-        print(f"📝 Зарегистрирован источник '{source_name}' с расширением '{default_extension}'")
     
     def download_by_date(
         self, 
@@ -164,7 +156,6 @@ class DataManager:
         results = {}
 
         sources_to_download = sources or list(self.download_functions.keys())
-        print(f"Tracker: {tracker}")
         for source_name in sources_to_download:
             if source_name not in self.download_functions:
                 print(f"⚠️ Источник '{source_name}' не зарегистрирован, пропускаем")
@@ -269,16 +260,6 @@ class DataManager:
                     'date': target_date
                 }
                 print(f"   ❌ {source_name}: ошибка - {e}")
-        
-        print(f"📊 ИТОГИ ЗАГРУЗКИ ЗА {target_date}:")
-        for source, result in results.items():
-            status = result.get('status', 'unknown')
-            if status == 'success':
-                print(f"   ✅ {source}: успешно")
-            elif status == 'skipped':
-                print(f"   ⏭️ {source}: пропущен")
-            elif status == 'error':
-                print(f"   ❌ {source}: ошибка")
         
         return results
     

@@ -43,14 +43,10 @@ def download_soho_sem(
         filename_remote = f'{yy}_{mm}_{dd}_v4.00'
         url = f'https://lasp.colorado.edu/eve/data_access/eve_data/lasp_soho_sem_data/long/15_sec_avg/{year}/{filename_remote}'
         
-        print(f"   📥 URL: {url}")
-        
         response = requests.get(url, timeout=60)
         
         if response.status_code != 200:
             raise Exception(f"Не удалось скачать файл: HTTP {response.status_code}")
-        
-        print(f"   ✅ Файл получен ({len(response.text)} байт)")
         
         data = []
         base_time = datetime.datetime.combine(date, datetime.datetime.min.time())
@@ -84,12 +80,9 @@ def download_soho_sem(
         if not data:
             raise Exception("Нет данных в файле")
         
-        print(f"   📊 Обработано строк: {lines_processed}, записей: {len(data)}")
-        
         df = pd.DataFrame(data)
         df.set_index('time', inplace=True)
 
-        print(f"   💾 Сохранение во временный файл: {temp_path}")
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(temp_path, index=True)
 
@@ -101,8 +94,6 @@ def download_soho_sem(
             temp_path.unlink()
             raise Exception(f"Временный файл пустой: {temp_path}")
         
-        print(f"   ✅ Данные сохранены ({file_size} байт)")
-
         return temp_path
         
     except requests.exceptions.Timeout:
@@ -114,10 +105,8 @@ def download_soho_sem(
         if 'temp_path' in locals() and temp_path.exists():
             try:
                 temp_path.unlink()
-                print(f"🧹 Удален временный файл после ошибки: {temp_path}")
             except:
                 pass
         
         error_msg = f"Ошибка загрузки SOHO SEM данных за {date}: {str(e)}"
-        print(f"❌ {error_msg}")
         raise Exception(error_msg)

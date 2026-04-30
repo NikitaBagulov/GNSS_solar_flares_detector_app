@@ -144,10 +144,9 @@ class IndexCalculator:
             print("Нет папок с данными вспышек.")
             return
 
-        print(f"Найдено {len(flare_keys)} вспышек: {flare_keys}")
+        print(f"Найдено вспышек для расчёта индексов: {len(flare_keys)}")
 
         for flare_key in flare_keys:
-            print(f"\n=== Обработка вспышки {flare_key} ===")
             self.process_single_flare(flare_key)
 
     def process_single_flare(self, flare_key: str, tracker=None):
@@ -163,7 +162,6 @@ class IndexCalculator:
         flare_class = self._flare_class_for_key(flare_key, tracker=tracker)
 
         for product_type in products:
-            print(f"\nОбработка продукта: {product_type}")
             file_path = map_paths[product_type]
             output_file = indices_dir / product_file_name(
                 "indices",
@@ -208,15 +206,16 @@ class IndexCalculator:
                 fieldnames = ["time"] + list(self.registry.index_functions.keys())
                 with open(output_file, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(all_results)
-                print(f"Индексы сохранены в {output_file}")
+                writer.writeheader()
+                writer.writerows(all_results)
                 indices_for_date[product_type] = output_file
             else:
                 print(f"Нет данных для сохранения для продукта {product_type}")
 
         if tracker is not None and indices_for_date:
             tracker.set_files_for_flare_section(flare_key, "indices", indices_for_date)
+        if indices_for_date:
+            print(f"Индексы для {flare_key}: сохранено продуктов {len(indices_for_date)}.")
 
 
 

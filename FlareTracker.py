@@ -18,9 +18,6 @@ class FlareTracker:
                  end_date: Optional[date] = None,
                  min_flare_class: str = "X1.0",
                  state_file_path: Optional[Path] = None):
-        print(f"🚀 Инициализация FlareTracker")
-        print(f"📁 Директория данных: {data_manager.base_download_dir}")
-
         current_date = datetime.now().date()
         
         if start_date is None:
@@ -29,15 +26,10 @@ class FlareTracker:
         if end_date is None:
             end_date = current_date
         
-        print(f"📅 Начальная дата: {start_date}")
-        print(f"📅 Конечная дата: {end_date}")
-        
-        
         self.data_manager = data_manager
         self.start_date = start_date
         self.end_date = end_date
         self.min_flare_class = min_flare_class
-        print(f"⭐ Минимальный класс вспышек: {self.min_flare_class}")
 
         if state_file_path is None:
             self.state_file = self.data_manager.base_download_dir / "flare_tracker_state.json"
@@ -45,35 +37,23 @@ class FlareTracker:
             self.state_file = Path(state_file_path)
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
         
-        print(f"📄 Файл состояния: {self.state_file}")
-
         self.state = self._load_state()
 
         self.all_flares_file = self.state_file.parent / "all_flares.csv"
-        print(f"📊 Файл всех вспышек: {self.all_flares_file}")
         
         # Автоматически синхронизируем состояние с файлами при инициализации
         self._sync_state_with_files()
         
-        print(f"✅ FlareTracker инициализирован\n")
     
     def _load_state(self) -> Dict:
-        print(f"📖 Загрузка состояния из {self.state_file}")
         if self.state_file.exists():
             try:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
-                    print(f"   ✓ Состояние загружено")
-                    if state.get("last_update_date"):
-                        print(f"   📅 Последнее обновление: {state['last_update_date']}")
-                    print(f"   📊 Всего вспышек в истории: {state.get('total_flares', 0)}")
-                    print(f"   💾 В state записано дней со скачанными данными: {len(state.get('data_downloaded', []))}")
                     return state
             except Exception as e:
                 print(f"   ⚠️ Ошибка загрузки состояния: {e}")
                 print(f"   📝 Создание нового состояния")
-        else:
-            print(f"   📝 Файл состояния не найден, создание нового")
 
         return {
             "start_date": self.start_date.strftime("%Y-%m-%d"),
@@ -83,6 +63,7 @@ class FlareTracker:
             "flare_dates": [],
             "total_flares": 0,
             "data_downloaded": [],
+            "consumed_sources_by_date": {},
             "files_by_date": {},
             "files_by_flare": {}
         }
@@ -114,13 +95,8 @@ class FlareTracker:
                 # Если передали строку или другой тип
                 self.state["files_by_date"][date_str][key] = str(value)
 
-        # Отладка: выводим, что зарегистрировано
-        print(f"\n🛠️ [DEBUG] Файлы зарегистрированы для {date_str}:")
-        for k, v in self.state["files_by_date"][date_str].items():
-            print(f"   {k}: {v}")
-
         # Сохраняем состояние сразу после регистрации
-        self._save_state(message=f"Файлы зарегистрированы для {date_str} (DEBUG)")
+        self._save_state()
 
         if any(key in files for key in ("goes_xray", "soho_sem")):
             for flare in self.get_flares_for_date(date):
@@ -155,11 +131,7 @@ class FlareTracker:
             else:
                 self.state["files_by_flare"][flare_key][key] = str(value)
 
-        print(f"\n🛠️ [DEBUG] Файлы зарегистрированы для вспышки {flare_key}:")
-        for k, v in self.state["files_by_flare"][flare_key].items():
-            print(f"   {k}: {v}")
-
-        self._save_state(message=f"Файлы зарегистрированы для вспышки {flare_key} (DEBUG)")
+        self._save_state()
 
     def set_files_for_flare_section(self, flare_key: str, section: str, files: dict):
         self.state.setdefault("files_by_flare", {}).setdefault(flare_key, {})
@@ -175,6 +147,20 @@ class FlareTracker:
             if not self.state["files_by_flare"][flare_key]:
                 self.state["files_by_flare"].pop(flare_key, None)
         self._save_state(message=f"Обновлена секция '{section}' для вспышки {flare_key}")
+
+    def mark_source_consumed(self, target_date: date, source_name: str, removed_path: Path | str | None = None):
+        date_str = target_date.strftime("%Y-%m-%d")
+        self.state.setdefault("consumed_sources_by_date", {}).setdefault(date_str, {})
+        self.state["consumed_sources_by_date"][date_str][source_name] = {
+            "removed_path": str(removed_path) if removed_path else None,
+            "consumed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._save_state(message=f"Источник '{source_name}' переработан для {date_str}")
+
+    def _is_source_consumed(self, target_date: date, source_name: str) -> bool:
+        date_str = target_date.strftime("%Y-%m-%d")
+        consumed = self.state.get("consumed_sources_by_date", {}).get(date_str, {})
+        return source_name in consumed
 
     def sync_state_with_files(self):
         self._sync_state_with_files()
@@ -211,8 +197,6 @@ class FlareTracker:
 
     def _sync_state_with_files(self):
         """Синхронизирует состояние с реально существующими файлами"""
-        print(f"\n🔍 СИНХРОНИЗАЦИЯ СОСТОЯНИЯ С ФАЙЛАМИ...")
-        
         # Загружаем вспышки
         all_flares = self._load_all_flares()
         if all_flares.empty:
@@ -240,10 +224,10 @@ class FlareTracker:
         
         flare_dates = sorted(flare_dates_set)
 
-        print(f"   📊 Всего дней со вспышками: {len(flare_dates)}")
-
         if "files_by_flare" not in self.state:
             self.state["files_by_flare"] = {}
+        if "consumed_sources_by_date" not in self.state:
+            self.state["consumed_sources_by_date"] = {}
 
         for _, flare in all_flares.iterrows():
             flare_key = flare.get("flare_key")
@@ -283,7 +267,6 @@ class FlareTracker:
         
         # Получаем список источников
         available_sources = list(self.data_manager.download_functions.keys())
-        print(f"   📁 Проверяемые источники: {available_sources}")
 
         for flare_date in flare_dates:
             date_str = flare_date.strftime("%Y-%m-%d")
@@ -322,25 +305,7 @@ class FlareTracker:
         # Обновляем общее количество вспышек
         self.state["total_flares"] = len(all_flares)
         
-        print(f"\n📊 РЕЗУЛЬТАТ СИНХРОНИЗАЦИИ:")
-        print(f"   ✅ Файлы существуют для: {len(actually_downloaded_dates)} дней")
-        print(f"   ⚠️ Отсутствуют файлы для: {len(dates_with_missing_files)} дней")
-        
-        if actually_downloaded_dates:
-            print(f"\n   📅 Дни с полными данными:")
-            for date_str in actually_downloaded_dates[:5]:
-                print(f"      - {date_str}")
-            if len(actually_downloaded_dates) > 5:
-                print(f"      ... и еще {len(actually_downloaded_dates) - 5} дней")
-        
-        if dates_with_missing_files:
-            print(f"\n   ⚠️ Дни с неполными данными:")
-            for date_str in dates_with_missing_files[:5]:
-                print(f"      - {date_str}")
-            if len(dates_with_missing_files) > 5:
-                print(f"      ... и еще {len(dates_with_missing_files) - 5} дней")
-        
-        self._save_state(message="Состояние синхронизировано с файлами")
+        self._save_state()
     
     def _save_state(self, force: bool = False, message: str = ""):
         """Сохраняет состояние с опциональным принудительным сохранением"""
@@ -351,17 +316,8 @@ class FlareTracker:
             with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(self.state, f, indent=2, ensure_ascii=False)
             
-            if message:
+            if message and force:
                 print(f"💾 {message}")
-            elif force:
-                print(f"💾 Состояние принудительно сохранено в {self.state_file}")
-            else:
-                print(f"💾 Состояние сохранено в {self.state_file}")
-                
-            # Выводим информацию о сохраненном состоянии
-            print(f"   📊 Дней со скачанными данными в state: {len(self.state.get('data_downloaded', []))}")
-            print(f"   📅 Всего дней со вспышками: {len(self.state.get('flare_dates', []))}")
-            print(f"   ⭐ Всего вспышек: {self.state.get('total_flares', 0)}")
             
         except Exception as e:
             print(f"❌ Ошибка сохранения состояния: {e}")
@@ -790,6 +746,9 @@ class FlareTracker:
 
     def _check_source_has_data(self, source_name, target_date, file_hint=None):
         try:
+            if self._is_source_consumed(target_date, source_name):
+                return True
+
             if file_hint:
                 p = Path(file_hint)
                 if p.exists() and p.stat().st_size > 0:

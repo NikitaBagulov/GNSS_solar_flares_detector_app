@@ -92,6 +92,41 @@ class DataPreprocessor:
 
         return selected
 
+    def _maps_available_for_all_flares(self, flares_for_date) -> bool:
+        if not flares_for_date:
+            return False
+
+        for flare in flares_for_date:
+            flare_key = flare.get("flare_key") or build_flare_key(
+                flare["start_time"],
+                flare["peak_time"],
+                flare["end_time"],
+                flare.get("class"),
+            )
+            flare_class = flare.get("class")
+            flare_dir = self.get_output_dir_for_flare(flare_key, flare_class=flare_class)
+            for product in self.data_products:
+                if not self._is_map_file_valid(
+                    self.get_map_path(flare_dir, flare_key, product, flare_class=flare_class)
+                ):
+                    return False
+
+        return True
+
+    def _cleanup_consumed_simurg_hdf(self, file_path: Path, tracker, study_date):
+        if "simurg_hdf" not in file_path.parts:
+            return False
+        if not file_path.exists():
+            return False
+
+        file_path.unlink()
+        print(f"SIMuRG HDF переработан и удален: {file_path.name}")
+
+        if tracker is not None and hasattr(tracker, "mark_source_consumed"):
+            tracker.mark_source_consumed(study_date, "simurg_hdf", removed_path=file_path)
+
+        return True
+
     def process_file(self, file_path, tracker):
         file_path = Path(file_path)
         if not file_path.exists():
@@ -101,7 +136,7 @@ class DataPreprocessor:
 
         sites_description = get_sites_attrs(file_path)
         n_sites = len(sites_description)
-        print(f"Processing file {file_path.name} for {n_sites} sites on {study_date.date()}")
+        print(f"Препроцессинг {file_path.name}: {n_sites} станций, дата {study_date.date()}")
 
         if n_sites == 0:
             print("No sites found in file, skipping.")
@@ -115,8 +150,6 @@ class DataPreprocessor:
             print(f"No flares found for {study_date.date()}, skipping preprocessing.")
             return
 
-        print(f"Products to process: {self.data_products}")
-        print(file_path)
         for flare in flares_for_date:
             flare_key = flare.get("flare_key") or build_flare_key(
                 flare["start_time"],
@@ -129,7 +162,7 @@ class DataPreprocessor:
 
             products_to_generate = self._select_products_to_generate(flare_dir, flare_key, flare_class=flare_class)
             if not products_to_generate:
-                print(f"Data for flare {flare_key} already processed for policy={self.existing_data_policy}, skipping.")
+                print(f"Карты для вспышки {flare_key} уже готовы, пропуск.")
                 if tracker is not None:
                     tracker.set_files_for_flare_section(
                         flare_key,
@@ -152,14 +185,11 @@ class DataPreprocessor:
             while current <= end_interval:
                 times.append(current)
                 current = current + timedelta(seconds=30)
-            print(times[0], type(times[0]), times[0].timestamp())
-            
-            print(times[-1], type(times[-1]), times[-1].timestamp())
             if not times:
                 print(f"Empty time window for flare {flare_key}, skipping.")
                 continue
 
-            print(f"Flare {flare_key}: {times[0]} ... {times[-1]}")
+            print(f"Построение карт для {flare_key}: {len(products_to_generate)} продуктов.")
             start_time = time.time()
             generator = get_map_chunked(
                 sites_description,
@@ -178,11 +208,7 @@ class DataPreprocessor:
 
             iprod = 0
             for chunk_idx, data in enumerate(generator, 1):
-                took = time.time() - start_time
-                print(f"Chunk {chunk_idx}. Time {took:.2f} seconds.")
-
                 if not data:
-                    print(f"Chunk {chunk_idx} is empty. Skipping.\n")
                     continue
 
                 # ✅ текущий продукт определяется номером чанка
@@ -193,10 +219,10 @@ class DataPreprocessor:
                     store_maps_time_based({'sites': 'sites'}, data, str(out_file), lock=False)
                 except Exception as e:
                     print(f"Failed to save {out_file.name} (prod={current_prod}): {e}")
-                else:
-                    print(f"Saved {out_file.name} successfully (prod={current_prod})")
 
                 iprod += 1
+            took = time.time() - start_time
+            print(f"Карты для {flare_key} сохранены за {took:.1f} с.")
             if tracker is not None:
                 tracker.set_files_for_flare_section(
                     flare_key,
@@ -207,17 +233,19 @@ class DataPreprocessor:
                         if self.get_map_path(flare_dir, flare_key, prod, flare_class=flare_class).exists()
                     }
                 )
-            
+
+        if self._maps_available_for_all_flares(flares_for_date):
+            self._cleanup_consumed_simurg_hdf(file_path, tracker, study_date.date())
+
 
        
 
 
     def process_all(self, tracker=None):
         h5_files = self.get_h5_files()
-        print(f"Found {len(h5_files)} HDF5 files to process.\n")
+        print(f"Найдено HDF5-файлов для препроцессинга: {len(h5_files)}")
 
         for file_idx, file_path in enumerate(h5_files, 1):
-            print(f"[{file_idx}/{len(h5_files)}] {file_path.name}")
             self.process_file(file_path, tracker)
 
-        print("All files processed successfully!")
+        print("Препроцессинг завершен.")

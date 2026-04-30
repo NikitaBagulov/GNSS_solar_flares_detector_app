@@ -29,7 +29,6 @@ def download_flares(
             # Проверяем, что файл можно прочитать и он не пустой
             df_test = pd.read_csv(final_path, nrows=1)
             if not df_test.empty:
-                print(f"   ⏭️ Файл вспышек уже существует: {final_path}")
                 return final_path
             else:
                 print(f"⚠️ Файл {final_path} пустой, перезагружаем...")
@@ -45,9 +44,6 @@ def download_flares(
         tstart = start.strftime('%Y/%m/%d 00:00')
         tend = end.strftime('%Y/%m/%d 23:59')
 
-        print(f"   ⏰ Временной диапазон: {tstart} - {tend}")
-        print(f"   🔍 Запрос к HEK...")
-        
         result = Fido.search(
             a.Time(tstart, tend),
             a.hek.EventType("FL")
@@ -65,7 +61,6 @@ def download_flares(
             temp_path.parent.mkdir(parents=True, exist_ok=True)
             empty_df.to_csv(temp_path, index=False)
             
-            print(f"   💾 Создан пустой файл вспышек")
             return temp_path
 
         hek_results = result['hek']
@@ -117,19 +112,13 @@ def download_flares(
         # Сортируем по времени начала
         df = df.sort_values('start_time')
         
-        print(f"   📊 Сохранено {len(df)} записей о вспышках")
-        
         # Сохраняем во ВРЕМЕННЫЙ файл
-        print(f"   💾 Сохранение во временный файл: {temp_path}")
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(temp_path, index=False)
         
         # Проверяем, что временный файл создан
         if not temp_path.exists():
             raise Exception(f"Не удалось создать временный файл: {temp_path}")
-        
-        file_size = temp_path.stat().st_size
-        print(f"   ✅ Данные сохранены ({file_size} байт)")
         
         # Возвращаем путь к временному файлу
         return temp_path
@@ -139,12 +128,10 @@ def download_flares(
         if 'temp_path' in locals() and temp_path.exists():
             try:
                 temp_path.unlink()
-                print(f"🧹 Удален временный файл после ошибки: {temp_path}")
             except:
                 pass
         
         error_msg = f"Ошибка загрузки данных о вспышках за {date}: {str(e)}"
-        print(f"❌ {error_msg}")
         raise Exception(error_msg)
 
 def _flare_class_to_value(flare_class: str) -> float:
