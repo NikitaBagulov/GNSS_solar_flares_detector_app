@@ -1,145 +1,84 @@
 # GNSS Solar Flares Detector App
 
-## Назначение сервиса и структура пайплайна
-
-Сервис запускает конвейер обработки данных о солнечных вспышках и GNSS-наблюдениях: 
-
-1. **discovery** — поиск вспышек в заданном диапазоне дат и скачивание исходных данных;
-2. **preprocessing** — подготовка HDF-карт по каждому событию;
-3. **index** — расчёт индексов по подготовленным данным;
-4. **plotting** — построение графиков/изображений по картам и индексам.
-
-Состав шагов управляется CLI-флагом `--steps` (доступные значения: `discovery preprocessing index plotting`).
-После discovery/download дальнейшая обработка идёт по одной вспышке: для первой вспышки выполняются `preprocessing -> index -> plotting`, затем pipeline переходит к следующей вспышке.
-
----
-
-## Требования и подготовка окружения
-
-Минимально:
-
-- Python 3.10+;
-- доступ в интернет к внешним источникам данных;
-- системные и Python-зависимости проекта (например: `pandas`, `sunpy`, `astropy`, `python-dateutil`, а также зависимости для модулей препроцессинга/индексов/визуализации).
-
-Быстрый старт:
+## Установка
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -U pip
-# Установите зависимости проекта (если у вас есть requirements/lock-файл, используйте его)
+pip install -r requirements.txt
 ```
 
-Проверка CLI:
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+pip install -r requirements.txt
+```
+
+## Запуск pipeline
+
+Через `make`:
 
 ```bash
-python main.py --help
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1
 ```
 
----
-
-## Примеры команд
-
-> Во всех примерах подставьте актуальные даты и, при необходимости, пути `--data_download_path` / `--state_json_path`.
-
-### 1) Одноразовый запуск
-
-```bash
-python main.py \
-  --start_date 2024-01-01 \
-  --end_date 2024-01-31 \
-  --min_flare_class X1.0 \
-  --mode once
-```
+Напрямую:
 
 ```bash
 python main.py --start_date 2024-11-01 --end_date 2025-11-12 --min_flare_class X5.1 --mode once
 ```
 
-### 2) Service-режим (1 час)
+По умолчанию pipeline выполняет шаги:
 
-```bash
-python main.py \
-  --start_date 2024-01-01 \
-  --end_date 2024-01-31 \
-  --mode service \
-  --poll-interval-seconds 3600
+```text
+discovery preprocessing index plotting
 ```
 
-### 3) Skip существующих данных
+После `discovery` обработка идёт по одной вспышке полностью:
 
-```bash
-python main.py \
-  --start_date 2024-01-01 \
-  --end_date 2024-01-31 \
-  --existing-data-policy skip
+```text
+preprocessing -> index -> plotting
 ```
 
-### 4) Полная перезапись
+## Полезные параметры
 
 ```bash
-python main.py \
-  --start_date 2024-01-01 \
-  --end_date 2024-01-31 \
-  --existing-data-policy overwrite
+python main.py --help
 ```
 
-### 5) Выборочное отключение модулей
-
-Пример: пропустить построение графиков.
+Выбор шагов:
 
 ```bash
-python main.py \
-  --start_date 2024-01-01 \
-  --end_date 2024-01-31 \
-  --steps discovery preprocessing index
+python main.py --start_date 2024-11-01 --end_date 2025-11-12 --min_flare_class X5.1 --steps discovery preprocessing index
 ```
 
-### 6) Выборочная перезапись/валидация модулей
-
-Глобально `skip`, но:
-- для `download` — принудительная перезапись,
-- для `index` — валидация.
+Политика существующих данных:
 
 ```bash
-python main.py \
-  --start_date 2024-01-01 \
-  --end_date 2024-01-31 \
-  --existing-data-policy skip \
-  --overwrite-modules download \
-  --validate-modules index
+python main.py --start_date 2024-11-01 --end_date 2025-11-12 --existing-data-policy skip
+python main.py --start_date 2024-11-01 --end_date 2025-11-12 --existing-data-policy overwrite
+python main.py --start_date 2024-11-01 --end_date 2025-11-12 --existing-data-policy validate
 ```
 
-Дополнительно можно точно задать `--skip-modules` / `--overwrite-modules` / `--validate-modules` для модулей: `download`, `preprocess`, `index`, `plot`.
+Service-режим:
 
----
+```bash
+make run-service START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1 MODE=service POLL_INTERVAL_SECONDS=3600
+```
 
-## Где хранятся state и артефакты
+## Results directory listing
 
-По умолчанию:
-
-- **State-файл**: `./data/state.json` (задаётся через `--state_json_path`);
-- **Список всех вспышек**: `all_flares.csv` рядом с state-файлом;
-- **Скачанные данные**: внутри `--data_download_path` (по умолчанию `./data`) в структуре `YYYY-MM-DD/<source>/...`;
-- **Публичные артефакты для directory listing**: `./results/<class-letter>/<YYYY-MM-DD>_<class>/...`, например `./results/X/2025-11-11_X5.2/...`;
-- **GOES X-ray**: `goes_xray/goes_xray.csv`;
-- **SOHO SEM**: `soho_sem/soho_sem.csv`;
-- **Карты**: `maps/map_<product>.h5`;
-- **Индексы**: `indices/indices_<product>.csv`;
-- **Графики**: `graphs/<product>/map_<product>_<HH-MM-SS>_UTC.png`, `graphs/combined/...`.
-
----
-
-## Directory listing результатов
-
-Красивый просмотр папки `results` через браузер:
+Запуск красивого просмотра папки `results`:
 
 ```bash
 make serve-results
 ```
 
-Откройте:
+Открыть в браузере:
 
 ```text
 http://localhost:8000
@@ -151,36 +90,34 @@ http://localhost:8000
 make serve-results RESULTS_PORT=8001
 ```
 
-По умолчанию сервер доступен только локально на `127.0.0.1`.
+## Где лежат результаты
 
----
+```text
+results/
+  X/
+    2025-11-11_X5.2/
+      goes_xray/
+      soho_sem/
+      maps/
+      indices/
+      graphs/
+```
 
-## Типовые ошибки и диагностика
+State и скачанные данные по умолчанию:
 
-1. **Неверные даты (`start_date > end_date` или неверный формат)**
-   - Симптом: ошибка валидации параметров дат при старте.
-   - Что проверить: формат `YYYY-MM-DD`, корректный диапазон.
+```text
+data/state.json
+data/
+```
 
-2. **Некорректный интервал service-опроса**
-   - Симптом: ошибка `--poll-interval-seconds должен быть положительным целым числом`.
-   - Что проверить: значение `> 0`.
+## Тесты
 
-3. **Проблемы с внешними источниками или зависимостями**
-   - Симптом: исключения во время `discovery`/download шагов.
-   - Что проверить:
-     - сетевой доступ;
-     - установку библиотек (`sunpy`, `astropy` и др.);
-     - права на запись в `--data_download_path`.
+```bash
+make test
+```
 
-4. **Конфликт ожиданий по политике существующих данных**
-   - Симптом: файлы «не перезаписываются» или «перезаписываются неожиданно».
-   - Что проверить:
-     - глобальный `--existing-data-policy`;
-     - модульные переопределения `--skip-modules`, `--overwrite-modules`, `--validate-modules`.
+или:
 
-5. **Нет выходных графиков/индексов для части вспышек**
-   - Симптом: пустые папки или отсутствие файлов для конкретного flare.
-   - Что проверить:
-     - какие шаги включены в `--steps`;
-     - наличие валидных входов из предыдущего шага;
-     - логи конкретной итерации пайплайна.
+```bash
+pytest -q
+```
