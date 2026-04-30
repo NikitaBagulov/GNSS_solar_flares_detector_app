@@ -1,9 +1,35 @@
 import datetime
+import time
 import requests
 from DataManager import DataManager
 from pathlib import Path
 
-SIMURG_CHUNK_SIZE = 64 * 1024 * 1024
+SIMURG_CHUNK_SIZE = 1024 * 1024
+SIMURG_CONNECT_TIMEOUT_SECONDS = 20
+SIMURG_READ_TIMEOUT_SECONDS = 60
+SIMURG_STALL_TIMEOUT_SECONDS = 180
+SIMURG_PROGRESS_INTERVAL_SECONDS = 10
+
+
+def _format_bytes(size: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(size)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"
+
+
+def _timeout_from_kwargs(kwargs):
+    if "timeout" in kwargs:
+        return kwargs["timeout"]
+    return (
+        kwargs.get("connect_timeout", SIMURG_CONNECT_TIMEOUT_SECONDS),
+        kwargs.get("read_timeout", SIMURG_READ_TIMEOUT_SECONDS),
+    )
 
 
 def download_simurg_hdf(
@@ -14,7 +40,10 @@ def download_simurg_hdf(
     """Скачать данные Simurg в формате HDF5 за указанную дату"""
     
     data_type = kwargs.get('data_type', 'obs')  # 'obs', 'f107', 'fism2', 'mgnm'
-    timeout = kwargs.get('timeout', 120)
+    timeout = _timeout_from_kwargs(kwargs)
+    stall_timeout = kwargs.get("stall_timeout", SIMURG_STALL_TIMEOUT_SECONDS)
+    progress_interval = kwargs.get("progress_interval", SIMURG_PROGRESS_INTERVAL_SECONDS)
+    chunk_size = kwargs.get("chunk_size", SIMURG_CHUNK_SIZE)
 
     filename = f"simurg_{data_type}_{date.strftime('%Y%m%d')}.h5"
     final_path = data_manager.get_download_path('simurg_hdf', date, filename)
@@ -46,10 +75,35 @@ def download_simurg_hdf(
         with requests.get(url, timeout=timeout, stream=True) as response:
             response.raise_for_status()
 
+            total_size = int(response.headers.get("content-length") or 0)
+            if total_size > 0:
+                print(f"   Размер: {_format_bytes(total_size)}")
+
+            downloaded = 0
+            started_at = time.monotonic()
+            last_chunk_at = started_at
+            last_progress_at = started_at
             with open(temp_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=SIMURG_CHUNK_SIZE):
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    now = time.monotonic()
+                    if now - last_chunk_at > stall_timeout:
+                        raise requests.exceptions.Timeout(
+                            f"нет данных от Simurg больше {stall_timeout} сек"
+                        )
                     if chunk:
                         f.write(chunk)
+                        downloaded += len(chunk)
+                        last_chunk_at = now
+                        if now - last_progress_at >= progress_interval:
+                            if total_size > 0:
+                                percent = downloaded / total_size * 100
+                                print(
+                                    f"   Загружено {_format_bytes(downloaded)} / "
+                                    f"{_format_bytes(total_size)} ({percent:.1f}%)"
+                                )
+                            else:
+                                print(f"   Загружено {_format_bytes(downloaded)}")
+                            last_progress_at = now
         
         # Проверяем, что временный файл создан и не пустой
         if not temp_path.exists():
@@ -59,6 +113,7 @@ def download_simurg_hdf(
         if file_size == 0:
             temp_path.unlink()  # Удаляем пустой файл
             raise Exception(f"Временный файл пустой: {temp_path}")
+        print(f"   Simurg HDF загружен: {_format_bytes(file_size)}")
         return temp_path
         
     except requests.exceptions.Timeout as e:
