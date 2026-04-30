@@ -22,7 +22,12 @@ def test_run_pipeline_once_processes_each_flare_through_all_steps_before_next(mo
     class DiscoveryResult:
         flare_keys = ["flare-a", "flare-b"]
 
-    monkeypatch.setattr(main, "run_discovery_and_download", lambda config: DiscoveryResult())
+    monkeypatch.setattr(main, "run_discovery", lambda config: DiscoveryResult())
+    monkeypatch.setattr(
+        main,
+        "run_download_for_flare",
+        lambda config, flare_key: calls.append(("download", flare_key)),
+    )
     monkeypatch.setattr(
         main,
         "run_preprocessing_for_flare",
@@ -45,9 +50,11 @@ def test_run_pipeline_once_processes_each_flare_through_all_steps_before_next(mo
     )
 
     assert calls == [
+        ("download", "flare-a"),
         ("preprocessing", "flare-a"),
         ("index", "flare-a"),
         ("plotting", "flare-a"),
+        ("download", "flare-b"),
         ("preprocessing", "flare-b"),
         ("index", "flare-b"),
         ("plotting", "flare-b"),

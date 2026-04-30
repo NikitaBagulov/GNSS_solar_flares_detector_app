@@ -36,9 +36,8 @@ def test_format_bytes():
 
 
 def test_timeout_from_kwargs_defaults_to_connect_read_tuple():
-    assert _timeout_from_kwargs({}) == (20, 60)
+    assert _timeout_from_kwargs({}) is None
     assert _timeout_from_kwargs({"timeout": 120}) == 120
-    assert _timeout_from_kwargs({"connect_timeout": 5, "read_timeout": 10}) == (5, 10)
 
 
 def test_download_simurg_hdf_streams_chunks_to_temp_file(tmp_path, monkeypatch):
@@ -47,7 +46,7 @@ def test_download_simurg_hdf_streams_chunks_to_temp_file(tmp_path, monkeypatch):
 
     def fake_get(url, timeout, stream):
         assert stream is True
-        assert timeout == (20, 60)
+        assert timeout is None
         return FakeResponse(chunks, headers={"content-length": "6"})
 
     monkeypatch.setattr(simurg_hdf.requests, "get", fake_get)

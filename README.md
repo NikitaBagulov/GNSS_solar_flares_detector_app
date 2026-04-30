@@ -84,10 +84,10 @@ make help
 discovery preprocessing index plotting
 ```
 
-После `discovery` обработка идёт по одной вспышке полностью:
+После поиска вспышек pipeline идёт по одной вспышке полностью:
 
 ```text
-preprocessing -> index -> plotting
+download -> preprocessing -> index -> plotting
 ```
 
 ## Results directory listing
@@ -118,7 +118,7 @@ data/state.json
 data/
 ```
 
-При загрузке `simurg_hdf` в консоли должен появляться размер файла и прогресс загрузки.
+При загрузке `simurg_hdf` в консоли должен появляться размер файла и прогресс загрузки. Ограничения по времени загрузки не задаются.
 
 ## Тесты
 

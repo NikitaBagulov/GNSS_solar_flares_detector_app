@@ -5,9 +5,6 @@ from DataManager import DataManager
 from pathlib import Path
 
 SIMURG_CHUNK_SIZE = 1024 * 1024
-SIMURG_CONNECT_TIMEOUT_SECONDS = 20
-SIMURG_READ_TIMEOUT_SECONDS = 60
-SIMURG_STALL_TIMEOUT_SECONDS = 180
 SIMURG_PROGRESS_INTERVAL_SECONDS = 10
 
 
@@ -26,10 +23,7 @@ def _format_bytes(size: int) -> str:
 def _timeout_from_kwargs(kwargs):
     if "timeout" in kwargs:
         return kwargs["timeout"]
-    return (
-        kwargs.get("connect_timeout", SIMURG_CONNECT_TIMEOUT_SECONDS),
-        kwargs.get("read_timeout", SIMURG_READ_TIMEOUT_SECONDS),
-    )
+    return None
 
 
 def download_simurg_hdf(
@@ -41,7 +35,6 @@ def download_simurg_hdf(
     
     data_type = kwargs.get('data_type', 'obs')  # 'obs', 'f107', 'fism2', 'mgnm'
     timeout = _timeout_from_kwargs(kwargs)
-    stall_timeout = kwargs.get("stall_timeout", SIMURG_STALL_TIMEOUT_SECONDS)
     progress_interval = kwargs.get("progress_interval", SIMURG_PROGRESS_INTERVAL_SECONDS)
     chunk_size = kwargs.get("chunk_size", SIMURG_CHUNK_SIZE)
 
@@ -81,19 +74,13 @@ def download_simurg_hdf(
 
             downloaded = 0
             started_at = time.monotonic()
-            last_chunk_at = started_at
             last_progress_at = started_at
             with open(temp_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     now = time.monotonic()
-                    if now - last_chunk_at > stall_timeout:
-                        raise requests.exceptions.Timeout(
-                            f"нет данных от Simurg больше {stall_timeout} сек"
-                        )
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        last_chunk_at = now
                         if now - last_progress_at >= progress_interval:
                             if total_size > 0:
                                 percent = downloaded / total_size * 100

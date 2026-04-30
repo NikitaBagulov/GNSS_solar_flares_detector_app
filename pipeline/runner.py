@@ -119,17 +119,35 @@ def _publish_source_files(tracker: FlareTracker, overwrite: bool = False) -> Non
         tracker._save_state(message="Исходные GOES/SOHO опубликованы в results")
 
 
-def run_discovery_and_download(config: PipelineConfig) -> DiscoveryDownloadResult:
+def _flare_keys_from_tracker(tracker: FlareTracker) -> List[str]:
+    flares = tracker._load_all_flares()
+    if flares.empty or "flare_key" not in flares.columns:
+        return []
+    return [str(key) for key in flares["flare_key"].dropna().tolist()]
+
+
+def _flare_date_for_key(tracker: FlareTracker, flare_key: str) -> date | None:
+    flares = tracker._load_all_flares()
+    if flares.empty or "flare_key" not in flares.columns or "date" not in flares.columns:
+        return None
+    matched = flares[flares["flare_key"] == flare_key]
+    if matched.empty:
+        return None
+    value = matched.iloc[0]["date"]
+    if hasattr(value, "date"):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def run_discovery(config: PipelineConfig) -> DiscoveryDownloadResult:
     tracker = _load_tracker(config)
 
-    if hasattr(tracker, "download_missed_data"):
-        tracker.download_missed_data()
-    _publish_source_files(
-        tracker,
-        overwrite=config.run_config.policy_for("download") == "overwrite",
-    )
+    tracker._update_flares_from_api()
+    tracker.sync_state_with_files()
 
-    flare_keys = list(tracker.state.get("files_by_flare", {}).keys())
+    flare_keys = _flare_keys_from_tracker(tracker)
     return DiscoveryDownloadResult(
         state_json_path=tracker.state_file,
         all_flares_csv_path=tracker.all_flares_file,
@@ -137,9 +155,50 @@ def run_discovery_and_download(config: PipelineConfig) -> DiscoveryDownloadResul
     )
 
 
+def run_download_for_flare(config: PipelineConfig, flare_key: str) -> bool:
+    tracker = _load_tracker(config)
+    flare_date = _flare_date_for_key(tracker, flare_key)
+    if flare_date is None:
+        return False
+
+    result = tracker.data_manager.download_by_date(target_date=flare_date, tracker=tracker)
+    if not result:
+        return False
+
+    available_sources = list(tracker.data_manager.download_functions.keys())
+    all_sources_ok = all(
+        payload.get("status") in {"success", "skipped"}
+        for payload in result.values()
+    )
+    all_files_exist = all(
+        tracker._check_source_has_data(source, flare_date)
+        for source in available_sources
+    )
+    if all_sources_ok and all_files_exist:
+        date_str = flare_date.strftime("%Y-%m-%d")
+        tracker.state.setdefault("data_downloaded", [])
+        if date_str not in tracker.state["data_downloaded"]:
+            tracker.state["data_downloaded"].append(date_str)
+            tracker.state["data_downloaded"] = sorted(tracker.state["data_downloaded"])
+        tracker._save_state()
+
+    _publish_source_files(
+        tracker,
+        overwrite=config.run_config.policy_for("download") == "overwrite",
+    )
+    return all_sources_ok and all_files_exist
+
+
+def run_discovery_and_download(config: PipelineConfig) -> DiscoveryDownloadResult:
+    discovery = run_discovery(config)
+    for flare_key in discovery.flare_keys:
+        run_download_for_flare(config, flare_key)
+    return discovery
+
+
 def list_known_flare_keys(config: PipelineConfig) -> List[str]:
     tracker = _load_tracker(config)
-    return list(tracker.state.get("files_by_flare", {}).keys())
+    return _flare_keys_from_tracker(tracker)
 
 
 def run_preprocessing(config: PipelineConfig) -> PreprocessingResult:
