@@ -130,6 +130,28 @@ python main.py \
 
 ---
 
+## Directory listing результатов
+
+Обычный просмотр папки `results` через браузер:
+
+```bash
+make serve-results
+```
+
+Откройте:
+
+```text
+http://localhost:8000
+```
+
+Если порт занят:
+
+```bash
+make serve-results RESULTS_PORT=8001
+```
+
+---
+
 ## Типовые ошибки и диагностика
 
 1. **Неверные даты (`start_date > end_date` или неверный формат)**

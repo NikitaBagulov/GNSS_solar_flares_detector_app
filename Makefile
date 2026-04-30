@@ -10,8 +10,10 @@ POLL_INTERVAL_SECONDS ?= 3600
 DATA_DOWNLOAD_PATH ?= ./data
 STATE_JSON_PATH ?= ./data/state.json
 STEPS ?= discovery preprocessing index plotting
+RESULTS_DIR ?= ./results
+RESULTS_PORT ?= 8000
 
-.PHONY: help install test test-verbose run run-service cli-help lint clean
+.PHONY: help install test test-verbose run run-service serve-results cli-help lint clean
 
 help:
 	@echo "Доступные цели:"
@@ -21,6 +23,7 @@ help:
 	@echo "  make cli-help       - показать help CLI"
 	@echo "  make run            - одноразовый запуск pipeline"
 	@echo "  make run-service    - запуск pipeline в service-режиме"
+	@echo "  make serve-results  - directory listing для папки results"
 	@echo "  make clean          - удалить Python cache"
 
 install:
@@ -55,6 +58,9 @@ run-service:
 		--data_download_path $(DATA_DOWNLOAD_PATH) \
 		--state_json_path $(STATE_JSON_PATH) \
 		--steps $(STEPS)
+
+serve-results:
+	$(PYTHON) -m http.server $(RESULTS_PORT) --directory $(RESULTS_DIR)
 
 lint:
 	@echo "Lint target не настроен: в репозитории не найден конфиг линтера."
