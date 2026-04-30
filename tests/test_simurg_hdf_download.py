@@ -5,25 +5,6 @@ from download_functions import simurg_hdf
 from download_functions.simurg_hdf import _format_bytes, _timeout_from_kwargs, download_simurg_hdf
 
 
-class FakeResponse:
-    def __init__(self, chunks, headers=None, status_code=200):
-        self._chunks = chunks
-        self.headers = headers or {}
-        self.status_code = status_code
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-    def raise_for_status(self):
-        return None
-
-    def iter_content(self, chunk_size):
-        yield from self._chunks
-
-
 def _make_manager(tmp_path, monkeypatch):
     monkeypatch.setattr("DataManager.atexit.register", lambda *args, **kw: None)
     monkeypatch.setattr("DataManager.signal.signal", lambda *args, **kw: None)
@@ -41,29 +22,29 @@ def test_timeout_from_kwargs_defaults_to_connect_read_tuple():
     assert _timeout_from_kwargs({"timeout": 120}) == 120
 
 
-def test_download_simurg_hdf_streams_chunks_to_temp_file(tmp_path, monkeypatch):
+def test_download_simurg_hdf_uses_urlretrieve_to_temp_file(tmp_path, monkeypatch):
     manager = _make_manager(tmp_path, monkeypatch)
-    chunks = [b"abc", b"def"]
 
-    def fake_get(url, timeout, stream, headers=None):
-        assert stream is True
-        assert timeout is None
-        assert headers == {}
-        return FakeResponse(chunks, headers={"content-length": "6"})
+    def fake_urlretrieve(url, filename, reporthook=None):
+        assert "simurg.iszf.irk.ru" in url
+        if reporthook:
+            reporthook(0, 0, 6)
+            reporthook(1, 6, 6)
+        filename.write_bytes(b"abcdef")
+        return filename, {}
 
-    monkeypatch.setattr(simurg_hdf.requests, "get", fake_get)
+    monkeypatch.setattr(simurg_hdf, "urlretrieve", fake_urlretrieve)
 
     result = download_simurg_hdf(
         datetime.date(2025, 11, 11),
         manager,
         progress_interval=999,
-        chunk_size=2,
     )
 
     assert result.read_bytes() == b"abcdef"
 
 
-def test_download_simurg_hdf_resumes_existing_temp_file(tmp_path, monkeypatch):
+def test_download_simurg_hdf_restarts_existing_temp_file(tmp_path, monkeypatch):
     manager = _make_manager(tmp_path, monkeypatch)
     temp_path = manager.get_download_path(
         "simurg_hdf",
@@ -71,17 +52,13 @@ def test_download_simurg_hdf_resumes_existing_temp_file(tmp_path, monkeypatch):
         "simurg_hdf_20251111.h5.tmp",
     )
     temp_path.write_bytes(b"abc")
-    calls = []
 
-    def fake_get(url, timeout, stream, headers=None):
-        calls.append(headers)
-        return FakeResponse(
-            [b"def"],
-            headers={"content-length": "3", "content-range": "bytes 3-5/6"},
-            status_code=206,
-        )
+    def fake_urlretrieve(url, filename, reporthook=None):
+        assert not filename.exists()
+        filename.write_bytes(b"fresh")
+        return filename, {}
 
-    monkeypatch.setattr(simurg_hdf.requests, "get", fake_get)
+    monkeypatch.setattr(simurg_hdf, "urlretrieve", fake_urlretrieve)
 
     result = download_simurg_hdf(
         datetime.date(2025, 11, 11),
@@ -90,5 +67,4 @@ def test_download_simurg_hdf_resumes_existing_temp_file(tmp_path, monkeypatch):
         progress_interval=999,
     )
 
-    assert calls == [{"Range": "bytes=3-"}]
-    assert result.read_bytes() == b"abcdef"
+    assert result.read_bytes() == b"fresh"
