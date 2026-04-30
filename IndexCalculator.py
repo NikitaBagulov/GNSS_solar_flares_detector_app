@@ -206,8 +206,8 @@ class IndexCalculator:
                 fieldnames = ["time"] + list(self.registry.index_functions.keys())
                 with open(output_file, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(all_results)
+                    writer.writeheader()
+                    writer.writerows(all_results)
                 indices_for_date[product_type] = output_file
             else:
                 print(f"Нет данных для сохранения для продукта {product_type}")

@@ -1,3 +1,4 @@
+import csv
 from datetime import datetime
 
 import h5py
@@ -54,3 +55,43 @@ def test_index_file_validation_requires_rows_and_expected_columns(tmp_path):
     assert calculator._is_index_file_valid(valid) is True
     assert calculator._is_index_file_valid(invalid) is False
     assert calculator._is_index_file_valid(tmp_path / "missing.csv") is False
+
+
+def test_process_single_flare_writes_index_csv(tmp_path):
+    flare_key = "20251111T094900_100430_102213_X52"
+    map_path = tmp_path / "results" / "X" / "2025-11-11_X52" / "maps" / "map_roti.h5"
+    map_path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(map_path, "w") as h5:
+        group = h5.create_group("data")
+        group.create_dataset(
+            "2025-11-11 09:49:00.000000",
+            data=np.array(
+                [
+                    [0.0, 0.0, 1.0],
+                    [10.0, 5.0, 2.0],
+                    [0.0, 180.0, 0.5],
+                ]
+            ),
+        )
+
+    calculator = IndexCalculator(base_folder=tmp_path / "results", existing_data_policy="overwrite")
+    calculator.registry = IndexRegistry()
+    calculator.registry.register("day_night_index", lambda dates, time_key: 1.0)
+    calculator.registry.register("gsflai_index", lambda dates, time_key: 2.0)
+    calculator.registry.register("isfai_index", lambda dates, time_key: 3.0)
+
+    calculator.process_single_flare(flare_key)
+
+    output = map_path.parent.parent / "indices" / "indices_roti.csv"
+
+    with open(output, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    assert rows == [
+        {
+            "time": "2025-11-11 09:49:00+00:00",
+            "day_night_index": "1.0",
+            "gsflai_index": "2.0",
+            "isfai_index": "3.0",
+        }
+    ]
