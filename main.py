@@ -9,10 +9,14 @@ from typing import List
 
 from pipeline.runner import (
     PipelineConfig,
+    list_known_flare_keys,
     run_discovery_and_download,
     run_index_calculation,
+    run_index_calculation_for_flare,
     run_plotting,
+    run_plotting_for_flare,
     run_preprocessing,
+    run_preprocessing_for_flare,
 )
 from pipeline.run_config import RunConfig, as_module_set
 
@@ -145,7 +149,22 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
 
 def run_pipeline_once(config: PipelineConfig, steps: List[str]) -> None:
     if "discovery" in steps:
-        run_discovery_and_download(config)
+        discovery_result = run_discovery_and_download(config)
+        flare_keys = discovery_result.flare_keys
+    else:
+        flare_keys = list_known_flare_keys(config)
+
+    per_flare_steps = {"preprocessing", "index", "plotting"} & set(steps)
+    if per_flare_steps:
+        for idx, flare_key in enumerate(flare_keys, 1):
+            logging.info("Обработка вспышки %s/%s: %s", idx, len(flare_keys), flare_key)
+            if "preprocessing" in steps:
+                run_preprocessing_for_flare(config, flare_key)
+            if "index" in steps:
+                run_index_calculation_for_flare(config, flare_key)
+            if "plotting" in steps:
+                run_plotting_for_flare(config, flare_key)
+        return
 
     if "preprocessing" in steps:
         run_preprocessing(config)

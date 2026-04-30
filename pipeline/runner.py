@@ -137,6 +137,11 @@ def run_discovery_and_download(config: PipelineConfig) -> DiscoveryDownloadResul
     )
 
 
+def list_known_flare_keys(config: PipelineConfig) -> List[str]:
+    tracker = _load_tracker(config)
+    return list(tracker.state.get("files_by_flare", {}).keys())
+
+
 def run_preprocessing(config: PipelineConfig) -> PreprocessingResult:
     tracker = _load_tracker(config)
     _publish_source_files(
@@ -156,6 +161,27 @@ def run_preprocessing(config: PipelineConfig) -> PreprocessingResult:
         if maps:
             maps_by_flare[flare_key] = dict(maps)
 
+    return PreprocessingResult(
+        flare_keys=sorted(maps_by_flare.keys()),
+        maps_by_flare=maps_by_flare,
+    )
+
+
+def run_preprocessing_for_flare(config: PipelineConfig, flare_key: str) -> PreprocessingResult:
+    tracker = _load_tracker(config)
+    _publish_source_files(
+        tracker,
+        overwrite=config.run_config.policy_for("download") == "overwrite",
+    )
+    preprocessor = DataPreprocessor(
+        input_root=str(config.data_download_path),
+        existing_data_policy=config.run_config.policy_for("preprocess"),
+    )
+    preprocessor.process_all(tracker, target_flare_keys={flare_key})
+    tracker.sync_state_with_files()
+
+    maps = tracker.state.get("files_by_flare", {}).get(flare_key, {}).get("maps") or {}
+    maps_by_flare = {flare_key: dict(maps)} if maps else {}
     return PreprocessingResult(
         flare_keys=sorted(maps_by_flare.keys()),
         maps_by_flare=maps_by_flare,
@@ -190,6 +216,69 @@ def run_index_calculation(config: PipelineConfig) -> IndexCalculationResult:
     )
 
 
+def run_index_calculation_for_flare(config: PipelineConfig, flare_key: str) -> IndexCalculationResult:
+    tracker = _load_tracker(config)
+    _publish_source_files(
+        tracker,
+        overwrite=config.run_config.policy_for("download") == "overwrite",
+    )
+    calculator = IndexCalculator(
+        existing_data_policy=config.run_config.policy_for("index"),
+    )
+
+    calculator.process_single_flare(flare_key, tracker=tracker)
+    tracker.sync_state_with_files()
+
+    indices = tracker.state.get("files_by_flare", {}).get(flare_key, {}).get("indices") or {}
+    indices_by_flare = {flare_key: dict(indices)} if indices else {}
+    return IndexCalculationResult(
+        flare_keys=sorted(indices_by_flare.keys()),
+        indices_by_flare=indices_by_flare,
+    )
+
+
+def _plot_single_flare(
+    tracker: FlareTracker,
+    loader: PlotDataLoader,
+    flare_key: str,
+    plot_policy: str,
+    flare_classes: Dict[str, str],
+) -> bool:
+    flare_plot_dir = _event_dir(flare_key, flare_classes) / "graphs"
+    if plot_policy == "skip" and flare_plot_dir.exists():
+        tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
+        return True
+    if plot_policy == "overwrite" and flare_plot_dir.exists():
+        shutil.rmtree(flare_plot_dir)
+    if plot_policy == "validate" and flare_plot_dir.exists():
+        has_valid_plots = any(
+            path.is_file() and path.suffix.lower() == ".png" and path.stat().st_size > 0
+            for path in flare_plot_dir.rglob("*.png")
+        )
+        if has_valid_plots:
+            tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
+            return True
+
+    plot_data = loader.load_flare(flare_key)
+    if not plot_data:
+        return False
+    plotter = Plotter(
+        plot_data,
+        products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
+        output_dir=flare_plot_dir,
+    )
+    plotter.plot_all()
+
+    combined_plotter = CombinedPlotter(
+        plot_data,
+        products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
+        output_dir=flare_plot_dir,
+    )
+    combined_plotter.plot_all()
+    tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
+    return True
+
+
 def run_plotting(config: PipelineConfig) -> PlottingResult:
     tracker = _load_tracker(config)
     _publish_source_files(
@@ -204,40 +293,20 @@ def run_plotting(config: PipelineConfig) -> PlottingResult:
     flare_classes = _flare_classes_by_key(tracker)
 
     for flare_key in flare_keys:
-        flare_plot_dir = _event_dir(flare_key, flare_classes) / "graphs"
-        if plot_policy == "skip" and flare_plot_dir.exists():
+        if _plot_single_flare(tracker, loader, flare_key, plot_policy, flare_classes):
             plotted_flare_keys.append(flare_key)
-            tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
-            continue
-        if plot_policy == "overwrite" and flare_plot_dir.exists():
-            shutil.rmtree(flare_plot_dir)
-        if plot_policy == "validate" and flare_plot_dir.exists():
-            has_valid_plots = any(
-                path.is_file() and path.suffix.lower() == ".png" and path.stat().st_size > 0
-                for path in flare_plot_dir.rglob("*.png")
-            )
-            if has_valid_plots:
-                plotted_flare_keys.append(flare_key)
-                tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
-                continue
-
-        plot_data = loader.load_flare(flare_key)
-        if not plot_data:
-            continue
-        plotter = Plotter(
-            plot_data,
-            products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
-            output_dir=flare_plot_dir,
-        )
-        plotter.plot_all()    
-        
-        combined_plotter = CombinedPlotter(
-            plot_data,
-            products_to_plot=["roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"],
-            output_dir=flare_plot_dir,
-        )
-        combined_plotter.plot_all()
-        tracker.set_files_for_flare_section(flare_key, "plots", {"root": flare_plot_dir})
-        plotted_flare_keys.append(flare_key)
 
     return PlottingResult(plotted_flare_keys=plotted_flare_keys)
+
+
+def run_plotting_for_flare(config: PipelineConfig, flare_key: str) -> PlottingResult:
+    tracker = _load_tracker(config)
+    _publish_source_files(
+        tracker,
+        overwrite=config.run_config.policy_for("download") == "overwrite",
+    )
+    loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
+    plot_policy = config.run_config.policy_for("plot")
+    flare_classes = _flare_classes_by_key(tracker)
+    plotted = _plot_single_flare(tracker, loader, flare_key, plot_policy, flare_classes)
+    return PlottingResult(plotted_flare_keys=[flare_key] if plotted else [])

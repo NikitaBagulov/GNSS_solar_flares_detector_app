@@ -127,7 +127,7 @@ class DataPreprocessor:
 
         return True
 
-    def process_file(self, file_path, tracker):
+    def process_file(self, file_path, tracker, target_flare_keys: set[str] | None = None):
         file_path = Path(file_path)
         if not file_path.exists():
             raise ValueError(f"Could not find {file_path}")
@@ -149,6 +149,17 @@ class DataPreprocessor:
         if not flares_for_date:
             print(f"No flares found for {study_date.date()}, skipping preprocessing.")
             return
+
+        all_flares_for_date = list(flares_for_date)
+        if target_flare_keys is not None:
+            flares_for_date = [
+                flare
+                for flare in flares_for_date
+                if flare.get("flare_key")
+                and str(flare.get("flare_key")) in target_flare_keys
+            ]
+            if not flares_for_date:
+                return
 
         for flare in flares_for_date:
             flare_key = flare.get("flare_key") or build_flare_key(
@@ -234,18 +245,18 @@ class DataPreprocessor:
                     }
                 )
 
-        if self._maps_available_for_all_flares(flares_for_date):
+        if self._maps_available_for_all_flares(all_flares_for_date):
             self._cleanup_consumed_simurg_hdf(file_path, tracker, study_date.date())
 
 
        
 
 
-    def process_all(self, tracker=None):
+    def process_all(self, tracker=None, target_flare_keys: set[str] | None = None):
         h5_files = self.get_h5_files()
         print(f"Найдено HDF5-файлов для препроцессинга: {len(h5_files)}")
 
         for file_idx, file_path in enumerate(h5_files, 1):
-            self.process_file(file_path, tracker)
+            self.process_file(file_path, tracker, target_flare_keys=target_flare_keys)
 
         print("Препроцессинг завершен.")
