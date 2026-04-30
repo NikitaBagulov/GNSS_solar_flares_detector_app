@@ -18,12 +18,64 @@ python -m pip install -U pip
 pip install -r requirements.txt
 ```
 
-## Запуск pipeline через Makefile
+## Быстрый запуск
 
-Основной запуск:
+1. Установить зависимости:
+
+```bash
+make install
+```
+
+2. Запустить обработку с параметрами по умолчанию:
+
+```bash
+make run
+```
+
+3. Открыть результаты в браузере:
+
+```bash
+make serve-results
+```
+
+Затем откройте:
+
+```text
+http://localhost:8000
+```
+
+## Запуск с параметрами
+
+Чаще всего нужно поменять только даты и минимальный класс вспышки:
 
 ```bash
 make run START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1
+```
+
+Если нужно запустить не все шаги:
+
+```bash
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1 STEPS="discovery preprocessing index"
+```
+
+Если нужно выбрать поведение для уже существующих данных:
+
+```bash
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=skip
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=overwrite
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=validate
+```
+
+Service-режим с повтором раз в час:
+
+```bash
+make run-service START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1 MODE=service POLL_INTERVAL_SECONDS=3600
+```
+
+Список всех команд:
+
+```bash
+make help
 ```
 
 По умолчанию pipeline выполняет шаги:
@@ -38,47 +90,9 @@ discovery preprocessing index plotting
 preprocessing -> index -> plotting
 ```
 
-## Полезные параметры
-
-```bash
-make help
-```
-
-Выбор шагов:
-
-```bash
-make run START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1 STEPS="discovery preprocessing index"
-```
-
-Политика существующих данных:
-
-```bash
-make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=skip
-make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=overwrite
-make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=validate
-```
-
-Service-режим:
-
-```bash
-make run-service START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1 MODE=service POLL_INTERVAL_SECONDS=3600
-```
-
 ## Results directory listing
 
-Запуск красивого просмотра папки `results`:
-
-```bash
-make serve-results
-```
-
-Открыть в браузере:
-
-```text
-http://localhost:8000
-```
-
-Если порт занят:
+Если порт `8000` занят:
 
 ```bash
 make serve-results RESULTS_PORT=8001
