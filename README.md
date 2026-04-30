@@ -18,18 +18,12 @@ python -m pip install -U pip
 pip install -r requirements.txt
 ```
 
-## Запуск pipeline
+## Запуск pipeline через Makefile
 
-Через `make`:
+Основной запуск:
 
 ```bash
 make run START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1
-```
-
-Напрямую:
-
-```bash
-python main.py --start_date 2024-11-01 --end_date 2025-11-12 --min_flare_class X5.1 --mode once
 ```
 
 По умолчанию pipeline выполняет шаги:
@@ -47,21 +41,21 @@ preprocessing -> index -> plotting
 ## Полезные параметры
 
 ```bash
-python main.py --help
+make help
 ```
 
 Выбор шагов:
 
 ```bash
-python main.py --start_date 2024-11-01 --end_date 2025-11-12 --min_flare_class X5.1 --steps discovery preprocessing index
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 MIN_FLARE_CLASS=X5.1 STEPS="discovery preprocessing index"
 ```
 
 Политика существующих данных:
 
 ```bash
-python main.py --start_date 2024-11-01 --end_date 2025-11-12 --existing-data-policy skip
-python main.py --start_date 2024-11-01 --end_date 2025-11-12 --existing-data-policy overwrite
-python main.py --start_date 2024-11-01 --end_date 2025-11-12 --existing-data-policy validate
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=skip
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=overwrite
+make run START_DATE=2024-11-01 END_DATE=2025-11-12 EXISTING_DATA_POLICY=validate
 ```
 
 Service-режим:

@@ -12,6 +12,7 @@ STATE_JSON_PATH ?= ./data/state.json
 STEPS ?= discovery preprocessing index plotting
 RESULTS_DIR ?= ./results
 RESULTS_PORT ?= 8000
+EXISTING_DATA_POLICY ?= validate
 
 .PHONY: help install test test-verbose run run-service serve-results cli-help lint clean
 
@@ -46,6 +47,7 @@ run:
 		--mode once \
 		--data_download_path $(DATA_DOWNLOAD_PATH) \
 		--state_json_path $(STATE_JSON_PATH) \
+		--existing-data-policy $(EXISTING_DATA_POLICY) \
 		--steps $(STEPS)
 
 run-service:
@@ -57,6 +59,7 @@ run-service:
 		--poll-interval-seconds $(POLL_INTERVAL_SECONDS) \
 		--data_download_path $(DATA_DOWNLOAD_PATH) \
 		--state_json_path $(STATE_JSON_PATH) \
+		--existing-data-policy $(EXISTING_DATA_POLICY) \
 		--steps $(STEPS)
 
 serve-results:
