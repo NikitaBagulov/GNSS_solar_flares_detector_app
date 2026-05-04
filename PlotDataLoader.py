@@ -17,6 +17,14 @@ from map_filters import maybe_filter_roti_points
 _UTC = tz.gettz('UTC')
 SIMURG_MAP_TIME_KEY_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
 
+
+def _parse_csv_times(values):
+    try:
+        return pd.to_datetime(values, utc=True, format="mixed")
+    except TypeError:
+        return pd.to_datetime(values, utc=True)
+
+
 class PlotDataLoader:
     def __init__(self, flares_file: str, state_file: str, sun_image_path: Optional[str] = None):
         self.flares_file = Path(flares_file)
@@ -233,12 +241,12 @@ class PlotDataLoader:
             return [], []
 
         df = pd.read_csv(path)
-        df["time"] = pd.to_datetime(df["time"], utc=True)
+        df["time"] = _parse_csv_times(df["time"])
         mask = (df["time"] >= start_interval) & (df["time"] <= end_interval)
         df = df[mask]
         if df.empty:
             df = pd.read_csv(path)
-            df["time"] = pd.to_datetime(df["time"], utc=True)
+            df["time"] = _parse_csv_times(df["time"])
 
         return df["time"].tolist(), df[column_name].tolist()
 
@@ -248,14 +256,14 @@ class PlotDataLoader:
             return [], []
         
         df = pd.read_csv(path)
-        times = pd.to_datetime(df.iloc[:, 0], utc=True)
+        times = _parse_csv_times(df.iloc[:, 0])
 
         mask = (times >= start_interval) & (times <= end_interval)
         df = df[mask]
 
         if df.empty:
             df = pd.read_csv(path)
-            times = pd.to_datetime(df.iloc[:, 0], utc=True)
+            times = _parse_csv_times(df.iloc[:, 0])
             return times.tolist(), df[value_col].tolist()
 
         return times[mask].tolist(), df[value_col].tolist()

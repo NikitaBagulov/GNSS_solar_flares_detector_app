@@ -226,6 +226,7 @@ class DataManager:
                             final_path.unlink(missing_ok=True)
 
                 temp_path = final_path.with_suffix(extension + '.tmp')
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
 
                 self._start_download_transaction(source_name, temp_path)
 

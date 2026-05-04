@@ -13,12 +13,14 @@ from pipeline.runner import (
     list_known_flare_keys,
     run_discovery,
     run_download_for_date,
+    run_download_for_flare,
     run_index_calculation,
     run_index_calculation_for_flare,
     run_plotting,
     run_plotting_for_flare,
     run_preprocessing,
     run_preprocessing_for_flares,
+    run_preprocessing_for_flare,
 )
 from pipeline.run_config import RunConfig, as_module_set
 
@@ -159,6 +161,19 @@ def run_pipeline_once(config: PipelineConfig, steps: List[str]) -> None:
     per_flare_steps = {"preprocessing", "index", "plotting"} & set(steps)
     if "discovery" in steps or per_flare_steps:
         flare_groups = flare_keys_grouped_by_date(config, flare_keys)
+        if not flare_groups:
+            for idx, flare_key in enumerate(flare_keys, 1):
+                logging.info("Обработка вспышки %s/%s: %s", idx, len(flare_keys), flare_key)
+                if "discovery" in steps:
+                    run_download_for_flare(config, flare_key)
+                if "preprocessing" in steps:
+                    run_preprocessing_for_flare(config, flare_key)
+                if "index" in steps:
+                    run_index_calculation_for_flare(config, flare_key)
+                if "plotting" in steps:
+                    run_plotting_for_flare(config, flare_key)
+            return
+
         for date_idx, (flare_date, date_flare_keys) in enumerate(flare_groups, 1):
             logging.info(
                 "Обработка даты %s/%s: %s (%s вспышек)",
