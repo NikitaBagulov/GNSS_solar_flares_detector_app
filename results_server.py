@@ -111,8 +111,10 @@ def newest_mtime(path: Path) -> float:
 def is_event_dir(path: Path) -> bool:
     if not path.is_dir():
         return False
+    if path.name in {"maps", "indices", "graphs", "goes_xray", "soho_sem", "combined", *PRODUCTS}:
+        return False
     names = {child.name for child in path.iterdir()} if path.exists() else set()
-    return bool(names & {"maps", "indices", "graphs", "goes_xray", "soho_sem"}) or "_" in path.name
+    return bool(names & {"maps", "indices", "graphs", "goes_xray", "soho_sem"})
 
 
 def event_class(path: Path) -> str:
@@ -180,11 +182,16 @@ def scan_events(root: Path) -> list[dict]:
     if not root.exists():
         return []
     events = []
-    for path in root.rglob("*"):
-        if path.is_dir() and is_event_dir(path):
-            if path.name in {"maps", "indices", "graphs", "goes_xray", "soho_sem", "combined"}:
-                continue
-            events.append(scan_event(root, path))
+    class_dirs = {"A", "B", "C", "M", "X", "unknown"}
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name in class_dirs:
+            for event_dir in sorted(item for item in child.iterdir() if item.is_dir()):
+                if is_event_dir(event_dir):
+                    events.append(scan_event(root, event_dir))
+        elif is_event_dir(child):
+            events.append(scan_event(root, child))
     return sorted(events, key=lambda event: (event["date"], event["name"]))
 
 
