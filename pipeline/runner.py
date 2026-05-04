@@ -141,6 +141,31 @@ def _flare_date_for_key(tracker: FlareTracker, flare_key: str) -> date | None:
     return date.fromisoformat(str(value))
 
 
+def flare_keys_grouped_by_date(config: PipelineConfig, flare_keys: List[str]) -> List[tuple[date, List[str]]]:
+    tracker = _load_tracker(config)
+    flares = tracker._load_all_flares()
+    if flares.empty or "flare_key" not in flares.columns or "date" not in flares.columns:
+        return []
+
+    requested_keys = set(flare_keys)
+    if requested_keys:
+        flares = flares[flares["flare_key"].astype(str).isin(requested_keys)]
+
+    groups: Dict[date, List[str]] = {}
+    for _, row in flares.iterrows():
+        flare_key = row.get("flare_key")
+        if not flare_key:
+            continue
+        flare_date = row.get("date")
+        if hasattr(flare_date, "date"):
+            flare_date = flare_date.date()
+        elif not isinstance(flare_date, date):
+            flare_date = date.fromisoformat(str(flare_date))
+        groups.setdefault(flare_date, []).append(str(flare_key))
+
+    return sorted(groups.items(), key=lambda item: item[0])
+
+
 def run_discovery(config: PipelineConfig) -> DiscoveryDownloadResult:
     tracker = _load_tracker(config)
 
@@ -161,6 +186,11 @@ def run_download_for_flare(config: PipelineConfig, flare_key: str) -> bool:
     if flare_date is None:
         return False
 
+    return run_download_for_date(config, flare_date)
+
+
+def run_download_for_date(config: PipelineConfig, flare_date: date) -> bool:
+    tracker = _load_tracker(config)
     result = tracker.data_manager.download_by_date(target_date=flare_date, tracker=tracker)
     if not result:
         return False
@@ -227,6 +257,10 @@ def run_preprocessing(config: PipelineConfig) -> PreprocessingResult:
 
 
 def run_preprocessing_for_flare(config: PipelineConfig, flare_key: str) -> PreprocessingResult:
+    return run_preprocessing_for_flares(config, {flare_key})
+
+
+def run_preprocessing_for_flares(config: PipelineConfig, flare_keys: set[str]) -> PreprocessingResult:
     tracker = _load_tracker(config)
     _publish_source_files(
         tracker,
@@ -236,11 +270,15 @@ def run_preprocessing_for_flare(config: PipelineConfig, flare_key: str) -> Prepr
         input_root=str(config.data_download_path),
         existing_data_policy=config.run_config.policy_for("preprocess"),
     )
-    preprocessor.process_all(tracker, target_flare_keys={flare_key})
+    preprocessor.process_all(tracker, target_flare_keys=flare_keys)
     tracker.sync_state_with_files()
 
-    maps = tracker.state.get("files_by_flare", {}).get(flare_key, {}).get("maps") or {}
-    maps_by_flare = {flare_key: dict(maps)} if maps else {}
+    maps_by_flare: Dict[str, Dict[str, str]] = {}
+    for flare_key in sorted(flare_keys):
+        maps = tracker.state.get("files_by_flare", {}).get(flare_key, {}).get("maps") or {}
+        if maps:
+            maps_by_flare[flare_key] = dict(maps)
+
     return PreprocessingResult(
         flare_keys=sorted(maps_by_flare.keys()),
         maps_by_flare=maps_by_flare,

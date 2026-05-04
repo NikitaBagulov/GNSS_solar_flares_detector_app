@@ -37,7 +37,7 @@ def download_simurg_hdf(
     progress_interval = kwargs.get("progress_interval", SIMURG_PROGRESS_INTERVAL_SECONDS)
 
     filename = f"simurg_{data_type}_{date.strftime('%Y%m%d')}.h5"
-    final_path = data_manager.get_download_path('simurg_hdf', date, filename)
+    final_path = data_manager.get_download_path('simurg_hdf', date, filename, create_dir=False)
 
     temp_path = kwargs.get('temp_path', None)
     if not temp_path:

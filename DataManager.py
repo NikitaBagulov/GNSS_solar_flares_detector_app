@@ -167,13 +167,30 @@ class DataManager:
                 extension = self.source_extensions.get(source_name, '.csv')
 
                 filename = f"{source_name}_{target_date.strftime('%Y%m%d')}{extension}"
-                final_path = self.get_download_path(source_name, target_date, filename)
-                if tracker is not None:
-                    tracker.register_files_for_date(target_date, {source_name: str(final_path)})
+                final_path = self.get_download_path(source_name, target_date, filename, create_dir=False)
                 policy = "overwrite" if force_redownload else self.existing_data_policy
+
+                if (
+                    not force_redownload
+                    and tracker is not None
+                    and hasattr(tracker, "_is_source_consumed")
+                    and tracker._is_source_consumed(target_date, source_name)
+                    and not final_path.exists()
+                ):
+                    results[source_name] = {
+                        'status': 'skipped',
+                        'result': str(final_path),
+                        'date': target_date,
+                        'message': 'Source was already consumed and removed after preprocessing',
+                        'size': 0,
+                    }
+                    print(f"   ⏭️ {source_name}: уже переработан и удален, повторное скачивание не требуется")
+                    continue
 
                 if final_path.exists():
                     if policy == "skip":
+                        if tracker is not None:
+                            tracker.register_files_for_date(target_date, {source_name: str(final_path)})
                         results[source_name] = {
                             'status': 'skipped',
                             'result': str(final_path),
@@ -191,6 +208,8 @@ class DataManager:
                     if policy == "validate":
                         try:
                             if self._is_file_valid(final_path, source_name):
+                                if tracker is not None:
+                                    tracker.register_files_for_date(target_date, {source_name: str(final_path)})
                                 results[source_name] = {
                                     'status': 'skipped',
                                     'result': str(final_path),

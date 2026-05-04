@@ -9,15 +9,16 @@ from typing import List
 
 from pipeline.runner import (
     PipelineConfig,
+    flare_keys_grouped_by_date,
     list_known_flare_keys,
     run_discovery,
-    run_download_for_flare,
+    run_download_for_date,
     run_index_calculation,
     run_index_calculation_for_flare,
     run_plotting,
     run_plotting_for_flare,
     run_preprocessing,
-    run_preprocessing_for_flare,
+    run_preprocessing_for_flares,
 )
 from pipeline.run_config import RunConfig, as_module_set
 
@@ -157,16 +158,31 @@ def run_pipeline_once(config: PipelineConfig, steps: List[str]) -> None:
 
     per_flare_steps = {"preprocessing", "index", "plotting"} & set(steps)
     if "discovery" in steps or per_flare_steps:
-        for idx, flare_key in enumerate(flare_keys, 1):
-            logging.info("Обработка вспышки %s/%s: %s", idx, len(flare_keys), flare_key)
+        flare_groups = flare_keys_grouped_by_date(config, flare_keys)
+        for date_idx, (flare_date, date_flare_keys) in enumerate(flare_groups, 1):
+            logging.info(
+                "Обработка даты %s/%s: %s (%s вспышек)",
+                date_idx,
+                len(flare_groups),
+                flare_date,
+                len(date_flare_keys),
+            )
             if "discovery" in steps:
-                run_download_for_flare(config, flare_key)
+                run_download_for_date(config, flare_date)
             if "preprocessing" in steps:
-                run_preprocessing_for_flare(config, flare_key)
-            if "index" in steps:
-                run_index_calculation_for_flare(config, flare_key)
-            if "plotting" in steps:
-                run_plotting_for_flare(config, flare_key)
+                run_preprocessing_for_flares(config, set(date_flare_keys))
+            for flare_idx, flare_key in enumerate(date_flare_keys, 1):
+                logging.info(
+                    "Обработка вспышки %s/%s за %s: %s",
+                    flare_idx,
+                    len(date_flare_keys),
+                    flare_date,
+                    flare_key,
+                )
+                if "index" in steps:
+                    run_index_calculation_for_flare(config, flare_key)
+                if "plotting" in steps:
+                    run_plotting_for_flare(config, flare_key)
         return
 
     if "preprocessing" in steps:

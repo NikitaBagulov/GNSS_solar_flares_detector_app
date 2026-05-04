@@ -41,7 +41,7 @@ def download_goes_xray(
     **kwargs
 ) -> pd.DataFrame:
     filename = f"goes_{date.strftime('%Y%m%d')}.csv"
-    final_path = data_manager.get_download_path('goes_xray', date, filename)
+    final_path = data_manager.get_download_path('goes_xray', date, filename, create_dir=False)
     
     temp_path = kwargs.get('temp_path', None)
     if not temp_path:
@@ -75,6 +75,7 @@ def download_goes_xray(
                         ts = TimeSeries(files[0])
                         df = ts.to_dataframe()
 
+                        temp_path.parent.mkdir(parents=True, exist_ok=True)
                         df.to_csv(temp_path)
 
                         return temp_path
