@@ -25,6 +25,7 @@ FILE_TYPE_LABELS = {
 }
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 SOURCE_FILES = ("goes_xray.csv", "soho_sem.csv")
+GRAPH_PRODUCTS = (*PRODUCTS, "combined")
 
 
 def relative_url(root: Path, path: Path) -> str:
@@ -94,6 +95,63 @@ def first_png(path: Path) -> Path | None:
         if item.is_file():
             return item
     return None
+
+
+def graph_product(path: Path) -> str:
+    parent = path.parent.name
+    if parent in GRAPH_PRODUCTS:
+        return parent
+    name = path.name.lower()
+    if name.startswith("combined_"):
+        return "combined"
+    for product in PRODUCTS:
+        if f"_{product}_" in name or name.startswith(f"map_{product}_"):
+            return product
+    return parent
+
+
+def graph_time_label(path: Path) -> str:
+    stem = path.stem
+    if "_UTC" in stem:
+        stem = stem.rsplit("_UTC", 1)[0]
+    tail = stem.rsplit("_", 1)[-1]
+    hyphen_parts = tail.split("-")
+    if len(hyphen_parts) == 3 and all(part.isdigit() for part in hyphen_parts):
+        return ":".join(hyphen_parts)
+    parts = stem.split("_")
+    if len(parts) >= 3 and parts[-3].isdigit() and parts[-2].isdigit() and parts[-1].isdigit():
+        return ":".join(parts[-3:])
+    return stem
+
+
+def is_graphs_dir(root: Path, path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    try:
+        relative_parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    return "graphs" in relative_parts and first_png(path) is not None
+
+
+def scan_graph_images(root: Path, path: Path) -> list[dict]:
+    images = []
+    for image in sorted(path.rglob("*.png")):
+        if not image.is_file():
+            continue
+        stat = safe_stat(image)
+        images.append(
+            {
+                "name": image.name,
+                "path": image.relative_to(root).as_posix(),
+                "url": relative_url(root, image),
+                "product": graph_product(image),
+                "time": graph_time_label(image),
+                "size": format_size(stat.st_size if stat else None),
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M") if stat else "",
+            }
+        )
+    return images
 
 
 def newest_mtime(path: Path) -> float:
@@ -687,6 +745,150 @@ def render_event_page(root: Path, path: Path) -> bytes:
     return page_shell(f"Event - {event['name']}", body)
 
 
+def render_graph_gallery(root: Path, path: Path, url_path: str) -> bytes:
+    images = scan_graph_images(root, path)
+    title_path = unquote(url_path).strip("/") or "graphs"
+    products = sorted({image["product"] for image in images})
+    product_options = "".join(
+        f'<option value="{html.escape(product)}">{html.escape(product)}</option>'
+        for product in products
+    )
+    breadcrumbs = " / ".join(
+        f'<a href="{href}">{html.escape(label)}</a>'
+        for label, href in breadcrumb_items(url_path)
+    )
+    image_json = json.dumps(images, ensure_ascii=False)
+    first = images[0] if images else None
+    first_url = first["url"] if first else ""
+    first_name = first["name"] if first else "No graphs"
+    first_meta = f"{first['product']} / {first['time']}" if first else ""
+    body = f"""
+    <header>
+      <div>
+        <h1>{html.escape(title_path)}</h1>
+        <div class="breadcrumbs">{breadcrumbs} / <a href="?view=list">file list</a></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><strong>{len(images)}</strong><span>graphs</span></div>
+        <div class="stat"><strong>{len(products)}</strong><span>products</span></div>
+      </div>
+    </header>
+    <div class="gallery-toolbar">
+      <input id="graphSearch" placeholder="Search time or filename">
+      <select id="productFilter"><option value="">All products</option>{product_options}</select>
+      <button class="button" id="prevGraph" type="button">Prev</button>
+      <button class="button" id="nextGraph" type="button">Next</button>
+      <a class="button" id="openGraph" href="{html.escape(first_url)}">Open image</a>
+    </div>
+    <section class="graph-viewer">
+      <div class="stage">
+        <img id="mainGraph" src="{html.escape(first_url)}" alt="">
+      </div>
+      <aside>
+        <div class="selected-meta">
+          <strong id="selectedName">{html.escape(first_name)}</strong>
+          <span id="selectedMeta">{html.escape(first_meta)}</span>
+        </div>
+        <div class="thumb-grid" id="thumbGrid"></div>
+      </aside>
+    </section>
+    <script>
+      const graphImages = {image_json};
+      const searchInput = document.getElementById('graphSearch');
+      const productFilter = document.getElementById('productFilter');
+      const thumbGrid = document.getElementById('thumbGrid');
+      const mainGraph = document.getElementById('mainGraph');
+      const selectedName = document.getElementById('selectedName');
+      const selectedMeta = document.getElementById('selectedMeta');
+      const openGraph = document.getElementById('openGraph');
+      let filtered = [...graphImages];
+      let selectedIndex = 0;
+
+      function selectGraph(index) {{
+        if (!filtered.length) {{
+          mainGraph.removeAttribute('src');
+          selectedName.textContent = 'No matching graphs';
+          selectedMeta.textContent = '';
+          openGraph.removeAttribute('href');
+          return;
+        }}
+        selectedIndex = (index + filtered.length) % filtered.length;
+        const image = filtered[selectedIndex];
+        mainGraph.src = image.url;
+        selectedName.textContent = image.name;
+        selectedMeta.textContent = `${{image.product}} / ${{image.time}} / ${{image.size}}`;
+        openGraph.href = image.url;
+        thumbGrid.querySelectorAll('button').forEach((button, idx) => {{
+          button.classList.toggle('active', idx === selectedIndex);
+        }});
+      }}
+
+      function renderThumbs() {{
+        thumbGrid.replaceChildren(...filtered.map((image, idx) => {{
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'graph-thumb';
+          button.title = image.name;
+          button.innerHTML = `<img src="${{image.url}}" alt=""><span>${{image.time}}</span>`;
+          button.addEventListener('click', () => selectGraph(idx));
+          return button;
+        }}));
+        selectGraph(Math.min(selectedIndex, filtered.length - 1));
+      }}
+
+      function applyGraphFilters() {{
+        const query = searchInput.value.toLowerCase();
+        const product = productFilter.value;
+        filtered = graphImages.filter(image => {{
+          const text = `${{image.name}} ${{image.time}} ${{image.product}}`.toLowerCase();
+          return (!query || text.includes(query)) && (!product || image.product === product);
+        }});
+        selectedIndex = 0;
+        renderThumbs();
+      }}
+
+      document.getElementById('prevGraph').addEventListener('click', () => selectGraph(selectedIndex - 1));
+      document.getElementById('nextGraph').addEventListener('click', () => selectGraph(selectedIndex + 1));
+      searchInput.addEventListener('input', applyGraphFilters);
+      productFilter.addEventListener('input', applyGraphFilters);
+      window.addEventListener('keydown', event => {{
+        if (event.key === 'ArrowLeft') selectGraph(selectedIndex - 1);
+        if (event.key === 'ArrowRight') selectGraph(selectedIndex + 1);
+      }});
+      renderThumbs();
+    </script>
+    """
+    extra_head = """
+    <style>
+      .gallery-toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) 170px auto auto auto; gap: 10px; margin: 18px 0; align-items: center; }
+      .gallery-toolbar input, .gallery-toolbar select { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); }
+      .graph-viewer { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: start; }
+      .stage { min-height: 520px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
+      .stage img { display: block; width: 100%; height: 100%; max-height: calc(100vh - 220px); object-fit: contain; background: #fff; }
+      .graph-viewer aside { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; box-shadow: 0 4px 16px rgba(24,32,42,.04); }
+      .selected-meta { display: grid; gap: 3px; padding: 4px 4px 10px; }
+      .selected-meta strong { overflow-wrap: anywhere; }
+      .selected-meta span { color: var(--muted); font-size: 12px; }
+      .thumb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: calc(100vh - 280px); overflow: auto; padding-right: 2px; }
+      .graph-thumb { display: grid; gap: 5px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); cursor: pointer; text-align: left; }
+      .graph-thumb.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+      .graph-thumb img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #eef2f7; border-radius: 4px; }
+      .graph-thumb span { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      @media (max-width: 980px) {
+        .gallery-toolbar { grid-template-columns: 1fr 1fr; }
+        .graph-viewer { grid-template-columns: 1fr; }
+        .stage { min-height: 360px; }
+        .thumb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: none; }
+      }
+      @media (max-width: 620px) {
+        .gallery-toolbar { grid-template-columns: 1fr; }
+        .thumb-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+    </style>
+    """
+    return page_shell(f"Graphs - {title_path}", body, extra_head=extra_head)
+
+
 class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
     server_version = "GNSSResultsHTTP/1.0"
 
@@ -722,6 +924,14 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
             return self._send_bytes(render_dashboard(root))
 
         candidate = self._safe_path_from_url(parsed.path)
+        if (
+            candidate
+            and candidate.is_dir()
+            and parse_qs(parsed.query).get("view") != ["list"]
+            and is_graphs_dir(root, candidate)
+        ):
+            return self._send_bytes(render_graph_gallery(root, candidate, parsed.path))
+
         if candidate and candidate.is_dir() and is_event_dir(candidate):
             return self._send_bytes(render_event_page(root, candidate))
 
