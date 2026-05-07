@@ -91,7 +91,7 @@ def count_files(path: Path, pattern: str) -> int:
 def first_png(path: Path) -> Path | None:
     if not path.exists():
         return None
-    for item in sorted(path.rglob("*.png")):
+    for item in path.rglob("*.png"):
         if item.is_file():
             return item
     return None
@@ -829,7 +829,7 @@ def render_graph_gallery(root: Path, path: Path, url_path: str) -> bytes:
           button.type = 'button';
           button.className = 'graph-thumb';
           button.title = image.name;
-          button.innerHTML = `<img src="${{image.url}}" alt=""><span>${{image.time}}</span>`;
+          button.innerHTML = `<strong>${{image.time}}</strong><span>${{image.product}}</span><small>${{image.name}}</small>`;
           button.addEventListener('click', () => selectGraph(idx));
           return button;
         }}));
@@ -869,20 +869,22 @@ def render_graph_gallery(root: Path, path: Path, url_path: str) -> bytes:
       .selected-meta { display: grid; gap: 3px; padding: 4px 4px 10px; }
       .selected-meta strong { overflow-wrap: anywhere; }
       .selected-meta span { color: var(--muted); font-size: 12px; }
-      .thumb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: calc(100vh - 280px); overflow: auto; padding-right: 2px; }
-      .graph-thumb { display: grid; gap: 5px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); cursor: pointer; text-align: left; }
+      .thumb-grid { display: grid; grid-template-columns: 1fr; gap: 6px; max-height: calc(100vh - 280px); overflow: auto; padding-right: 2px; }
+      .graph-thumb { display: grid; grid-template-columns: 74px minmax(74px, auto) minmax(0, 1fr); gap: 8px; align-items: center; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); cursor: pointer; text-align: left; }
       .graph-thumb.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-      .graph-thumb img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #eef2f7; border-radius: 4px; }
-      .graph-thumb span { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .graph-thumb strong { font-size: 13px; font-weight: 700; }
+      .graph-thumb span { min-width: 0; padding: 2px 6px; border-radius: 999px; background: var(--soft); color: #475569; font-size: 12px; font-weight: 600; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .graph-thumb small { min-width: 0; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       @media (max-width: 980px) {
         .gallery-toolbar { grid-template-columns: 1fr 1fr; }
         .graph-viewer { grid-template-columns: 1fr; }
         .stage { min-height: 360px; }
-        .thumb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: none; }
+        .thumb-grid { max-height: 360px; }
       }
       @media (max-width: 620px) {
         .gallery-toolbar { grid-template-columns: 1fr; }
-        .thumb-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .graph-thumb { grid-template-columns: 72px minmax(64px, auto); }
+        .graph-thumb small { grid-column: 1 / -1; }
       }
     </style>
     """
