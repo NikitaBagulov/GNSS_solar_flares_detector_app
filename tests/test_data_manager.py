@@ -61,3 +61,51 @@ def test_download_by_date_skip_policy_keeps_existing_file(tmp_path, monkeypatch)
 
     assert result["goes_xray"]["status"] == "skipped"
     assert final_path.read_text(encoding="utf-8") == "time,xrsb\nold,1.0\n"
+
+
+def test_download_by_date_validate_skips_consumed_missing_source(tmp_path, monkeypatch):
+    manager = _make_manager(tmp_path, monkeypatch, existing_data_policy="validate")
+    target_date = pd.Timestamp("2025-11-11").date()
+
+    class Tracker:
+        def _is_source_consumed(self, date, source_name):
+            return True
+
+    def fake_download(**kwargs):
+        raise AssertionError("download function should not be called for consumed source")
+
+    manager.register_download_function("simurg_hdf", fake_download, default_extension=".h5")
+
+    result = manager.download_by_date(target_date, sources=["simurg_hdf"], tracker=Tracker())
+
+    assert result["simurg_hdf"]["status"] == "skipped"
+    assert result["simurg_hdf"]["message"] == "Source was already consumed and removed after preprocessing"
+
+
+def test_download_by_date_overwrite_redownloads_consumed_missing_source(tmp_path, monkeypatch):
+    manager = _make_manager(tmp_path, monkeypatch, existing_data_policy="overwrite")
+    target_date = pd.Timestamp("2025-11-11").date()
+
+    class Tracker:
+        def __init__(self):
+            self.registered = {}
+
+        def _is_source_consumed(self, date, source_name):
+            return True
+
+        def register_files_for_date(self, date, files):
+            self.registered.update(files)
+
+    def fake_download(date, data_manager, temp_path, **kwargs):
+        Path(temp_path).write_text("hdf bytes", encoding="utf-8")
+        return Path(temp_path)
+
+    tracker = Tracker()
+    manager.register_download_function("simurg_hdf", fake_download, default_extension=".h5")
+
+    result = manager.download_by_date(target_date, sources=["simurg_hdf"], tracker=tracker)
+    final_path = tmp_path / "2025-11-11" / "simurg_hdf" / "simurg_hdf_20251111.h5"
+
+    assert result["simurg_hdf"]["status"] == "success"
+    assert final_path.exists()
+    assert tracker.registered == {"simurg_hdf": str(final_path)}

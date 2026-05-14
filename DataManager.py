@@ -171,7 +171,7 @@ class DataManager:
                 policy = "overwrite" if force_redownload else self.existing_data_policy
 
                 if (
-                    not force_redownload
+                    policy != "overwrite"
                     and tracker is not None
                     and hasattr(tracker, "_is_source_consumed")
                     and tracker._is_source_consumed(target_date, source_name)
