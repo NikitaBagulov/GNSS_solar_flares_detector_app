@@ -24,6 +24,7 @@ class PlotData:
     euv_values: List[float] = field(default_factory=list)
 
     index_times: List[datetime] = field(default_factory=list)
+    index_times_by_product: Dict[str, List[datetime]] = field(default_factory=dict)
     indices: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)
 
     flare: List[FlareData] = field(default_factory=list)

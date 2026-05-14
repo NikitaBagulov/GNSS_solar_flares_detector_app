@@ -92,7 +92,8 @@ class PlotDataLoader:
         p: {"day_night_index": [], "gsflai_index": [], "isfai_index": []}
         for p in self.products
         }
-        index_times = None
+        index_times = []
+        index_times_by_product = {}
         for product in self.products:
             times, day_night_index = self._load_index_csv(
                 indices_paths.get(product),
@@ -114,7 +115,9 @@ class PlotDataLoader:
                 start_interval,
                 end_interval
             )
-            index_times = times
+            if times and not index_times:
+                index_times = times
+            index_times_by_product[product] = times
             indices[product]["day_night_index"] = day_night_index
             indices[product]["gsflai_index"] = gsflai_index
             indices[product]["isfai_index"] = isfai_index
@@ -158,6 +161,7 @@ class PlotDataLoader:
             euv_values=euv_values,
 
             index_times=index_times,
+            index_times_by_product=index_times_by_product,
             indices=indices,
 
             flare=flare_list,

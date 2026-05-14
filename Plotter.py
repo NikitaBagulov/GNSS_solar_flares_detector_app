@@ -191,7 +191,8 @@ class Plotter:
                 )
 
     def _plot_indices(self, ax, highlight_time=None, product_name="dtec_2_10", flare=None):
-        times = self._to_naive(self.data.index_times)
+        product_times = getattr(self.data, "index_times_by_product", {}).get(product_name)
+        times = self._to_naive(product_times if product_times is not None else self.data.index_times)
 
         prod_block = getattr(self.data, "indices", {}).get(product_name)
         if not prod_block:
@@ -224,13 +225,22 @@ class Plotter:
         for axis, (label, values, color) in zip(axes, series):
             if values.size == 0:
                 continue
+            if len(times) != values.size:
+                pair_count = min(len(times), values.size)
+                if pair_count == 0:
+                    continue
+                plot_times = times[:pair_count]
+                plot_values = values[:pair_count]
+            else:
+                plot_times = times
+                plot_values = values
 
-            line, = axis.plot(times, values, label=label, color=color, linewidth=1.6)
+            line, = axis.plot(plot_times, plot_values, label=label, color=color, linewidth=1.6)
             axis.set_ylabel(label, color=color)
             axis.tick_params(axis="y", colors=color)
             axis.spines["left" if axis is ax else "right"].set_color(color)
 
-            finite_vals = values[np.isfinite(values)]
+            finite_vals = plot_values[np.isfinite(plot_values)]
             if finite_vals.size > 0:
                 vmin = np.nanmin(finite_vals)
                 vmax = np.nanmax(finite_vals)
