@@ -18,6 +18,7 @@ DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs"
 
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
+CLASS_SCALE = {"A": 1e-8, "B": 1e-7, "C": 1e-6, "M": 1e-5, "X": 1e-4}
 
 
 def load_events(results_dir: Path) -> list[dict]:
@@ -62,6 +63,22 @@ def parse_event_peak_time(event: dict) -> pd.Timestamp | None:
     if len(timestamps) < 2:
         return None
     return pd.to_datetime(timestamps[1], format="%Y%m%dT%H%M%S", utc=True, errors="coerce")
+
+
+def parse_flare_class(event: dict) -> tuple[str | None, float]:
+    candidates = [
+        str(event.get("name", "")),
+        str(event.get("flare_class", "")),
+        str(event.get("class", "")),
+    ]
+    for value in candidates:
+        match = re.search(r"([ABCMX])[_\s-]?(\d+(?:[._]\d+)?)", value.upper())
+        if not match:
+            continue
+        letter = match.group(1)
+        magnitude = float(match.group(2).replace("_", "."))
+        return f"{letter}{magnitude:g}", CLASS_SCALE[letter] * magnitude
+    return None, np.nan
 
 
 def goes_peak(goes: pd.DataFrame, xray_column: str) -> pd.Series:
@@ -180,10 +197,12 @@ def build_statistics(
                     )
                     continue
 
+                flare_class_label, flare_class_value = parse_flare_class(event)
                 row = {
                     "event": event["name"],
                     "event_path": event["path"],
-                    "flare_class": event.get("class"),
+                    "flare_class": flare_class_label or event.get("class"),
+                    "flare_class_value": flare_class_value,
                     "product": product,
                     "flare_peak_time": flare_peak_time,
                     "goes_time": peak["time"],
@@ -230,6 +249,59 @@ def build_correlations(stats: pd.DataFrame) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(corr_rows).sort_values(["index", "product"])
+
+
+def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "product",
+        "rows",
+        "events",
+        "xray_min",
+        "xray_median",
+        "xray_max",
+        "day_night_index_median",
+        "gsflai_index_median",
+        "isfai_index_median",
+    ]
+    if stats.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for product, product_df in stats.groupby("product"):
+        row = {
+            "product": product,
+            "rows": len(product_df),
+            "events": product_df["event"].nunique(),
+            "xray_min": product_df["xray_at_flare_peak"].min(),
+            "xray_median": product_df["xray_at_flare_peak"].median(),
+            "xray_max": product_df["xray_at_flare_peak"].max(),
+        }
+        for index_column in INDEX_COLUMNS:
+            row[f"{index_column}_median"] = product_df[index_column].median()
+        rows.append(row)
+    return pd.DataFrame(rows)[columns].sort_values("product")
+
+
+def build_top_responses(stats: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    if stats.empty:
+        return pd.DataFrame(columns=["index", "rank", "event", "product", "flare_class", "xray_at_flare_peak", "value"])
+
+    rows = []
+    for index_column in INDEX_COLUMNS:
+        subset = stats.dropna(subset=[index_column]).sort_values(index_column, ascending=False).head(top_n)
+        for rank, (_, row) in enumerate(subset.iterrows(), 1):
+            rows.append(
+                {
+                    "index": index_column,
+                    "rank": rank,
+                    "event": row["event"],
+                    "product": row["product"],
+                    "flare_class": row["flare_class"],
+                    "xray_at_flare_peak": row["xray_at_flare_peak"],
+                    "value": row[index_column],
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def plot_index_vs_xray(stats: pd.DataFrame, index_column: str, xray_column: str, output_dir: Path) -> None:
@@ -285,10 +357,91 @@ def plot_combined(stats: pd.DataFrame, index_column: str, xray_column: str, outp
     plt.close(fig)
 
 
+def plot_coverage(stats: pd.DataFrame, output_dir: Path) -> None:
+    if stats.empty:
+        return
+
+    counts = stats.groupby("product")["event"].nunique().reindex(PRODUCTS).fillna(0)
+    fig, ax = plt.subplots(figsize=(9, 4.8))
+    counts.plot(kind="bar", ax=ax, color="#4c78a8")
+    ax.set_title("How many events are usable for each product")
+    ax.set_xlabel("Product")
+    ax.set_ylabel("Events")
+    ax.bar_label(ax.containers[0], padding=3)
+    fig.tight_layout()
+    fig.savefig(output_dir / "coverage_by_product.png", dpi=160)
+    plt.close(fig)
+
+
+def plot_correlation_heatmap(correlations: pd.DataFrame, output_dir: Path) -> None:
+    if correlations.empty:
+        return
+
+    matrix = correlations.pivot(index="product", columns="index", values="spearman_r").reindex(PRODUCTS)
+    if matrix.dropna(how="all").empty:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+    image = ax.imshow(matrix.to_numpy(dtype=float), vmin=-1, vmax=1, cmap="coolwarm")
+    ax.set_xticks(range(len(matrix.columns)), matrix.columns, rotation=30, ha="right")
+    ax.set_yticks(range(len(matrix.index)), matrix.index)
+    ax.set_title("Spearman correlation: GOES X-ray vs index")
+
+    for row_idx, product in enumerate(matrix.index):
+        for col_idx, index_name in enumerate(matrix.columns):
+            value = matrix.loc[product, index_name]
+            label = "n/a" if pd.isna(value) else f"{value:.2f}"
+            ax.text(col_idx, row_idx, label, ha="center", va="center", color="black")
+
+    fig.colorbar(image, ax=ax, label="Spearman r")
+    fig.tight_layout()
+    fig.savefig(output_dir / "correlation_heatmap.png", dpi=160)
+    plt.close(fig)
+
+
+def plot_index_vs_flare_class(stats: pd.DataFrame, index_column: str, output_dir: Path) -> None:
+    data = stats.dropna(subset=["flare_class_value", index_column]).copy()
+    if data.empty:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for product, subset in data.groupby("product"):
+        ax.scatter(subset["flare_class_value"], subset[index_column], s=58, alpha=0.82, label=product)
+
+    ax.set_xscale("log")
+    ax.set_xlabel("Flare class as GOES flux, W/m^2")
+    ax.set_ylabel(index_column)
+    ax.set_title(f"{index_column}: index vs flare class")
+    ax.legend(title="Product")
+    fig.tight_layout()
+    fig.savefig(output_dir / f"{index_column}_vs_flare_class.png", dpi=160)
+    plt.close(fig)
+
+
+def plot_top_responses(top_responses: pd.DataFrame, output_dir: Path) -> None:
+    if top_responses.empty:
+        return
+
+    for index_column, subset in top_responses.groupby("index"):
+        plot_data = subset.head(10).copy()
+        if plot_data.empty:
+            continue
+        labels = plot_data["event"].astype(str) + " / " + plot_data["product"].astype(str)
+        fig, ax = plt.subplots(figsize=(11, 6))
+        ax.barh(labels[::-1], plot_data["value"].to_numpy()[::-1], color="#59a14f")
+        ax.set_title(f"Top responses: {index_column}")
+        ax.set_xlabel(index_column)
+        fig.tight_layout()
+        fig.savefig(output_dir / f"top_responses_{index_column}.png", dpi=160)
+        plt.close(fig)
+
+
 def save_outputs(
     stats: pd.DataFrame,
     errors: pd.DataFrame,
     correlations: pd.DataFrame,
+    product_summary: pd.DataFrame,
+    top_responses: pd.DataFrame,
     output_dir: Path,
     xray_column: str,
     make_plots: bool,
@@ -298,20 +451,30 @@ def save_outputs(
     stats_path = output_dir / "xray_index_peak_statistics.csv"
     errors_path = output_dir / "xray_index_peak_errors.csv"
     correlations_path = output_dir / "xray_index_peak_correlations.csv"
+    product_summary_path = output_dir / "xray_index_peak_product_summary.csv"
+    top_responses_path = output_dir / "xray_index_peak_top_responses.csv"
 
     stats.to_csv(stats_path, index=False)
     errors.to_csv(errors_path, index=False)
     correlations.to_csv(correlations_path, index=False)
+    product_summary.to_csv(product_summary_path, index=False)
+    top_responses.to_csv(top_responses_path, index=False)
 
     print(f"Saved: {stats_path}")
     print(f"Saved: {errors_path}")
     print(f"Saved: {correlations_path}")
+    print(f"Saved: {product_summary_path}")
+    print(f"Saved: {top_responses_path}")
 
     if make_plots:
         plt.style.use("seaborn-v0_8-whitegrid")
+        plot_coverage(stats, output_dir)
+        plot_correlation_heatmap(correlations, output_dir)
         for index_column in INDEX_COLUMNS:
             plot_index_vs_xray(stats, index_column, xray_column, output_dir)
+            plot_index_vs_flare_class(stats, index_column, output_dir)
         plot_combined(stats, "gsflai_index", xray_column, output_dir)
+        plot_top_responses(top_responses, output_dir)
         print(f"Saved plots to: {output_dir}")
 
 
@@ -343,10 +506,14 @@ def main() -> None:
         max_time_delta=pd.Timedelta(seconds=args.max_time_delta_seconds),
     )
     correlations = build_correlations(stats)
+    product_summary = build_product_summary(stats)
+    top_responses = build_top_responses(stats)
     save_outputs(
         stats=stats,
         errors=errors,
         correlations=correlations,
+        product_summary=product_summary,
+        top_responses=top_responses,
         output_dir=output_dir,
         xray_column=args.xray_column,
         make_plots=not args.no_plots,
@@ -354,6 +521,9 @@ def main() -> None:
 
     print(f"Statistics rows: {len(stats)}")
     print(f"Errors/skips: {len(errors)}")
+    if not product_summary.empty:
+        print("\nRows by product:")
+        print(product_summary[["product", "events", "rows"]].to_string(index=False))
 
 
 if __name__ == "__main__":
