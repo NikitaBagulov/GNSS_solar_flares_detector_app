@@ -119,10 +119,36 @@ def _publish_source_files(tracker: FlareTracker, overwrite: bool = False) -> Non
         tracker._save_state(message="Исходные GOES/SOHO опубликованы в results")
 
 
-def _flare_keys_from_tracker(tracker: FlareTracker) -> List[str]:
+def _coerce_flare_date(value) -> date:
+    if hasattr(value, "date"):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _flare_keys_from_tracker(
+    tracker: FlareTracker,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> List[str]:
     flares = tracker._load_all_flares()
     if flares.empty or "flare_key" not in flares.columns:
         return []
+    if start_date is not None or end_date is not None:
+        if "date" not in flares.columns:
+            return []
+        selected_indices = []
+        for idx, row in flares.iterrows():
+            flare_date = _coerce_flare_date(row["date"])
+            if start_date is not None and flare_date < start_date:
+                continue
+            if end_date is not None and flare_date > end_date:
+                continue
+            selected_indices.append(idx)
+        if not selected_indices:
+            return []
+        flares = flares.loc[selected_indices]
     return [str(key) for key in flares["flare_key"].dropna().tolist()]
 
 
@@ -134,11 +160,7 @@ def _flare_date_for_key(tracker: FlareTracker, flare_key: str) -> date | None:
     if matched.empty:
         return None
     value = matched.iloc[0]["date"]
-    if hasattr(value, "date"):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    return date.fromisoformat(str(value))
+    return _coerce_flare_date(value)
 
 
 def flare_keys_grouped_by_date(config: PipelineConfig, flare_keys: List[str]) -> List[tuple[date, List[str]]]:
@@ -157,10 +179,7 @@ def flare_keys_grouped_by_date(config: PipelineConfig, flare_keys: List[str]) ->
         if not flare_key:
             continue
         flare_date = row.get("date")
-        if hasattr(flare_date, "date"):
-            flare_date = flare_date.date()
-        elif not isinstance(flare_date, date):
-            flare_date = date.fromisoformat(str(flare_date))
+        flare_date = _coerce_flare_date(flare_date)
         groups.setdefault(flare_date, []).append(str(flare_key))
 
     return sorted(groups.items(), key=lambda item: item[0])
@@ -172,7 +191,11 @@ def run_discovery(config: PipelineConfig) -> DiscoveryDownloadResult:
     tracker._update_flares_from_api()
     tracker.sync_state_with_files()
 
-    flare_keys = _flare_keys_from_tracker(tracker)
+    flare_keys = _flare_keys_from_tracker(
+        tracker,
+        start_date=config.start_date,
+        end_date=config.end_date,
+    )
     return DiscoveryDownloadResult(
         state_json_path=tracker.state_file,
         all_flares_csv_path=tracker.all_flares_file,
