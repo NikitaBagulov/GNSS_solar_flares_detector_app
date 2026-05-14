@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -55,25 +56,90 @@ def flare_class_to_numeric(flare_class: str) -> float:
     return CLASS_MULTIPLIERS.get(letter, 0.0) * number
 
 
-def iter_year_chunks(start_date: date, end_date: date):
+def add_months(value: date, months: int) -> date:
+    month = value.month - 1 + months
+    year = value.year + month // 12
+    month = month % 12 + 1
+    day = min(value.day, 28)
+    return date(year, month, day)
+
+
+def iter_date_chunks(start_date: date, end_date: date, chunk_months: int):
     current = start_date
     while current <= end_date:
-        chunk_end = min(date(current.year, 12, 31), end_date)
+        next_start = add_months(current, chunk_months)
+        chunk_end = min(next_start - timedelta(days=1), end_date)
         yield current, chunk_end
-        current = chunk_end + timedelta(days=1)
+        current = next_start
 
 
-def fetch_hek_catalog(start_date: date, end_date: date, min_class: str = "C1.0") -> pd.DataFrame:
+def normalize_catalog(catalog: pd.DataFrame) -> pd.DataFrame:
+    if catalog.empty:
+        return catalog
+    for column in ("start_time", "peak_time", "end_time"):
+        catalog[column] = pd.to_datetime(catalog[column], errors="coerce")
+    catalog = catalog.dropna(subset=["start_time", "peak_time", "end_time", "class"])
+    catalog["date"] = pd.to_datetime(catalog["date"], errors="coerce").dt.date
+    if "class_letter" not in catalog.columns:
+        catalog["class_letter"] = catalog["class"].astype(str).str.upper().str[0]
+    if "class_value" not in catalog.columns:
+        catalog["class_value"] = catalog["class"].apply(flare_class_to_numeric)
+    if "flare_key" not in catalog.columns:
+        catalog["flare_key"] = catalog.apply(
+            lambda row: build_flare_key(row["start_time"], row["peak_time"], row["end_time"], row["class"]),
+            axis=1,
+        )
+    return catalog.drop_duplicates(subset=["start_time", "peak_time", "end_time"]).sort_values(
+        ["date", "class_letter", "class_value"],
+        ascending=[True, True, False],
+    )
+
+
+def fetch_hek_catalog(
+    start_date: date,
+    end_date: date,
+    cache_path: Path,
+    min_class: str = "C1.0",
+    chunk_months: int = 1,
+    retries: int = 3,
+    retry_sleep_seconds: float = 20.0,
+) -> pd.DataFrame:
     rows = []
-    for chunk_start, chunk_end in iter_year_chunks(start_date, end_date):
+    if cache_path.exists():
+        existing = pd.read_csv(cache_path)
+        if not existing.empty:
+            rows.extend(existing.to_dict("records"))
+
+    for chunk_start, chunk_end in iter_date_chunks(start_date, end_date, chunk_months):
+        if rows:
+            existing_dates = {
+                pd.to_datetime(row.get("date"), errors="coerce").date()
+                for row in rows
+                if pd.notna(pd.to_datetime(row.get("date"), errors="coerce"))
+            }
+            chunk_dates = {chunk_start + timedelta(days=offset) for offset in range((chunk_end - chunk_start).days + 1)}
+            if chunk_dates.issubset(existing_dates):
+                continue
+
         tstart = chunk_start.strftime("%Y/%m/%d 00:00")
         tend = chunk_end.strftime("%Y/%m/%d 23:59")
         print(f"HEK query: {tstart} - {tend}")
-        result = Fido.search(
-            a.Time(tstart, tend),
-            a.hek.EventType("FL"),
-            a.hek.FL.GOESCls > min_class,
-        )
+        result = None
+        for attempt in range(1, retries + 1):
+            try:
+                result = Fido.search(
+                    a.Time(tstart, tend),
+                    a.hek.EventType("FL"),
+                    a.hek.FL.GOESCls > min_class,
+                )
+                break
+            except Exception as exc:
+                print(f"   HEK query failed ({attempt}/{retries}): {exc}")
+                if attempt < retries:
+                    time.sleep(retry_sleep_seconds)
+        if result is None:
+            print(f"   Skipping chunk after {retries} failed attempts: {chunk_start}..{chunk_end}")
+            continue
         if len(result) == 0:
             continue
 
@@ -105,48 +171,33 @@ def fetch_hek_catalog(start_date: date, end_date: date, min_class: str = "C1.0")
                 }
             )
 
-    catalog = pd.DataFrame(rows)
-    if catalog.empty:
-        return catalog
+        partial = normalize_catalog(pd.DataFrame(rows))
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        partial.to_csv(cache_path, index=False)
+        print(f"   Catalog cache updated: {cache_path} ({len(partial)} rows)")
 
-    catalog["flare_key"] = catalog.apply(
-        lambda row: build_flare_key(
-            row["start_time"],
-            row["peak_time"],
-            row["end_time"],
-            row["class"],
-        ),
-        axis=1,
-    )
-    catalog = catalog.drop_duplicates(subset=["start_time", "peak_time", "end_time"])
-    return catalog.sort_values(["date", "class_letter", "class_value"], ascending=[True, True, False])
+    return normalize_catalog(pd.DataFrame(rows))
 
 
-def load_or_fetch_catalog(cache_path: Path, start_date: date, end_date: date, refresh: bool) -> pd.DataFrame:
-    if cache_path.exists() and not refresh:
+def load_or_fetch_catalog(args: argparse.Namespace) -> pd.DataFrame:
+    cache_path = args.catalog_cache
+    if cache_path.exists() and args.use_cache_only and not args.refresh_catalog:
         print(f"Using cached HEK catalog: {cache_path}")
         catalog = pd.read_csv(cache_path)
     else:
-        catalog = fetch_hek_catalog(start_date, end_date)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        catalog.to_csv(cache_path, index=False)
+        if cache_path.exists() and args.refresh_catalog:
+            cache_path.unlink()
+        catalog = fetch_hek_catalog(
+            start_date=args.start_date,
+            end_date=args.end_date,
+            cache_path=cache_path,
+            chunk_months=args.chunk_months,
+            retries=args.hek_retries,
+            retry_sleep_seconds=args.hek_retry_sleep_seconds,
+        )
         print(f"Saved HEK catalog cache: {cache_path}")
 
-    if catalog.empty:
-        return catalog
-    for column in ("start_time", "peak_time", "end_time"):
-        catalog[column] = pd.to_datetime(catalog[column])
-    catalog["date"] = pd.to_datetime(catalog["date"]).dt.date
-    if "class_letter" not in catalog.columns:
-        catalog["class_letter"] = catalog["class"].astype(str).str.upper().str[0]
-    if "class_value" not in catalog.columns:
-        catalog["class_value"] = catalog["class"].apply(flare_class_to_numeric)
-    if "flare_key" not in catalog.columns:
-        catalog["flare_key"] = catalog.apply(
-            lambda row: build_flare_key(row["start_time"], row["peak_time"], row["end_time"], row["class"]),
-            axis=1,
-        )
-    return catalog
+    return normalize_catalog(catalog)
 
 
 def uniformly_sample_by_time(
@@ -287,6 +338,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--catalog-cache", type=Path, default=Path("./data/random_cm_hek_catalog.csv"))
     parser.add_argument("--selection-file", type=Path, default=Path("./data/random_cm_selection.csv"))
     parser.add_argument("--refresh-catalog", action="store_true")
+    parser.add_argument("--use-cache-only", action="store_true")
+    parser.add_argument("--chunk-months", type=int, default=1)
+    parser.add_argument("--hek-retries", type=int, default=3)
+    parser.add_argument("--hek-retry-sleep-seconds", type=float, default=20.0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--existing-data-policy", choices=["skip", "overwrite", "validate"], default="validate")
     parser.add_argument("--overwrite-download", action="store_true")
@@ -297,12 +352,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     args.classes = tuple(class_name.upper() for class_name in args.classes)
-    catalog = load_or_fetch_catalog(
-        cache_path=args.catalog_cache,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        refresh=args.refresh_catalog,
-    )
+    catalog = load_or_fetch_catalog(args)
     if catalog.empty:
         raise SystemExit("No C/M flares found in HEK catalog")
 
