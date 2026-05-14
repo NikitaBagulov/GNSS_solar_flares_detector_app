@@ -73,6 +73,40 @@ def goes_peak(goes: pd.DataFrame, xray_column: str) -> pd.Series:
     return goes.loc[values.idxmax()]
 
 
+def goes_peak_in_window(
+    goes: pd.DataFrame,
+    xray_column: str,
+    start_time: pd.Timestamp,
+    end_time: pd.Timestamp,
+) -> pd.Series:
+    window = goes[(goes["time"] >= start_time) & (goes["time"] <= end_time)]
+    if window.empty:
+        raise ValueError(f"GOES has no rows in index window {start_time}..{end_time}")
+    return goes_peak(window, xray_column)
+
+
+def load_event_indices(results_dir: Path, event: dict) -> dict[str, pd.DataFrame]:
+    index_frames = {}
+    for product in PRODUCTS:
+        if not event.get("indices", {}).get(product):
+            continue
+        index_frames[product] = load_indices(results_dir, event, product)
+    return index_frames
+
+
+def index_time_window(index_frames: dict[str, pd.DataFrame]) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    starts = []
+    ends = []
+    for frame in index_frames.values():
+        if frame.empty:
+            continue
+        starts.append(frame["time"].min())
+        ends.append(frame["time"].max())
+    if not starts or not ends:
+        return None
+    return min(starts), max(ends)
+
+
 def nearest_row(
     frame: pd.DataFrame,
     target_time: pd.Timestamp,
@@ -111,6 +145,7 @@ def build_statistics(
 
         try:
             goes = load_goes(results_dir, event, xray_column)
+            index_frames = load_event_indices(results_dir, event)
             flare_peak_time = parse_event_peak_time(event) if peak_time_source == "event_name" else None
             if flare_peak_time is not None and pd.notna(flare_peak_time):
                 peak = nearest_row(goes, flare_peak_time, max_time_delta)
@@ -118,9 +153,12 @@ def build_statistics(
                     raise ValueError("no GOES measurement near event peak time")
                 peak_source = "event_name"
             else:
-                peak = goes_peak(goes, xray_column)
+                time_window = index_time_window(index_frames)
+                if time_window is None:
+                    raise ValueError("no index time window available for GOES peak fallback")
+                peak = goes_peak_in_window(goes, xray_column, *time_window)
                 flare_peak_time = peak["time"]
-                peak_source = "goes_max"
+                peak_source = "index_window_goes_max"
         except (ValueError, OSError, pd.errors.ParserError) as exc:
             errors.append({"event": event.get("name"), "stage": "goes", "error": str(exc)})
             continue
@@ -129,7 +167,7 @@ def build_statistics(
             if not event.get("indices", {}).get(product):
                 continue
             try:
-                indices = load_indices(results_dir, event, product)
+                indices = index_frames[product]
                 nearest = nearest_row(indices, flare_peak_time, max_time_delta)
                 if nearest is None:
                     errors.append(
