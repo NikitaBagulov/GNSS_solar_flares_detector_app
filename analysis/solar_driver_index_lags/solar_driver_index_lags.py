@@ -277,63 +277,91 @@ def build_summary(lags: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def plot_lag_distributions(lags: pd.DataFrame, output_dir: Path) -> None:
+def plot_lag_points(lags: pd.DataFrame, output_dir: Path) -> None:
     if lags.empty:
         return
 
     for driver, driver_df in lags.groupby("driver"):
-        fig, axes = plt.subplots(len(INDEX_COLUMNS), 1, figsize=(11, 4 * len(INDEX_COLUMNS)), squeeze=False)
+        fig, axes = plt.subplots(len(INDEX_COLUMNS), 1, figsize=(12, 4.2 * len(INDEX_COLUMNS)), squeeze=False)
         for ax, index_column in zip(axes.ravel(), INDEX_COLUMNS):
             subset = driver_df[driver_df["index"] == index_column]
             if subset.empty:
                 ax.axis("off")
                 continue
-            labels = []
-            data = []
+
+            y_positions = {product: idx for idx, product in enumerate(PRODUCTS)}
             for product in PRODUCTS:
-                product_values = subset[subset["product"] == product]["lag_minutes"].dropna()
-                if product_values.empty:
+                product_df = subset[subset["product"] == product].dropna(subset=["lag_minutes"])
+                if product_df.empty:
                     continue
-                labels.append(product)
-                data.append(product_values.to_numpy())
-            if not data:
-                ax.axis("off")
-                continue
-            ax.boxplot(data, tick_labels=labels, showmeans=True)
-            ax.axhline(0, color="black", linewidth=0.8, alpha=0.5)
-            ax.set_title(f"{driver}: lag to {index_column} peak")
-            ax.set_ylabel("Index peak time - driver peak time, minutes")
+                y = np.full(len(product_df), y_positions[product], dtype=float)
+                if len(product_df) > 1:
+                    y += np.linspace(-0.12, 0.12, len(product_df))
+                ax.scatter(product_df["lag_minutes"], y, s=54, alpha=0.82, label=product)
+                median = product_df["lag_minutes"].median()
+                ax.plot([median, median], [y_positions[product] - 0.25, y_positions[product] + 0.25], color="black", linewidth=2)
+
+            ax.axvline(0, color="black", linewidth=0.9, alpha=0.55)
+            ax.set_yticks(range(len(PRODUCTS)), PRODUCTS)
+            ax.set_title(f"{driver}: each event lag to {index_column} peak")
+            ax.set_xlabel("Index peak time - driver peak time, minutes")
+            ax.grid(True, axis="x", alpha=0.3)
         fig.tight_layout()
-        fig.savefig(output_dir / f"lag_distribution_{driver}.png", dpi=160)
+        fig.savefig(output_dir / f"lag_points_{driver}.png", dpi=160)
         plt.close(fig)
 
 
-def plot_lag_heatmap(summary: pd.DataFrame, output_dir: Path) -> None:
+def plot_median_lag_bars(summary: pd.DataFrame, output_dir: Path) -> None:
     if summary.empty:
         return
 
     for driver, driver_df in summary.groupby("driver"):
         for index_column, index_df in driver_df.groupby("index"):
-            matrix = (
-                index_df.pivot(index="product", columns="index", values="lag_minutes_median")
-                .reindex(PRODUCTS)
-            )
-            values = matrix.to_numpy(dtype=float)
-            if np.isnan(values).all():
+            plot_df = index_df.set_index("product").reindex(PRODUCTS).dropna(subset=["lag_minutes_median"])
+            if plot_df.empty:
                 continue
-            fig, ax = plt.subplots(figsize=(5, 4.8))
-            image = ax.imshow(values, cmap="coolwarm")
-            ax.set_xticks([0], [index_column])
-            ax.set_yticks(range(len(matrix.index)), matrix.index)
-            ax.set_title(f"Median lag, {driver}")
-            for row_idx, product in enumerate(matrix.index):
-                value = matrix.loc[product, index_column]
-                label = "n/a" if pd.isna(value) else f"{value:.1f}"
-                ax.text(0, row_idx, label, ha="center", va="center", color="black")
-            fig.colorbar(image, ax=ax, label="minutes")
+            colors = ["#4c78a8" if value >= 0 else "#e15759" for value in plot_df["lag_minutes_median"]]
+            fig, ax = plt.subplots(figsize=(9, 4.8))
+            bars = ax.barh(plot_df.index, plot_df["lag_minutes_median"], color=colors, alpha=0.88)
+            ax.axvline(0, color="black", linewidth=0.9)
+            ax.set_title(f"Median lag: {driver} -> {index_column}")
+            ax.set_xlabel("Index peak time - driver peak time, minutes")
+            for bar, (_, row) in zip(bars, plot_df.iterrows()):
+                value = row["lag_minutes_median"]
+                label = f"{value:.1f} min, n={int(row['n'])}"
+                x = value + (0.2 if value >= 0 else -0.2)
+                ha = "left" if value >= 0 else "right"
+                ax.text(x, bar.get_y() + bar.get_height() / 2, label, va="center", ha=ha, fontsize=9)
             fig.tight_layout()
-            fig.savefig(output_dir / f"median_lag_heatmap_{driver}_{index_column}.png", dpi=160)
+            fig.savefig(output_dir / f"median_lag_bar_{driver}_{index_column}.png", dpi=160)
             plt.close(fig)
+
+
+def save_summary_table_image(summary: pd.DataFrame, output_dir: Path) -> None:
+    if summary.empty:
+        return
+
+    table = summary.copy()
+    table["lag_minutes_median"] = table["lag_minutes_median"].round(2)
+    table["lag_minutes_mean"] = table["lag_minutes_mean"].round(2)
+    table = table[["driver", "product", "index", "n", "lag_minutes_median", "lag_minutes_mean"]]
+
+    fig_height = max(4, min(24, 0.35 * len(table) + 1.5))
+    fig, ax = plt.subplots(figsize=(13, fig_height))
+    ax.axis("off")
+    rendered = ax.table(
+        cellText=table.astype(str).values,
+        colLabels=["driver", "product", "index", "n", "median lag, min", "mean lag, min"],
+        loc="center",
+        cellLoc="center",
+    )
+    rendered.auto_set_font_size(False)
+    rendered.set_fontsize(8.5)
+    rendered.scale(1, 1.25)
+    ax.set_title("Solar driver -> GNSS index lag summary", pad=16)
+    fig.tight_layout()
+    fig.savefig(output_dir / "lag_summary_table.png", dpi=180)
+    plt.close(fig)
 
 
 def save_outputs(lags: pd.DataFrame, errors: pd.DataFrame, summary: pd.DataFrame, output_dir: Path, make_plots: bool) -> None:
@@ -352,8 +380,9 @@ def save_outputs(lags: pd.DataFrame, errors: pd.DataFrame, summary: pd.DataFrame
 
     if make_plots:
         plt.style.use("seaborn-v0_8-whitegrid")
-        plot_lag_distributions(lags, output_dir)
-        plot_lag_heatmap(summary, output_dir)
+        plot_lag_points(lags, output_dir)
+        plot_median_lag_bars(summary, output_dir)
+        save_summary_table_image(summary, output_dir)
         print(f"Saved plots to: {output_dir}")
 
 
