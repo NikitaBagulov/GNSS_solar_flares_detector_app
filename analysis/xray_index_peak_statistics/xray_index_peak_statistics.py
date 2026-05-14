@@ -144,6 +144,8 @@ def build_statistics(
     xray_column: str,
     peak_time_source: str,
     max_time_delta: pd.Timedelta,
+    max_index_lag: pd.Timedelta,
+    lag_step: pd.Timedelta,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows: list[dict] = []
     errors: list[dict] = []
@@ -185,37 +187,47 @@ def build_statistics(
                 continue
             try:
                 indices = index_frames[product]
-                nearest = nearest_row(indices, flare_peak_time, max_time_delta)
-                if nearest is None:
+                product_rows = []
+                lag_seconds = 0.0
+                while lag_seconds <= max_index_lag.total_seconds():
+                    target_time = flare_peak_time + pd.Timedelta(seconds=lag_seconds)
+                    nearest = nearest_row(indices, target_time, max_time_delta)
+                    if nearest is not None:
+                        flare_class_label, flare_class_value = parse_flare_class(event)
+                        row = {
+                            "event": event["name"],
+                            "event_path": event["path"],
+                            "flare_class": flare_class_label or event.get("class"),
+                            "flare_class_value": flare_class_value,
+                            "product": product,
+                            "flare_peak_time": flare_peak_time,
+                            "index_target_time": target_time,
+                            "lag_seconds": lag_seconds,
+                            "lag_minutes": lag_seconds / 60.0,
+                            "goes_time": peak["time"],
+                            "peak_source": peak_source,
+                            "index_time": nearest["time"],
+                            "index_time_delta_seconds": abs((nearest["time"] - target_time).total_seconds()),
+                            "goes_time_delta_seconds": abs((peak["time"] - flare_peak_time).total_seconds()),
+                            "xray_column": xray_column,
+                            "xray_at_flare_peak": float(peak[xray_column]),
+                        }
+                        for column in INDEX_COLUMNS:
+                            row[column] = float(nearest[column]) if column in nearest.index and pd.notna(nearest[column]) else np.nan
+                        product_rows.append(row)
+                    lag_seconds += lag_step.total_seconds()
+
+                if not product_rows:
                     errors.append(
                         {
                             "event": event.get("name"),
                             "product": product,
                             "stage": "nearest",
-                            "error": "no index row near event peak time",
+                            "error": f"no index row within {max_index_lag} after event peak",
                         }
                     )
                     continue
-
-                flare_class_label, flare_class_value = parse_flare_class(event)
-                row = {
-                    "event": event["name"],
-                    "event_path": event["path"],
-                    "flare_class": flare_class_label or event.get("class"),
-                    "flare_class_value": flare_class_value,
-                    "product": product,
-                    "flare_peak_time": flare_peak_time,
-                    "goes_time": peak["time"],
-                    "peak_source": peak_source,
-                    "index_time": nearest["time"],
-                    "index_time_delta_seconds": abs((nearest["time"] - flare_peak_time).total_seconds()),
-                    "goes_time_delta_seconds": abs((peak["time"] - flare_peak_time).total_seconds()),
-                    "xray_column": xray_column,
-                    "xray_at_flare_peak": float(peak[xray_column]),
-                }
-                for column in INDEX_COLUMNS:
-                    row[column] = float(nearest[column]) if column in nearest.index and pd.notna(nearest[column]) else np.nan
-                rows.append(row)
+                rows.extend(product_rows)
             except (ValueError, OSError, pd.errors.ParserError) as exc:
                 errors.append(
                     {
@@ -232,9 +244,16 @@ def build_statistics(
 def build_correlations(stats: pd.DataFrame) -> pd.DataFrame:
     corr_rows = []
     if stats.empty:
-        return pd.DataFrame(columns=["product", "index", "n", "spearman_r"])
+        return pd.DataFrame(columns=["product", "index", "lag_seconds", "lag_minutes", "n", "spearman_r"])
 
-    for product, product_df in stats.groupby("product"):
+    group_columns = ["product", "lag_seconds", "lag_minutes"] if "lag_seconds" in stats.columns else ["product"]
+    for group_key, product_df in stats.groupby(group_columns):
+        if len(group_columns) == 3:
+            product, lag_seconds, lag_minutes = group_key
+        else:
+            product = group_key
+            lag_seconds = 0.0
+            lag_minutes = 0.0
         for index_column in INDEX_COLUMNS:
             subset = product_df.dropna(subset=["xray_at_flare_peak", index_column])
             corr = np.nan
@@ -244,11 +263,38 @@ def build_correlations(stats: pd.DataFrame) -> pd.DataFrame:
                 {
                     "product": product,
                     "index": index_column,
+                    "lag_seconds": lag_seconds,
+                    "lag_minutes": lag_minutes,
                     "n": len(subset),
                     "spearman_r": corr,
                 }
             )
-    return pd.DataFrame(corr_rows).sort_values(["index", "product"])
+    return pd.DataFrame(corr_rows).sort_values(["index", "product", "lag_seconds"])
+
+
+def build_best_lag_correlations(correlations: pd.DataFrame) -> pd.DataFrame:
+    if correlations.empty:
+        return pd.DataFrame(columns=["product", "index", "lag_seconds", "lag_minutes", "n", "spearman_r"])
+
+    rows = []
+    for (product, index_column), subset in correlations.groupby(["product", "index"]):
+        valid = subset.dropna(subset=["spearman_r"]).copy()
+        valid = valid[valid["n"] >= 2]
+        if valid.empty:
+            rows.append(
+                {
+                    "product": product,
+                    "index": index_column,
+                    "lag_seconds": np.nan,
+                    "lag_minutes": np.nan,
+                    "n": int(subset["n"].max()) if "n" in subset else 0,
+                    "spearman_r": np.nan,
+                }
+            )
+            continue
+        best = valid.loc[valid["spearman_r"].abs().idxmax()]
+        rows.append(best.to_dict())
+    return pd.DataFrame(rows).sort_values(["index", "product"])
 
 
 def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
@@ -256,6 +302,7 @@ def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
         "product",
         "rows",
         "events",
+        "lag_slices",
         "xray_min",
         "xray_median",
         "xray_max",
@@ -272,6 +319,7 @@ def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
             "product": product,
             "rows": len(product_df),
             "events": product_df["event"].nunique(),
+            "lag_slices": product_df["lag_seconds"].nunique() if "lag_seconds" in product_df else 1,
             "xray_min": product_df["xray_at_flare_peak"].min(),
             "xray_median": product_df["xray_at_flare_peak"].median(),
             "xray_max": product_df["xray_at_flare_peak"].max(),
@@ -284,7 +332,7 @@ def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
 
 def build_top_responses(stats: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
     if stats.empty:
-        return pd.DataFrame(columns=["index", "rank", "event", "product", "flare_class", "xray_at_flare_peak", "value"])
+        return pd.DataFrame(columns=["index", "rank", "event", "product", "flare_class", "lag_minutes", "xray_at_flare_peak", "value"])
 
     rows = []
     for index_column in INDEX_COLUMNS:
@@ -297,6 +345,7 @@ def build_top_responses(stats: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
                     "event": row["event"],
                     "product": row["product"],
                     "flare_class": row["flare_class"],
+                    "lag_minutes": row.get("lag_minutes", 0.0),
                     "xray_at_flare_peak": row["xray_at_flare_peak"],
                     "value": row[index_column],
                 }
@@ -306,6 +355,8 @@ def build_top_responses(stats: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
 
 def plot_index_vs_xray(stats: pd.DataFrame, index_column: str, xray_column: str, output_dir: Path) -> None:
     data = stats.dropna(subset=["xray_at_flare_peak", index_column]).copy()
+    if "lag_seconds" in data.columns:
+        data = data[data["lag_seconds"] == 0]
     if data.empty:
         print(f"No plot data for {index_column}")
         return
@@ -340,6 +391,8 @@ def plot_index_vs_xray(stats: pd.DataFrame, index_column: str, xray_column: str,
 
 def plot_combined(stats: pd.DataFrame, index_column: str, xray_column: str, output_dir: Path) -> None:
     data = stats.dropna(subset=["xray_at_flare_peak", index_column]).copy()
+    if "lag_seconds" in data.columns:
+        data = data[data["lag_seconds"] == 0]
     if data.empty:
         return
 
@@ -401,6 +454,8 @@ def plot_correlation_heatmap(correlations: pd.DataFrame, output_dir: Path) -> No
 
 def plot_index_vs_flare_class(stats: pd.DataFrame, index_column: str, output_dir: Path) -> None:
     data = stats.dropna(subset=["flare_class_value", index_column]).copy()
+    if "lag_seconds" in data.columns:
+        data = data[data["lag_seconds"] == 0]
     if data.empty:
         return
 
@@ -426,7 +481,14 @@ def plot_top_responses(top_responses: pd.DataFrame, output_dir: Path) -> None:
         plot_data = subset.head(10).copy()
         if plot_data.empty:
             continue
-        labels = plot_data["event"].astype(str) + " / " + plot_data["product"].astype(str)
+        labels = (
+            plot_data["event"].astype(str)
+            + " / "
+            + plot_data["product"].astype(str)
+            + " / +"
+            + plot_data["lag_minutes"].round(1).astype(str)
+            + " min"
+        )
         fig, ax = plt.subplots(figsize=(11, 6))
         ax.barh(labels[::-1], plot_data["value"].to_numpy()[::-1], color="#59a14f")
         ax.set_title(f"Top responses: {index_column}")
@@ -436,10 +498,39 @@ def plot_top_responses(top_responses: pd.DataFrame, output_dir: Path) -> None:
         plt.close(fig)
 
 
+def plot_lag_correlations(correlations: pd.DataFrame, output_dir: Path) -> None:
+    if correlations.empty or "lag_minutes" not in correlations.columns:
+        return
+
+    for index_column, index_df in correlations.groupby("index"):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        has_lines = False
+        for product, product_df in index_df.groupby("product"):
+            product_df = product_df.sort_values("lag_minutes")
+            valid = product_df.dropna(subset=["spearman_r"])
+            if valid.empty:
+                continue
+            ax.plot(valid["lag_minutes"], valid["spearman_r"], marker="o", label=product)
+            has_lines = True
+        if not has_lines:
+            plt.close(fig)
+            continue
+        ax.axhline(0, color="black", linewidth=0.8, alpha=0.5)
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_xlabel("Index lag after X-ray peak, minutes")
+        ax.set_ylabel("Spearman r")
+        ax.set_title(f"Lag correlation: GOES X-ray vs {index_column}")
+        ax.legend(title="Product")
+        fig.tight_layout()
+        fig.savefig(output_dir / f"lag_correlation_{index_column}.png", dpi=160)
+        plt.close(fig)
+
+
 def save_outputs(
     stats: pd.DataFrame,
     errors: pd.DataFrame,
     correlations: pd.DataFrame,
+    best_lag_correlations: pd.DataFrame,
     product_summary: pd.DataFrame,
     top_responses: pd.DataFrame,
     output_dir: Path,
@@ -451,25 +542,29 @@ def save_outputs(
     stats_path = output_dir / "xray_index_peak_statistics.csv"
     errors_path = output_dir / "xray_index_peak_errors.csv"
     correlations_path = output_dir / "xray_index_peak_correlations.csv"
+    best_lag_correlations_path = output_dir / "xray_index_peak_best_lag_correlations.csv"
     product_summary_path = output_dir / "xray_index_peak_product_summary.csv"
     top_responses_path = output_dir / "xray_index_peak_top_responses.csv"
 
     stats.to_csv(stats_path, index=False)
     errors.to_csv(errors_path, index=False)
     correlations.to_csv(correlations_path, index=False)
+    best_lag_correlations.to_csv(best_lag_correlations_path, index=False)
     product_summary.to_csv(product_summary_path, index=False)
     top_responses.to_csv(top_responses_path, index=False)
 
     print(f"Saved: {stats_path}")
     print(f"Saved: {errors_path}")
     print(f"Saved: {correlations_path}")
+    print(f"Saved: {best_lag_correlations_path}")
     print(f"Saved: {product_summary_path}")
     print(f"Saved: {top_responses_path}")
 
     if make_plots:
         plt.style.use("seaborn-v0_8-whitegrid")
         plot_coverage(stats, output_dir)
-        plot_correlation_heatmap(correlations, output_dir)
+        plot_correlation_heatmap(best_lag_correlations, output_dir)
+        plot_lag_correlations(correlations, output_dir)
         for index_column in INDEX_COLUMNS:
             plot_index_vs_xray(stats, index_column, xray_column, output_dir)
             plot_index_vs_flare_class(stats, index_column, output_dir)
@@ -485,6 +580,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--xray-column", default="xrsb")
     parser.add_argument("--peak-time-source", choices=["event_name", "goes_max"], default="event_name")
     parser.add_argument("--max-time-delta-seconds", type=float, default=90.0)
+    parser.add_argument("--max-index-lag-minutes", type=float, default=10.0)
+    parser.add_argument("--lag-step-seconds", type=float, default=60.0)
     parser.add_argument("--no-plots", action="store_true")
     return parser.parse_args()
 
@@ -504,14 +601,18 @@ def main() -> None:
         xray_column=args.xray_column,
         peak_time_source=args.peak_time_source,
         max_time_delta=pd.Timedelta(seconds=args.max_time_delta_seconds),
+        max_index_lag=pd.Timedelta(minutes=args.max_index_lag_minutes),
+        lag_step=pd.Timedelta(seconds=args.lag_step_seconds),
     )
     correlations = build_correlations(stats)
+    best_lag_correlations = build_best_lag_correlations(correlations)
     product_summary = build_product_summary(stats)
     top_responses = build_top_responses(stats)
     save_outputs(
         stats=stats,
         errors=errors,
         correlations=correlations,
+        best_lag_correlations=best_lag_correlations,
         product_summary=product_summary,
         top_responses=top_responses,
         output_dir=output_dir,
@@ -523,7 +624,10 @@ def main() -> None:
     print(f"Errors/skips: {len(errors)}")
     if not product_summary.empty:
         print("\nRows by product:")
-        print(product_summary[["product", "events", "rows"]].to_string(index=False))
+        print(product_summary[["product", "events", "lag_slices", "rows"]].to_string(index=False))
+    if not best_lag_correlations.empty:
+        print("\nBest lag correlations:")
+        print(best_lag_correlations[["product", "index", "lag_minutes", "n", "spearman_r"]].to_string(index=False))
 
 
 if __name__ == "__main__":
