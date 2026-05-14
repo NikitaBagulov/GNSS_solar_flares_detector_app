@@ -64,7 +64,9 @@ class DataPreprocessor:
             return False
         try:
             with h5py.File(path, "r") as h5:
-                return bool(h5.keys())
+                if "data" not in h5:
+                    return False
+                return bool(list(h5["data"]))
         except Exception:
             return False
 

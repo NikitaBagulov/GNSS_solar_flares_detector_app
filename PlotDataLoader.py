@@ -1,6 +1,7 @@
 from typing import List, Optional
 from pathlib import Path
 import json
+import logging
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from map_filters import maybe_filter_roti_points
 
 _UTC = tz.gettz('UTC')
 SIMURG_MAP_TIME_KEY_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
+logger = logging.getLogger(__name__)
 
 
 def _parse_csv_times(values):
@@ -183,8 +185,22 @@ class PlotDataLoader:
 
             product_data[prod_name] = {}
 
-            with h5py.File(path, "r") as f:
-                for str_time in f["data"]:
+            try:
+                map_file = h5py.File(path, "r")
+            except Exception as exc:
+                logger.warning("Failed to open HDF5 map %s, skipping product %s: %s", path, prod_name, exc)
+                continue
+
+            try:
+                data_group = map_file["data"]
+                times = list(data_group)
+            except Exception as exc:
+                logger.warning("Failed to read HDF5 map %s, skipping product %s: %s", path, prod_name, exc)
+                map_file.close()
+                continue
+
+            with map_file:
+                for str_time in times:
                     try:
                         time = datetime.strptime(str_time, SIMURG_MAP_TIME_KEY_FORMAT)
                         time = time.replace(tzinfo=_UTC)
@@ -193,11 +209,16 @@ class PlotDataLoader:
                         continue
 
                     if start_interval <= time <= end_interval:
+                        try:
+                            values = maybe_filter_roti_points(
+                                data_group[str_time][:],
+                                prod_name,
+                            )
+                        except Exception as exc:
+                            logger.warning("Failed to read HDF5 dataset %s/%s: %s", path, str_time, exc)
+                            continue
                         timestamps.add(time)
-                        product_data[prod_name][time] = maybe_filter_roti_points(
-                            f["data"][str_time][:],
-                            prod_name,
-                        )
+                        product_data[prod_name][time] = values
 
         # 🔁 fallback: если ничего не попало в интервал
         if not timestamps and maps_paths:
@@ -208,19 +229,38 @@ class PlotDataLoader:
 
                 product_data.setdefault(prod_name, {})
 
-                with h5py.File(path, "r") as f:
-                    for str_time in f["data"]:
+                try:
+                    map_file = h5py.File(path, "r")
+                except Exception as exc:
+                    logger.warning("Failed to open HDF5 map %s, skipping product %s: %s", path, prod_name, exc)
+                    continue
+
+                try:
+                    data_group = map_file["data"]
+                    times = list(data_group)
+                except Exception as exc:
+                    logger.warning("Failed to read HDF5 map %s, skipping product %s: %s", path, prod_name, exc)
+                    map_file.close()
+                    continue
+
+                with map_file:
+                    for str_time in times:
                         try:
                             time = datetime.strptime(str_time, SIMURG_MAP_TIME_KEY_FORMAT)
                             time = time.replace(tzinfo=_UTC)
                         except ValueError:
                             continue
 
+                        try:
+                            values = maybe_filter_roti_points(
+                                data_group[str_time][:],
+                                prod_name,
+                            )
+                        except Exception as exc:
+                            logger.warning("Failed to read HDF5 dataset %s/%s: %s", path, str_time, exc)
+                            continue
                         timestamps.add(time)
-                        product_data[prod_name][time] = maybe_filter_roti_points(
-                            f["data"][str_time][:],
-                            prod_name,
-                        )
+                        product_data[prod_name][time] = values
 
         timestamps = sorted(timestamps)
 

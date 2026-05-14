@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 import h5py
+import numpy as np
 
 from DataPreprocessor import DataPreprocessor
 from FlareTracker import FlareTracker
@@ -17,7 +18,28 @@ class RecordingTracker:
 def _write_valid_h5(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(path, "w") as h5:
+        group = h5.create_group("data")
+        group.create_dataset("2025-11-11 09:49:00.000000", data=np.array([[1.0, 2.0, 3.0]]))
+
+
+def test_map_file_validation_requires_readable_non_empty_data_group(tmp_path):
+    preprocessor = DataPreprocessor(input_root=tmp_path / "data", output_dir=tmp_path / "results")
+    valid = tmp_path / "valid.h5"
+    empty = tmp_path / "empty.h5"
+    missing_data = tmp_path / "missing_data.h5"
+    broken = tmp_path / "broken.h5"
+
+    _write_valid_h5(valid)
+    with h5py.File(empty, "w") as h5:
         h5.create_group("data")
+    with h5py.File(missing_data, "w") as h5:
+        h5.create_group("other")
+    broken.write_bytes(b"not an hdf5 file")
+
+    assert preprocessor._is_map_file_valid(valid) is True
+    assert preprocessor._is_map_file_valid(empty) is False
+    assert preprocessor._is_map_file_valid(missing_data) is False
+    assert preprocessor._is_map_file_valid(broken) is False
 
 
 def test_cleanup_consumed_simurg_hdf_deletes_file_and_marks_tracker(tmp_path):
