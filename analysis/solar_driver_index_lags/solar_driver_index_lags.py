@@ -18,6 +18,16 @@ DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs"
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
 SOLAR_DRIVERS = ("xray", "euv", "euv_derivative")
+DRIVER_COLORS = {
+    "xray": "#4c78a8",
+    "euv": "#f58518",
+    "euv_derivative": "#54a24b",
+}
+DRIVER_LABELS = {
+    "xray": "X-ray peak",
+    "euv": "EUV peak",
+    "euv_derivative": "dEUV/dt peak",
+}
 
 
 def load_events(results_dir: Path) -> list[dict]:
@@ -337,6 +347,71 @@ def plot_median_lag_bars(summary: pd.DataFrame, output_dir: Path) -> None:
             plt.close(fig)
 
 
+def plot_product_driver_comparison(lags: pd.DataFrame, output_dir: Path) -> None:
+    if lags.empty:
+        return
+
+    driver_offsets = {
+        "xray": -0.18,
+        "euv": 0.0,
+        "euv_derivative": 0.18,
+    }
+    index_positions = {index_name: idx for idx, index_name in enumerate(INDEX_COLUMNS)}
+
+    for product, product_df in lags.groupby("product"):
+        fig, ax = plt.subplots(figsize=(12, 5.8))
+        has_points = False
+        for driver in SOLAR_DRIVERS:
+            driver_df = product_df[product_df["driver"] == driver]
+            if driver_df.empty:
+                continue
+            for index_name in INDEX_COLUMNS:
+                subset = driver_df[driver_df["index"] == index_name].dropna(subset=["lag_minutes"])
+                if subset.empty:
+                    continue
+                y_base = index_positions[index_name] + driver_offsets[driver]
+                y = np.full(len(subset), y_base, dtype=float)
+                if len(subset) > 1:
+                    y += np.linspace(-0.035, 0.035, len(subset))
+                ax.scatter(
+                    subset["lag_minutes"],
+                    y,
+                    s=58,
+                    alpha=0.82,
+                    color=DRIVER_COLORS[driver],
+                    label=DRIVER_LABELS[driver] if not has_points or driver not in ax.get_legend_handles_labels()[1] else None,
+                )
+                median = subset["lag_minutes"].median()
+                ax.plot(
+                    [median, median],
+                    [y_base - 0.07, y_base + 0.07],
+                    color=DRIVER_COLORS[driver],
+                    linewidth=3,
+                )
+                has_points = True
+
+        if not has_points:
+            plt.close(fig)
+            continue
+
+        ax.axvline(0, color="black", linewidth=0.9, alpha=0.55)
+        ax.set_yticks(range(len(INDEX_COLUMNS)), INDEX_COLUMNS)
+        ax.set_xlabel("Index peak time - solar driver peak time, minutes")
+        ax.set_title(f"{product}: lag comparison across solar drivers")
+        ax.grid(True, axis="x", alpha=0.3)
+
+        handles, labels = ax.get_legend_handles_labels()
+        unique = {}
+        for handle, label in zip(handles, labels):
+            if label:
+                unique[label] = handle
+        ax.legend(unique.values(), unique.keys(), title="Solar driver", loc="best")
+
+        fig.tight_layout()
+        fig.savefig(output_dir / f"lag_points_by_driver_{product}.png", dpi=160)
+        plt.close(fig)
+
+
 def save_summary_table_image(summary: pd.DataFrame, output_dir: Path) -> None:
     if summary.empty:
         return
@@ -381,6 +456,7 @@ def save_outputs(lags: pd.DataFrame, errors: pd.DataFrame, summary: pd.DataFrame
     if make_plots:
         plt.style.use("seaborn-v0_8-whitegrid")
         plot_lag_points(lags, output_dir)
+        plot_product_driver_comparison(lags, output_dir)
         plot_median_lag_bars(summary, output_dir)
         save_summary_table_image(summary, output_dir)
         print(f"Saved plots to: {output_dir}")
