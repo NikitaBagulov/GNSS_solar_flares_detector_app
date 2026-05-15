@@ -310,18 +310,50 @@ def process_selection(selected: pd.DataFrame, args: argparse.Namespace) -> None:
         ),
     )
 
-    for flare_date, group in selected.groupby("date"):
+    selected = selected.copy()
+    selected["date"] = pd.to_datetime(selected["date"], errors="coerce").dt.date
+    if args.process_start_date is not None:
+        selected = selected[selected["date"] >= args.process_start_date]
+    if args.process_end_date is not None:
+        selected = selected[selected["date"] <= args.process_end_date]
+
+    grouped = list(selected.groupby("date"))
+    if args.max_dates is not None:
+        grouped = grouped[: args.max_dates]
+
+    print(f"Processing selected dates: {len(grouped)}", flush=True)
+    for date_idx, (flare_date, group) in enumerate(grouped, 1):
         if isinstance(flare_date, str):
             flare_date = date.fromisoformat(flare_date)
         if isinstance(flare_date, pd.Timestamp):
             flare_date = flare_date.date()
         flare_keys = set(group["flare_key"].astype(str))
-        print(f"\nProcessing {flare_date}: {len(flare_keys)} selected flares")
-        run_download_for_date(config, flare_date)
-        run_preprocessing_for_flares(config, flare_keys)
-        for idx, flare_key in enumerate(sorted(flare_keys), 1):
-            print(f"Index {idx}/{len(flare_keys)}: {flare_key}")
-            run_index_calculation_for_flare(config, flare_key)
+        print(
+            f"\nProcessing date {date_idx}/{len(grouped)}: {flare_date} "
+            f"({len(flare_keys)} selected flares)",
+            flush=True,
+        )
+        if args.skip_download:
+            print("  download: skipped", flush=True)
+        else:
+            print("  download: start", flush=True)
+            run_download_for_date(config, flare_date)
+            print("  download: done", flush=True)
+
+        if args.skip_preprocessing:
+            print("  preprocessing: skipped", flush=True)
+        else:
+            print("  preprocessing: start", flush=True)
+            run_preprocessing_for_flares(config, flare_keys)
+            print("  preprocessing: done", flush=True)
+
+        if args.skip_index:
+            print("  index: skipped", flush=True)
+        else:
+            for idx, flare_key in enumerate(sorted(flare_keys), 1):
+                print(f"  index {idx}/{len(flare_keys)}: {flare_key}", flush=True)
+                run_index_calculation_for_flare(config, flare_key)
+            print("  index: done", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -346,6 +378,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--existing-data-policy", choices=["skip", "overwrite", "validate"], default="validate")
     parser.add_argument("--overwrite-download", action="store_true")
     parser.add_argument("--overwrite-products", action="store_true")
+    parser.add_argument("--process-start-date", type=date.fromisoformat)
+    parser.add_argument("--process-end-date", type=date.fromisoformat)
+    parser.add_argument("--max-dates", type=int)
+    parser.add_argument("--skip-download", action="store_true")
+    parser.add_argument("--skip-preprocessing", action="store_true")
+    parser.add_argument("--skip-index", action="store_true")
     return parser.parse_args()
 
 
