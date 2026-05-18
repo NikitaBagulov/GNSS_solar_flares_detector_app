@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import json
 from pathlib import Path
+import shutil
 import sys
 import time
 
@@ -116,6 +118,47 @@ def ensure_flare_keys(frame: pd.DataFrame) -> pd.DataFrame:
 
     frame.loc[missing_mask, "flare_key"] = frame.loc[missing_mask].apply(_build_key, axis=1)
     return frame
+
+
+def clean_invalid_state_entries(state_json_path: Path) -> None:
+    if not state_json_path.exists():
+        return
+
+    with open(state_json_path, "r", encoding="utf-8") as handle:
+        state = json.load(handle)
+
+    files_by_flare = state.get("files_by_flare")
+    removed = 0
+    if isinstance(files_by_flare, dict):
+        for flare_key in list(files_by_flare):
+            if _is_missing_flare_key(flare_key):
+                files_by_flare.pop(flare_key, None)
+                removed += 1
+
+    if removed:
+        with open(state_json_path, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, ensure_ascii=False)
+        print(f"Removed invalid flare keys from state: {removed}")
+
+
+def cleanup_invalid_results_dirs(results_root: Path = Path("results")) -> None:
+    if not results_root.exists():
+        return
+
+    candidates = [
+        results_root / "nan",
+        results_root / "unknown" / "nan",
+        results_root / "unknown" / "None",
+        results_root / "unknown" / "NaT",
+    ]
+    removed = 0
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            shutil.rmtree(candidate)
+            removed += 1
+
+    if removed:
+        print(f"Removed invalid results directories: {removed}")
 
 
 def fetch_hek_catalog(
@@ -290,12 +333,19 @@ def build_selection(catalog: pd.DataFrame, config: SelectionConfig) -> pd.DataFr
 
 
 def merge_selection_into_all_flares(selected: pd.DataFrame, state_json_path: Path) -> None:
+    clean_invalid_state_entries(state_json_path)
     all_flares_path = state_json_path.parent / "all_flares.csv"
     all_flares_path.parent.mkdir(parents=True, exist_ok=True)
     if all_flares_path.exists():
         existing = pd.read_csv(all_flares_path)
     else:
         existing = pd.DataFrame()
+    existing = ensure_flare_keys(existing)
+    if "flare_key" in existing.columns:
+        invalid_existing = existing["flare_key"].map(_is_missing_flare_key)
+        if invalid_existing.any():
+            print(f"Removed invalid flare rows from all_flares.csv: {int(invalid_existing.sum())}")
+            existing = existing[~invalid_existing]
 
     merged = pd.concat([existing, selected], ignore_index=True)
     for column in ("start_time", "peak_time", "end_time"):
@@ -419,6 +469,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--skip-preprocessing", action="store_true")
     parser.add_argument("--skip-index", action="store_true")
+    parser.add_argument("--cleanup-invalid-results", action="store_true")
     return parser.parse_args()
 
 
@@ -448,6 +499,8 @@ def main() -> None:
         print("Dry run complete. No pipeline processing was started.")
         return
 
+    if args.cleanup_invalid_results:
+        cleanup_invalid_results_dirs()
     merge_selection_into_all_flares(selected, args.state_json_path)
     process_selection(selected, args)
 

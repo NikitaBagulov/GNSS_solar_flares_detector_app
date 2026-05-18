@@ -256,6 +256,19 @@ class DataPreprocessor:
 
     def process_all(self, tracker=None, target_flare_keys: set[str] | None = None):
         h5_files = self.get_h5_files()
+        target_dates = None
+        if tracker is not None and target_flare_keys is not None and hasattr(tracker, "_load_all_flares"):
+            all_flares = tracker._load_all_flares()
+            if not all_flares.empty and "flare_key" in all_flares.columns and "date" in all_flares.columns:
+                selected = all_flares[all_flares["flare_key"].astype(str).isin(target_flare_keys)]
+                target_dates = set(selected["date"])
+
+        if target_dates is not None:
+            h5_files = [
+                file_path
+                for file_path in h5_files
+                if self.extract_date_from_filename(file_path).date() in target_dates
+            ]
         print(f"Найдено HDF5-файлов для препроцессинга: {len(h5_files)}")
 
         for file_idx, file_path in enumerate(h5_files, 1):
