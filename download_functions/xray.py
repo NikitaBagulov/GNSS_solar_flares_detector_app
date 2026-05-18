@@ -7,6 +7,10 @@ from pathlib import Path
 from DataManager import DataManager
 
 GOES_SATELLITES = {
+    8: {"start": "1995-06-01", "end": "2003-06-30"},
+    10: {"start": "1997-04-01", "end": "2009-12-31"},
+    11: {"start": "2000-05-01", "end": "2011-12-31"},
+    12: {"start": "2001-08-01", "end": "2010-08-31"},
     13: {"start": "2006-04-01", "end": "2020-12-31"},
     14: {"start": "2009-07-01", "end": "2023-01-01"},
     15: {"start": "2010-03-01", "end": "2022-03-01"},
@@ -21,7 +25,7 @@ def get_available_satellites(
     prefer_order: List[int] = None
 ) -> List[int]:
     if prefer_order is None:
-        prefer_order = [18, 17, 16, 15, 14, 13]
+        prefer_order = [18, 17, 16, 15, 14, 13, 12, 11, 10, 8]
     
     available = []
     
