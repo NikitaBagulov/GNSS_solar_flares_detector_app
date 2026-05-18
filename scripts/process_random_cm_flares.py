@@ -103,6 +103,9 @@ def ensure_flare_keys(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
     if frame.empty:
         return frame
+    for column in ("start_time", "peak_time", "end_time"):
+        if column in frame.columns:
+            frame[column] = pd.to_datetime(frame[column], errors="coerce")
     if "flare_key" not in frame.columns:
         frame["flare_key"] = pd.NA
 
