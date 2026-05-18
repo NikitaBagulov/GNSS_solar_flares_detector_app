@@ -2,7 +2,7 @@ from datetime import date
 
 import pandas as pd
 
-from scripts.process_random_cm_flares import uniformly_sample_by_time
+from scripts.process_random_cm_flares import ensure_flare_keys, uniformly_sample_by_time
 
 
 def test_uniformly_sample_by_time_selects_requested_class_across_time_bins():
@@ -51,3 +51,21 @@ def test_uniformly_sample_by_time_returns_all_when_less_than_requested():
     )
 
     assert list(sample["flare_key"]) == ["a", "b"]
+
+
+def test_ensure_flare_keys_rebuilds_missing_values_when_column_exists():
+    frame = pd.DataFrame(
+        [
+            {
+                "class": "C3.2",
+                "start_time": pd.Timestamp("2020-01-01 01:02:03"),
+                "peak_time": pd.Timestamp("2020-01-01 01:05:00"),
+                "end_time": pd.Timestamp("2020-01-01 01:08:00"),
+                "flare_key": pd.NA,
+            }
+        ]
+    )
+
+    normalized = ensure_flare_keys(frame)
+
+    assert normalized.loc[0, "flare_key"] == "20200101T010203_010500_010800_C32"

@@ -84,15 +84,38 @@ def normalize_catalog(catalog: pd.DataFrame) -> pd.DataFrame:
         catalog["class_letter"] = catalog["class"].astype(str).str.upper().str[0]
     if "class_value" not in catalog.columns:
         catalog["class_value"] = catalog["class"].apply(flare_class_to_numeric)
-    if "flare_key" not in catalog.columns:
-        catalog["flare_key"] = catalog.apply(
-            lambda row: build_flare_key(row["start_time"], row["peak_time"], row["end_time"], row["class"]),
-            axis=1,
-        )
+    catalog = ensure_flare_keys(catalog)
     return catalog.drop_duplicates(subset=["start_time", "peak_time", "end_time"]).sort_values(
         ["date", "class_letter", "class_value"],
         ascending=[True, True, False],
     )
+
+
+def _is_missing_flare_key(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    return str(value).strip().lower() in {"", "nan", "none", "nat"}
+
+
+def ensure_flare_keys(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    if frame.empty:
+        return frame
+    if "flare_key" not in frame.columns:
+        frame["flare_key"] = pd.NA
+
+    missing_mask = frame["flare_key"].map(_is_missing_flare_key)
+    if not missing_mask.any():
+        return frame
+
+    def _build_key(row: pd.Series) -> str | pd.NA:
+        required = [row.get("start_time"), row.get("peak_time"), row.get("end_time"), row.get("class")]
+        if any(pd.isna(value) for value in required):
+            return pd.NA
+        return build_flare_key(row["start_time"], row["peak_time"], row["end_time"], row["class"])
+
+    frame.loc[missing_mask, "flare_key"] = frame.loc[missing_mask].apply(_build_key, axis=1)
+    return frame
 
 
 def fetch_hek_catalog(
@@ -282,11 +305,8 @@ def merge_selection_into_all_flares(selected: pd.DataFrame, state_json_path: Pat
         merged["date"] = pd.to_datetime(merged["date"], errors="coerce").dt.date
     if "class_value" not in merged.columns and "class" in merged.columns:
         merged["class_value"] = merged["class"].apply(flare_class_to_numeric)
-    if "flare_key" not in merged.columns:
-        merged["flare_key"] = merged.apply(
-            lambda row: build_flare_key(row["start_time"], row["peak_time"], row["end_time"], row["class"]),
-            axis=1,
-        )
+    merged = ensure_flare_keys(merged)
+    merged = merged[~merged["flare_key"].map(_is_missing_flare_key)]
     merged = merged.drop_duplicates(subset=["start_time", "peak_time", "end_time"], keep="first")
     merged = merged.sort_values(["date", "class_value"], ascending=[True, False])
     merged.to_csv(all_flares_path, index=False)
@@ -311,6 +331,14 @@ def process_selection(selected: pd.DataFrame, args: argparse.Namespace) -> None:
     )
 
     selected = selected.copy()
+    selected = ensure_flare_keys(selected)
+    invalid_keys = selected["flare_key"].map(_is_missing_flare_key)
+    if invalid_keys.any():
+        bad_rows = selected.loc[invalid_keys, ["date", "class", "start_time", "peak_time", "end_time"]]
+        raise SystemExit(
+            "Selected flares contain rows without flare_key after normalization:\n"
+            f"{bad_rows.head(10).to_string(index=False)}"
+        )
     selected["date"] = pd.to_datetime(selected["date"], errors="coerce").dt.date
     if args.process_start_date is not None:
         selected = selected[selected["date"] >= args.process_start_date]
@@ -327,7 +355,14 @@ def process_selection(selected: pd.DataFrame, args: argparse.Namespace) -> None:
             flare_date = date.fromisoformat(flare_date)
         if isinstance(flare_date, pd.Timestamp):
             flare_date = flare_date.date()
-        flare_keys = set(group["flare_key"].astype(str))
+        flare_keys = {
+            str(flare_key)
+            for flare_key in group["flare_key"]
+            if not _is_missing_flare_key(flare_key)
+        }
+        if not flare_keys:
+            print(f"  no valid flare keys for {flare_date}, skipping", flush=True)
+            continue
         print(
             f"\nProcessing date {date_idx}/{len(grouped)}: {flare_date} "
             f"({len(flare_keys)} selected flares)",
