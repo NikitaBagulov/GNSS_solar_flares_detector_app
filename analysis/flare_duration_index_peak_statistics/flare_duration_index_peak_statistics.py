@@ -16,6 +16,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 XRAY_STATS_DIR = REPO_ROOT / "analysis" / "xray_index_peak_statistics"
 DEFAULT_RESULTS_DIR = REPO_ROOT / "results"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs"
+DEFAULT_MAX_DURATION_MINUTES = 120.0
 
 sys.path.insert(0, str(XRAY_STATS_DIR))
 from xray_index_peak_statistics import (  # noqa: E402
@@ -101,6 +102,7 @@ def add_flare_duration(
     events: list[dict],
     results_dir: Path,
     xray_column: str,
+    max_duration_minutes: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = []
     errors = []
@@ -148,6 +150,18 @@ def add_flare_duration(
                 )
                 continue
             duration_by_event[row["event"]] = duration
+        if duration["flare_duration_minutes"] > max_duration_minutes:
+            errors.append(
+                {
+                    "event": row.get("event"),
+                    "stage": "duration",
+                    "error": (
+                        f"duration {duration['flare_duration_minutes']:.2f} min exceeds "
+                        f"max {max_duration_minutes:.2f} min"
+                    ),
+                }
+            )
+            continue
         output_row = row.to_dict()
         output_row.update(duration)
         rows.append(output_row)
@@ -326,6 +340,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--peak-time-source", choices=["event_name", "goes_max"], default="event_name")
     parser.add_argument("--max-time-delta-seconds", type=float, default=90.0)
     parser.add_argument("--max-index-lag-minutes", type=float, default=10.0)
+    parser.add_argument("--max-duration-minutes", type=float, default=DEFAULT_MAX_DURATION_MINUTES)
     parser.add_argument("--lag-step-seconds", type=float, default=60.0)
     parser.add_argument("--no-plots", action="store_true")
     return parser.parse_args()
@@ -354,6 +369,7 @@ def main() -> None:
         events=events,
         results_dir=results_dir,
         xray_column=args.xray_column,
+        max_duration_minutes=args.max_duration_minutes,
     )
     errors = pd.concat([xray_errors, duration_errors], ignore_index=True)
     correlations = build_duration_correlations(stats)
