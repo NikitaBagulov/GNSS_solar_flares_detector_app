@@ -26,6 +26,7 @@ from xray_index_peak_statistics import (  # noqa: E402
     build_statistics,
     flare_class_letter,
     load_events,
+    load_goes,
 )
 
 
@@ -44,40 +45,126 @@ def parse_event_times(event: dict) -> tuple[pd.Timestamp, pd.Timestamp, pd.Times
     return start_time, peak_time, end_time
 
 
-def add_flare_duration(stats: pd.DataFrame, events: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def estimate_goes_half_peak_duration(
+    results_dir: Path,
+    event: dict,
+    xray_column: str,
+    peak_time: pd.Timestamp,
+    peak_value: float,
+) -> dict | None:
+    if pd.isna(peak_time) or pd.isna(peak_value) or peak_value <= 0:
+        return None
+
+    goes = load_goes(results_dir, event, xray_column)
+    goes = goes.dropna(subset=["time", xray_column]).sort_values("time").reset_index(drop=True)
+    if goes.empty:
+        return None
+
+    nearest_idx = (goes["time"] - peak_time).abs().idxmin()
+    threshold = peak_value * 0.5
+    above_threshold = goes[xray_column] >= threshold
+    if not bool(above_threshold.iloc[nearest_idx]):
+        nearest_idx = int(goes[xray_column].idxmax())
+        if not bool(above_threshold.iloc[nearest_idx]):
+            return None
+
+    left_idx = nearest_idx
+    while left_idx > 0 and bool(above_threshold.iloc[left_idx - 1]):
+        left_idx -= 1
+
+    right_idx = nearest_idx
+    while right_idx < len(goes) - 1 and bool(above_threshold.iloc[right_idx + 1]):
+        right_idx += 1
+
+    start_time = goes.loc[left_idx, "time"]
+    end_time = goes.loc[right_idx, "time"]
+    duration_seconds = (end_time - start_time).total_seconds()
+    if duration_seconds <= 0 and len(goes) > 1:
+        cadence = goes["time"].diff().dt.total_seconds().dropna().median()
+        duration_seconds = float(cadence) if pd.notna(cadence) and cadence > 0 else 0.0
+        end_time = start_time + pd.Timedelta(seconds=duration_seconds)
+    if duration_seconds <= 0:
+        return None
+
+    return {
+        "flare_start_time": start_time,
+        "flare_peak_time_from_name": pd.NaT,
+        "flare_end_time": end_time,
+        "flare_duration_seconds": duration_seconds,
+        "flare_duration_minutes": duration_seconds / 60.0,
+        "flare_duration_source": "goes_half_peak_width",
+    }
+
+
+def add_flare_duration(
+    stats: pd.DataFrame,
+    events: list[dict],
+    results_dir: Path,
+    xray_column: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = []
     errors = []
     duration_by_event = {}
+    event_by_name = {event["name"]: event for event in events}
 
     for event in events:
         parsed = parse_event_times(event)
-        if parsed is None:
-            errors.append(
-                {
-                    "event": event.get("name"),
-                    "stage": "duration",
-                    "error": "could not parse valid start/peak/end timestamps from event name",
-                }
-            )
-            continue
-        start_time, peak_time, end_time = parsed
-        duration_by_event[event["name"]] = {
-            "flare_start_time": start_time,
-            "flare_peak_time_from_name": peak_time,
-            "flare_end_time": end_time,
-            "flare_duration_seconds": (end_time - start_time).total_seconds(),
-            "flare_duration_minutes": (end_time - start_time).total_seconds() / 60.0,
-        }
+        if parsed is not None:
+            start_time, peak_time, end_time = parsed
+            duration_by_event[event["name"]] = {
+                "flare_start_time": start_time,
+                "flare_peak_time_from_name": peak_time,
+                "flare_end_time": end_time,
+                "flare_duration_seconds": (end_time - start_time).total_seconds(),
+                "flare_duration_minutes": (end_time - start_time).total_seconds() / 60.0,
+                "flare_duration_source": "event_name",
+            }
 
     for _, row in stats.iterrows():
         duration = duration_by_event.get(row["event"])
         if duration is None:
-            continue
+            event = event_by_name.get(row["event"])
+            if event is None:
+                errors.append({"event": row.get("event"), "stage": "duration", "error": "event not found"})
+                continue
+            try:
+                duration = estimate_goes_half_peak_duration(
+                    results_dir=results_dir,
+                    event=event,
+                    xray_column=xray_column,
+                    peak_time=row["flare_peak_time"],
+                    peak_value=float(row["xray_at_flare_peak"]),
+                )
+            except (ValueError, OSError, pd.errors.ParserError) as exc:
+                errors.append({"event": row.get("event"), "stage": "duration", "error": str(exc)})
+                continue
+            if duration is None:
+                errors.append(
+                    {
+                        "event": row.get("event"),
+                        "stage": "duration",
+                        "error": "could not parse duration from name or estimate GOES half-peak width",
+                    }
+                )
+                continue
+            duration_by_event[row["event"]] = duration
         output_row = row.to_dict()
         output_row.update(duration)
         rows.append(output_row)
 
-    return pd.DataFrame(rows), pd.DataFrame(errors)
+    if rows:
+        stats_with_duration = pd.DataFrame(rows)
+    else:
+        extra_columns = [
+            "flare_start_time",
+            "flare_peak_time_from_name",
+            "flare_end_time",
+            "flare_duration_seconds",
+            "flare_duration_minutes",
+            "flare_duration_source",
+        ]
+        stats_with_duration = pd.DataFrame(columns=[*stats.columns, *extra_columns])
+    return stats_with_duration, pd.DataFrame(errors)
 
 
 def build_duration_correlations(stats: pd.DataFrame) -> pd.DataFrame:
@@ -120,7 +207,7 @@ def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
         "gsflai_index_median",
         "isfai_index_median",
     ]
-    if stats.empty:
+    if stats.empty or "product" not in stats.columns:
         return pd.DataFrame(columns=columns)
 
     rows = []
@@ -141,6 +228,11 @@ def build_product_summary(stats: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str, output_dir: Path) -> None:
+    required_columns = {"flare_duration_minutes", index_column, "flare_class"}
+    if stats.empty or not required_columns.issubset(stats.columns):
+        print(f"No C/M/X duration plot data for {index_column}")
+        return
+
     data = stats.dropna(subset=["flare_duration_minutes", index_column, "flare_class"]).copy()
     if "lag_seconds" in data.columns:
         data = data[data["lag_seconds"] == 0]
@@ -257,7 +349,12 @@ def main() -> None:
         max_index_lag=pd.Timedelta(minutes=args.max_index_lag_minutes),
         lag_step=pd.Timedelta(seconds=args.lag_step_seconds),
     )
-    stats, duration_errors = add_flare_duration(xray_stats, events)
+    stats, duration_errors = add_flare_duration(
+        stats=xray_stats,
+        events=events,
+        results_dir=results_dir,
+        xray_column=args.xray_column,
+    )
     errors = pd.concat([xray_errors, duration_errors], ignore_index=True)
     correlations = build_duration_correlations(stats)
     product_summary = build_product_summary(stats)
