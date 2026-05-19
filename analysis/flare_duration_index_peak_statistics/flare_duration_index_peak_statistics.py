@@ -267,6 +267,7 @@ def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str
         subset = data[data["product"] == product]
         median_duration = subset["flare_duration_minutes"].median()
         median_index = subset[index_column].median()
+        trend_subset = subset.dropna(subset=["flare_duration_minutes", index_column])
         for flare_class in PLOTTED_FLARE_CLASSES:
             class_subset = subset[subset["flare_class_letter"] == flare_class]
             if class_subset.empty:
@@ -278,6 +279,22 @@ def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str
                 alpha=0.82,
                 marker=FLARE_CLASS_MARKERS[flare_class],
                 label=f"{flare_class}-class",
+            )
+
+        if len(trend_subset) >= 2 and trend_subset["flare_duration_minutes"].nunique() >= 2:
+            x = trend_subset["flare_duration_minutes"].to_numpy(dtype=float)
+            y = trend_subset[index_column].to_numpy(dtype=float)
+            slope, intercept = np.polyfit(x, y, 1)
+            x_line = np.linspace(float(x.min()), float(x.max()), 100)
+            y_line = slope * x_line + intercept
+            spearman_r = trend_subset[["flare_duration_minutes", index_column]].corr(method="spearman").iloc[0, 1]
+            ax.plot(
+                x_line,
+                y_line,
+                color="#d62728",
+                linewidth=2.0,
+                alpha=0.9,
+                label=f"trend, r={spearman_r:.2f}",
             )
 
         ax.set_title(product)
