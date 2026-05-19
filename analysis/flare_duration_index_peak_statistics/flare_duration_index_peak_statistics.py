@@ -266,6 +266,7 @@ def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str
     for ax, product in zip(axes_flat, products):
         subset = data[data["product"] == product]
         median_duration = subset["flare_duration_minutes"].median()
+        median_index = subset[index_column].median()
         for flare_class in PLOTTED_FLARE_CLASSES:
             class_subset = subset[subset["flare_class_letter"] == flare_class]
             if class_subset.empty:
@@ -290,6 +291,15 @@ def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str
                 linewidth=1.2,
                 alpha=0.75,
                 label=f"median {median_duration:.1f} min",
+            )
+        if pd.notna(median_index):
+            ax.axhline(
+                median_index,
+                color="#555555",
+                linestyle=":",
+                linewidth=1.2,
+                alpha=0.8,
+                label=f"index median {median_index:.3g}",
             )
         counts = subset["flare_class_letter"].value_counts().reindex(PLOTTED_FLARE_CLASSES).fillna(0).astype(int)
         ax.text(
