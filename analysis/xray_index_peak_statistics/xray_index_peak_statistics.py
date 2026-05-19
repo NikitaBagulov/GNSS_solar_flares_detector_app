@@ -19,6 +19,8 @@ DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs"
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
 CLASS_SCALE = {"A": 1e-8, "B": 1e-7, "C": 1e-6, "M": 1e-5, "X": 1e-4}
+PLOTTED_FLARE_CLASSES = ("C", "M", "X")
+FLARE_CLASS_MARKERS = {"C": "o", "M": "s", "X": "^"}
 
 
 def load_events(results_dir: Path) -> list[dict]:
@@ -79,6 +81,13 @@ def parse_flare_class(event: dict) -> tuple[str | None, float]:
         magnitude = float(match.group(2).replace("_", "."))
         return f"{letter}{magnitude:g}", CLASS_SCALE[letter] * magnitude
     return None, np.nan
+
+
+def flare_class_letter(value: object) -> str | None:
+    if pd.isna(value):
+        return None
+    match = re.match(r"\s*([ABCMX])", str(value).upper())
+    return match.group(1) if match else None
 
 
 def goes_peak(goes: pd.DataFrame, xray_column: str) -> pd.Series:
@@ -389,6 +398,66 @@ def plot_index_vs_xray(stats: pd.DataFrame, index_column: str, xray_column: str,
     plt.close(fig)
 
 
+def plot_index_vs_xray_by_flare_class(
+    stats: pd.DataFrame,
+    index_column: str,
+    xray_column: str,
+    output_dir: Path,
+) -> None:
+    data = stats.dropna(subset=["xray_at_flare_peak", index_column, "flare_class"]).copy()
+    if "lag_seconds" in data.columns:
+        data = data[data["lag_seconds"] == 0]
+    data = data[data["xray_at_flare_peak"] > 0]
+    data["flare_class_letter"] = data["flare_class"].map(flare_class_letter)
+    data = data[data["flare_class_letter"].isin(PLOTTED_FLARE_CLASSES)]
+    if data.empty:
+        print(f"No C/M/X plot data for {index_column}")
+        return
+
+    products = [product for product in PRODUCTS if product in set(data["product"])]
+    cols = 2
+    rows_count = math.ceil(len(products) / cols)
+    fig, axes = plt.subplots(rows_count, cols, figsize=(13, 4.8 * rows_count), squeeze=False)
+    axes_flat = axes.ravel()
+
+    for ax, product in zip(axes_flat, products):
+        subset = data[data["product"] == product]
+        for flare_class in PLOTTED_FLARE_CLASSES:
+            class_subset = subset[subset["flare_class_letter"] == flare_class]
+            if class_subset.empty:
+                continue
+            ax.scatter(
+                class_subset["xray_at_flare_peak"],
+                class_subset[index_column],
+                s=64,
+                alpha=0.82,
+                marker=FLARE_CLASS_MARKERS[flare_class],
+                label=f"{flare_class}-class",
+            )
+
+        ax.set_title(product)
+        ax.set_xlabel(f"GOES {xray_column} at flare peak, W/m^2")
+        ax.set_ylabel(index_column)
+        ax.set_xscale("log")
+        counts = subset["flare_class_letter"].value_counts().reindex(PLOTTED_FLARE_CLASSES).fillna(0).astype(int)
+        ax.text(
+            0.03,
+            0.96,
+            "n=" + str(len(subset)) + "\n" + ", ".join(f"{name}:{counts[name]}" for name in PLOTTED_FLARE_CLASSES),
+            transform=ax.transAxes,
+            va="top",
+        )
+        ax.legend(title="Flare class")
+
+    for ax in axes_flat[len(products):]:
+        ax.axis("off")
+
+    fig.suptitle(f"{index_column} vs GOES {xray_column} at flare peak by flare class", fontsize=15)
+    fig.tight_layout()
+    fig.savefig(output_dir / f"{index_column}_vs_xray_by_flare_class.png", dpi=160)
+    plt.close(fig)
+
+
 def plot_combined(stats: pd.DataFrame, index_column: str, xray_column: str, output_dir: Path) -> None:
     data = stats.dropna(subset=["xray_at_flare_peak", index_column]).copy()
     if "lag_seconds" in data.columns:
@@ -567,6 +636,7 @@ def save_outputs(
         plot_lag_correlations(correlations, output_dir)
         for index_column in INDEX_COLUMNS:
             plot_index_vs_xray(stats, index_column, xray_column, output_dir)
+            plot_index_vs_xray_by_flare_class(stats, index_column, xray_column, output_dir)
             plot_index_vs_flare_class(stats, index_column, output_dir)
         plot_combined(stats, "gsflai_index", xray_column, output_dir)
         plot_top_responses(top_responses, output_dir)
