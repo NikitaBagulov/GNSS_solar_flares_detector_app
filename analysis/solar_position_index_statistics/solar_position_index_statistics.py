@@ -213,18 +213,6 @@ def build_correlations(stats: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns).sort_values(["variable", "index", "product", "lag_seconds"])
 
 
-def plot_trend(ax, data: pd.DataFrame, x_column: str, y_column: str) -> None:
-    trend_data = data.dropna(subset=[x_column, y_column])
-    if len(trend_data) < 2 or trend_data[x_column].nunique() < 2:
-        return
-    x = trend_data[x_column].to_numpy(dtype=float)
-    y = trend_data[y_column].to_numpy(dtype=float)
-    slope, intercept = np.polyfit(x, y, 1)
-    x_line = np.linspace(float(x.min()), float(x.max()), 100)
-    spearman_r = trend_data[[x_column, y_column]].corr(method="spearman").iloc[0, 1]
-    ax.plot(x_line, slope * x_line + intercept, color="#d62728", linewidth=2.0, label=f"trend, r={spearman_r:.2f}")
-
-
 def plot_indices_vs_position(stats: pd.DataFrame, output_dir: Path) -> None:
     if stats.empty:
         return
@@ -260,12 +248,10 @@ def plot_indices_vs_position(stats: pd.DataFrame, output_dir: Path) -> None:
                     marker=FLARE_CLASS_MARKERS[flare_class],
                     label=f"{flare_class}-class",
                 )
-            plot_trend(ax, subset, "radial_fraction", index_column)
             ax.set_title(product)
             ax.set_xlabel("Distance from disk center, R_sun")
             ax.set_ylabel(index_column)
-            ax.axvline(1.0, color="black", linewidth=0.9, alpha=0.45)
-            ax.legend(title="Class / trend")
+            ax.legend(title="Flare class")
 
         for ax in axes_flat[len(products):]:
             ax.axis("off")
@@ -312,14 +298,12 @@ def plot_solar_drivers_vs_position(solar_params: pd.DataFrame, index_stats: pd.D
                 marker=FLARE_CLASS_MARKERS[flare_class],
                 label=f"{flare_class}-class",
             )
-        plot_trend(ax, plot_data, "radial_fraction", value_column)
-        ax.axvline(1.0, color="black", linewidth=0.9, alpha=0.45)
         ax.set_xlabel("Distance from disk center, R_sun")
         ax.set_ylabel(ylabel)
         if log_y:
             ax.set_yscale("log")
         ax.set_title(f"{ylabel} vs flare position on solar disk")
-        ax.legend(title="Class / trend")
+        ax.legend(title="Flare class")
         fig.tight_layout()
         fig.savefig(output_dir / filename, dpi=160)
         plt.close(fig)
@@ -352,8 +336,6 @@ def plot_solar_disk_maps(solar_params: pd.DataFrame, index_stats: pd.DataFrame, 
         disk = plt.Circle((0, 0), DEFAULT_SOLAR_RADIUS_ARCSEC, color="black", fill=False, linewidth=1.2, alpha=0.6)
         ax.add_patch(disk)
         scatter = ax.scatter(plot_data["hpc_x"], plot_data["hpc_y"], c=plot_data[value_column], s=58, cmap="viridis", alpha=0.88)
-        ax.axhline(0, color="black", linewidth=0.7, alpha=0.35)
-        ax.axvline(0, color="black", linewidth=0.7, alpha=0.35)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("HPC X, arcsec")
         ax.set_ylabel("HPC Y, arcsec")

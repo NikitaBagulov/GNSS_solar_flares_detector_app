@@ -308,10 +308,7 @@ def plot_lag_points(lags: pd.DataFrame, output_dir: Path) -> None:
                 if len(product_df) > 1:
                     y += np.linspace(-0.12, 0.12, len(product_df))
                 ax.scatter(product_df["lag_minutes"], y, s=54, alpha=0.82, label=product)
-                median = product_df["lag_minutes"].median()
-                ax.plot([median, median], [y_positions[product] - 0.25, y_positions[product] + 0.25], color="black", linewidth=2)
 
-            ax.axvline(0, color="black", linewidth=0.9, alpha=0.55)
             ax.set_yticks(range(len(PRODUCTS)), PRODUCTS)
             ax.set_title(f"{driver}: each event lag to {index_column} peak")
             ax.set_xlabel("Index peak time - driver peak time, minutes")
@@ -333,7 +330,6 @@ def plot_median_lag_bars(summary: pd.DataFrame, output_dir: Path) -> None:
             colors = ["#4c78a8" if value >= 0 else "#e15759" for value in plot_df["lag_minutes_median"]]
             fig, ax = plt.subplots(figsize=(9, 4.8))
             bars = ax.barh(plot_df.index, plot_df["lag_minutes_median"], color=colors, alpha=0.88)
-            ax.axvline(0, color="black", linewidth=0.9)
             ax.set_title(f"Median lag: {driver} -> {index_column}")
             ax.set_xlabel("Index peak time - driver peak time, minutes")
             for bar, (_, row) in zip(bars, plot_df.iterrows()):
@@ -381,20 +377,12 @@ def plot_product_driver_comparison(lags: pd.DataFrame, output_dir: Path) -> None
                     color=DRIVER_COLORS[driver],
                     label=DRIVER_LABELS[driver] if not has_points or driver not in ax.get_legend_handles_labels()[1] else None,
                 )
-                median = subset["lag_minutes"].median()
-                ax.plot(
-                    [median, median],
-                    [y_base - 0.07, y_base + 0.07],
-                    color=DRIVER_COLORS[driver],
-                    linewidth=3,
-                )
                 has_points = True
 
         if not has_points:
             plt.close(fig)
             continue
 
-        ax.axvline(0, color="black", linewidth=0.9, alpha=0.55)
         ax.set_yticks(range(len(INDEX_COLUMNS)), INDEX_COLUMNS)
         ax.set_xlabel("Index peak time - solar driver peak time, minutes")
         ax.set_title(f"{product}: lag comparison across solar drivers")

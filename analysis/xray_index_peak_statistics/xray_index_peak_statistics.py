@@ -584,7 +584,6 @@ def plot_lag_correlations(correlations: pd.DataFrame, output_dir: Path) -> None:
         if not has_lines:
             plt.close(fig)
             continue
-        ax.axhline(0, color="black", linewidth=0.8, alpha=0.5)
         ax.set_ylim(-1.05, 1.05)
         ax.set_xlabel("Index lag after X-ray peak, minutes")
         ax.set_ylabel("Spearman r")

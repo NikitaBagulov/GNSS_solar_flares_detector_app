@@ -265,9 +265,6 @@ def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str
 
     for ax, product in zip(axes_flat, products):
         subset = data[data["product"] == product]
-        median_duration = subset["flare_duration_minutes"].median()
-        median_index = subset[index_column].median()
-        trend_subset = subset.dropna(subset=["flare_duration_minutes", index_column])
         for flare_class in PLOTTED_FLARE_CLASSES:
             class_subset = subset[subset["flare_class_letter"] == flare_class]
             if class_subset.empty:
@@ -281,43 +278,9 @@ def plot_index_vs_duration_by_flare_class(stats: pd.DataFrame, index_column: str
                 label=f"{flare_class}-class",
             )
 
-        if len(trend_subset) >= 2 and trend_subset["flare_duration_minutes"].nunique() >= 2:
-            x = trend_subset["flare_duration_minutes"].to_numpy(dtype=float)
-            y = trend_subset[index_column].to_numpy(dtype=float)
-            slope, intercept = np.polyfit(x, y, 1)
-            x_line = np.linspace(float(x.min()), float(x.max()), 100)
-            y_line = slope * x_line + intercept
-            spearman_r = trend_subset[["flare_duration_minutes", index_column]].corr(method="spearman").iloc[0, 1]
-            ax.plot(
-                x_line,
-                y_line,
-                color="#d62728",
-                linewidth=2.0,
-                alpha=0.9,
-                label=f"trend, r={spearman_r:.2f}",
-            )
-
         ax.set_title(product)
         ax.set_xlabel("Flare duration, minutes")
         ax.set_ylabel(index_column)
-        if pd.notna(median_duration):
-            ax.axvline(
-                median_duration,
-                color="black",
-                linestyle="--",
-                linewidth=1.2,
-                alpha=0.75,
-                label=f"median {median_duration:.1f} min",
-            )
-        if pd.notna(median_index):
-            ax.axhline(
-                median_index,
-                color="#555555",
-                linestyle=":",
-                linewidth=1.2,
-                alpha=0.8,
-                label=f"index median {median_index:.3g}",
-            )
         counts = subset["flare_class_letter"].value_counts().reindex(PLOTTED_FLARE_CLASSES).fillna(0).astype(int)
         ax.text(
             0.03,

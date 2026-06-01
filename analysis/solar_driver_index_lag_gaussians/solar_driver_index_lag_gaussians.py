@@ -98,7 +98,6 @@ def plot_gaussian_distribution(
 
     mean = values.mean()
     std = values.std(ddof=1) if len(values) >= 2 else np.nan
-    median = values.median()
     color = DRIVER_COLORS.get(driver, "#4c78a8")
 
     ax.hist(values, bins=min(bins, max(3, len(values))), density=True, alpha=0.42, color=color, edgecolor="white")
@@ -108,9 +107,6 @@ def plot_gaussian_distribution(
         x = np.linspace(float(x_min), float(x_max), 300)
         ax.plot(x, gaussian_pdf(x, float(mean), float(std)), color=color, linewidth=2.4, label=f"Gaussian: mu={mean:.1f}, sigma={std:.1f}")
 
-    ax.axvline(0, color="black", linewidth=0.9, alpha=0.55)
-    ax.axvline(mean, color=color, linestyle="-", linewidth=1.8, alpha=0.95, label=f"mean {mean:.1f} min")
-    ax.axvline(median, color="black", linestyle="--", linewidth=1.4, alpha=0.8, label=f"median {median:.1f} min")
     ax.set_title(title)
     ax.set_xlabel("Index peak time - solar driver peak time, minutes")
     ax.set_ylabel("Probability density")
@@ -200,7 +196,6 @@ def plot_summary_means(summary: pd.DataFrame, output_dir: Path) -> None:
             errors = driver_df["lag_minutes_std"].fillna(0.0)
             y = np.arange(len(driver_df))
             ax.barh(y, means, xerr=errors, color=DRIVER_COLORS.get(driver, "#4c78a8"), alpha=0.82)
-            ax.axvline(0, color="black", linewidth=0.9)
             ax.set_yticks(y, driver_df.index)
             ax.set_title(DRIVER_LABELS.get(driver, driver))
             ax.set_xlabel("Gaussian mean lag, minutes")
