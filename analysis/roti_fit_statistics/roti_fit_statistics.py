@@ -18,7 +18,6 @@ DEFAULT_RESULTS_DIR = REPO_ROOT / "results"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs"
 R_EARTH = 6371.0
 MIN_POINTS = 10
-PLOT_SAMPLE_SIZE = 100_000
 
 SLICE_COLUMNS = [
     "event",
@@ -230,68 +229,57 @@ def add_correlation_rows(rows: list[dict], frame: pd.DataFrame, scope: str) -> N
             )
 
 
-def append_plot_sample(
-    samples: list[pd.DataFrame], event: str, time: pd.Timestamp, fit: dict, rng: np.random.Generator
-) -> None:
-    actual = fit["actual"]
-    predicted = fit["predicted"]
-    count = min(len(actual), max(1, PLOT_SAMPLE_SIZE // 100))
-    indices = rng.choice(len(actual), size=count, replace=False)
-    samples.append(
-        pd.DataFrame(
-            {
-                "event": event,
-                "time": time,
-                "actual": actual[indices],
-                "predicted": predicted[indices],
-            }
-        )
-    )
-
-
-def plot_full_event(event_frame: pd.DataFrame, samples: pd.DataFrame, output_dir: Path) -> None:
+def plot_overall_full_statistics(frame: pd.DataFrame, output_dir: Path) -> None:
+    if frame.empty:
+        return
     output_dir.mkdir(parents=True, exist_ok=True)
-    event = event_frame["event"].iloc[0]
 
     fig, ax = plt.subplots(figsize=(7, 6))
-    ax.scatter(samples["actual"], samples["predicted"], s=5, alpha=0.2)
-    low = min(samples["actual"].min(), samples["predicted"].min())
-    high = max(samples["actual"].max(), samples["predicted"].max())
+    ax.scatter(frame["actual_mean"], frame["predicted_mean"], s=18, alpha=0.55)
+    low = min(frame["actual_mean"].min(), frame["predicted_mean"].min())
+    high = max(frame["actual_mean"].max(), frame["predicted_mean"].max())
     ax.plot([low, high], [low, high], "k--", linewidth=1)
-    ax.set(xlabel="Real ROTI", ylabel="Predicted ROTI", title=f"{event}: predicted vs real ROTI")
+    correlation = safe_corr(frame["actual_mean"], frame["predicted_mean"], "pearson")
+    ax.set(
+        xlabel="Mean real ROTI per slice",
+        ylabel="Mean predicted ROTI per slice",
+        title=f"All flare slices: predicted vs real mean ROTI\nPearson={correlation:.3f}",
+    )
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_dir / "predicted_vs_real_roti.png", dpi=180)
+    fig.savefig(output_dir / "overall_predicted_vs_real_roti.png", dpi=180)
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     for ax, coefficient, color in zip(axes, ("A", "B"), ("#0057B8", "#D62728")):
-        ax.scatter(event_frame["xrsb"] * 1e6, event_frame[coefficient], s=18, alpha=0.75, color=color)
-        pearson = safe_corr(event_frame["xrsb"], event_frame[coefficient], "pearson")
-        spearman = safe_corr(event_frame["xrsb"], event_frame[coefficient], "spearman")
+        for event, subset in frame.groupby("event"):
+            ax.scatter(subset["xrsb"] * 1e6, subset[coefficient], s=18, alpha=0.6, label=event)
+        pearson = safe_corr(frame["xrsb"], frame[coefficient], "pearson")
+        spearman = safe_corr(frame["xrsb"], frame[coefficient], "spearman")
         ax.set(
             xlabel="GOES XRSB, 10^-6 W/m^2",
             ylabel=coefficient,
-            title=f"{coefficient} vs XRSB\nPearson={pearson:.3f}, Spearman={spearman:.3f}",
+            title=f"All flare slices: {coefficient} vs XRSB\nPearson={pearson:.3f}, Spearman={spearman:.3f}",
         )
         ax.grid(alpha=0.3)
+        if frame["event"].nunique() <= 12:
+            ax.legend(fontsize=6)
     fig.tight_layout()
-    fig.savefig(output_dir / "ab_vs_xray.png", dpi=180)
+    fig.savefig(output_dir / "overall_ab_vs_xray.png", dpi=180)
     plt.close(fig)
 
-    fig, axes = plt.subplots(3, 1, figsize=(13, 10), sharex=True)
-    axes[0].plot(event_frame["time"], event_frame["xrsb"] * 1e6, color="black")
-    axes[0].set_ylabel("XRSB, 10^-6 W/m^2")
-    axes[1].plot(event_frame["time"], event_frame["A"], color="#0057B8")
-    axes[1].set_ylabel("A")
-    axes[2].plot(event_frame["time"], event_frame["B"], color="#D62728")
-    axes[2].set_ylabel("B")
-    axes[2].set_xlabel("UTC")
-    for ax in axes:
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    for ax, column, title in zip(
+        axes,
+        ("rmse", "r2", "pearson_actual_predicted"),
+        ("ROTI fit RMSE", "ROTI fit R²", "Real vs predicted ROTI correlation"),
+    ):
+        ax.hist(frame[column].dropna(), bins=30, alpha=0.8, color="#4c78a8")
+        ax.set_title(title)
+        ax.set_ylabel("Slices")
         ax.grid(alpha=0.3)
-    fig.suptitle(f"{event}: X-ray and fitted coefficients")
     fig.tight_layout()
-    fig.savefig(output_dir / "xray_ab_time_series.png", dpi=180)
+    fig.savefig(output_dir / "overall_fit_quality.png", dpi=180)
     plt.close(fig)
 
 
@@ -301,15 +289,12 @@ def build_full_flare_statistics(
     slice_rows = []
     correlation_rows: list[dict] = []
     errors = []
-    rng = np.random.default_rng(42)
-
     for event_index, event_info in enumerate(events, 1):
         event = event_info["event"]
         print(f"[full flare {event_index}/{len(events)}] {event}")
         try:
             xray = load_xray(event_info["event_dir"])
             event_rows = []
-            samples: list[pd.DataFrame] = []
             with h5py.File(event_info["map_path"], "r") as handle:
                 for time_key in sorted(handle["data"].keys()):
                     time = parse_time(time_key)
@@ -327,8 +312,7 @@ def build_full_flare_statistics(
                             **{key: fit[key] for key in SLICE_COLUMNS if key in fit},
                         }
                     )
-                    append_plot_sample(samples, event, time, fit, rng)
-        except (KeyError, OSError, ValueError, pd.errors.ParserError) as exc:
+        except (KeyError, OSError, RuntimeError, ValueError, pd.errors.ParserError) as exc:
             errors.append({"event": event, "stage": "full_flare", "error": str(exc)})
             continue
 
@@ -340,7 +324,6 @@ def build_full_flare_statistics(
         event_frame = event_frame[SLICE_COLUMNS]
         slice_rows.extend(event_frame.to_dict("records"))
         add_correlation_rows(correlation_rows, event_frame, event)
-        plot_full_event(event_frame, pd.concat(samples, ignore_index=True), output_dir / event)
 
     return pd.DataFrame(slice_rows, columns=SLICE_COLUMNS), pd.DataFrame(correlation_rows), pd.DataFrame(errors)
 
@@ -364,7 +347,7 @@ def build_peak_statistics(
                 map_time = min((parse_time(key) for key in keys), key=lambda value: abs(value - peak_time))
                 map_key = min(keys, key=lambda key: abs(parse_time(key) - peak_time))
                 fit = fit_slice(handle["data"][map_key], map_time)
-        except (KeyError, OSError, ValueError, pd.errors.ParserError) as exc:
+        except (KeyError, OSError, RuntimeError, ValueError, pd.errors.ParserError) as exc:
             errors.append({"event": event, "stage": "peak", "error": str(exc)})
             continue
         if fit is None:
@@ -387,7 +370,6 @@ def build_peak_statistics(
     correlation_rows: list[dict] = []
     if not peak_frame.empty:
         add_correlation_rows(correlation_rows, peak_frame, "all_peak_flares")
-        plot_peak_correlations(peak_frame, output_dir)
     return peak_frame, pd.DataFrame(correlation_rows), pd.DataFrame(errors)
 
 
@@ -412,6 +394,18 @@ def build_event_summary(full_stats: pd.DataFrame) -> pd.DataFrame:
         )
         .sort_values("event")
     )
+
+
+def build_ab_correlations(frame: pd.DataFrame, scope_column: str | None = None) -> pd.DataFrame:
+    rows: list[dict] = []
+    if frame.empty:
+        return pd.DataFrame(rows)
+    if scope_column:
+        for scope, subset in frame.groupby(scope_column):
+            add_correlation_rows(rows, subset, str(scope))
+    else:
+        add_correlation_rows(rows, frame, "all_peak_flares")
+    return pd.DataFrame(rows)
 
 
 def plot_peak_correlations(frame: pd.DataFrame, output_dir: Path) -> None:
@@ -440,11 +434,36 @@ def save_frame(frame: pd.DataFrame, path: Path) -> None:
     print(f"Saved: {path}")
 
 
+def load_existing_frame(path: Path, time_columns: tuple[str, ...] = ()) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        print(f"Ignoring unreadable existing results {path}: {exc}")
+        return pd.DataFrame()
+    for column in time_columns:
+        if column in frame.columns:
+            frame[column] = pd.to_datetime(frame[column], utc=True, errors="coerce")
+    return frame
+
+
+def merge_event_results(existing: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame:
+    if existing.empty:
+        return new.copy()
+    if new.empty:
+        return existing.copy()
+    replaced_events = set(new["event"].dropna().astype(str))
+    retained = existing[~existing["event"].astype(str).isin(replaced_events)]
+    return pd.concat([retained, new], ignore_index=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ROTI fit statistics derived from analysis/roti_fit.ipynb.")
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--event", help="Process only an event whose directory name contains this value.")
+    parser.add_argument("--force", action="store_true", help="Recalculate events even if results already exist.")
     return parser.parse_args()
 
 
@@ -463,15 +482,36 @@ def main() -> None:
     output_dir = args.output_dir.resolve()
     full_dir = output_dir / "full_flare"
     peak_dir = output_dir / "peak_flares"
-    full_stats, full_correlations, full_errors = build_full_flare_statistics(events, full_dir)
-    peak_stats, peak_correlations, peak_errors = build_peak_statistics(events, peak_dir)
+    full_stats_path = full_dir / "roti_fit_slice_statistics.csv"
+    peak_stats_path = peak_dir / "peak_ab_statistics.csv"
+    existing_full = load_existing_frame(full_stats_path, ("time",))
+    existing_peak = load_existing_frame(peak_stats_path, ("peak_time", "map_time"))
+
+    completed_full = set(existing_full.get("event", pd.Series(dtype=str)).dropna().astype(str))
+    completed_peak = set(existing_peak.get("event", pd.Series(dtype=str)).dropna().astype(str))
+    pending_full = events if args.force else [event for event in events if event["event"] not in completed_full]
+    pending_peak = events if args.force else [event for event in events if event["event"] not in completed_peak]
+
+    print(f"Full-flare events already complete/skipped: {len(events) - len(pending_full)}")
+    print(f"Peak events already complete/skipped: {len(events) - len(pending_peak)}")
+
+    new_full, _, full_errors = build_full_flare_statistics(pending_full, full_dir)
+    new_peak, _, peak_errors = build_peak_statistics(pending_peak, peak_dir)
+    full_stats = merge_event_results(existing_full, new_full)
+    peak_stats = merge_event_results(existing_peak, new_peak)
+    full_correlations = build_ab_correlations(full_stats, "event")
+    peak_correlations = build_ab_correlations(peak_stats)
     event_summary = build_event_summary(full_stats)
     errors = pd.concat([full_errors, peak_errors], ignore_index=True)
+    if not full_stats.empty:
+        plot_overall_full_statistics(full_stats, full_dir)
+    if not peak_stats.empty:
+        plot_peak_correlations(peak_stats, peak_dir)
 
-    save_frame(full_stats, full_dir / "roti_fit_slice_statistics.csv")
+    save_frame(full_stats, full_stats_path)
     save_frame(event_summary, full_dir / "roti_fit_event_summary.csv")
     save_frame(full_correlations, full_dir / "ab_xray_correlations.csv")
-    save_frame(peak_stats, peak_dir / "peak_ab_statistics.csv")
+    save_frame(peak_stats, peak_stats_path)
     save_frame(peak_correlations, peak_dir / "peak_ab_xray_correlations.csv")
     save_frame(errors, output_dir / "roti_fit_errors.csv")
 
