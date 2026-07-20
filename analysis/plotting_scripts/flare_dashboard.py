@@ -108,13 +108,14 @@ def plot_dashboard_for_event(
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
-    gs.update(left=0.06, right=0.88, top=0.88, bottom=0.08)
+    gs.update(left=0.06, right=0.85, top=0.85, bottom=0.08)
 
     fig.suptitle(
         f"{event_name} ({flare_row['class']}-class flare)\n"
         f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
         fontsize=18,
         fontweight="bold",
+        y=1.02,
     )
 
     panels = []
@@ -123,7 +124,7 @@ def plot_dashboard_for_event(
     ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
     points = map_data.get(nearest_map_time)
     if points is not None and points.size > 0 and points.dtype.names is not None:
-        cbar = plot_global_map(ax_map, points, "roti", nearest_map_time, vmin=0.0, vmax=1.0)
+        cbar = plot_global_map(ax_map, points, "roti", nearest_map_time, vmin=0.0, vmax=0.3)
         if cbar:
             cbar.ax.tick_params(labelsize=11)
             cbar.set_label("ROTI (TECU min$^{-1}$)", fontsize=12)
@@ -157,7 +158,7 @@ def plot_dashboard_for_event(
                 t, y = smooth_series(goes_df["time"], goes_df[col], window=5)
                 ax_xray.semilogy(t, y, label=labels_map.get(col, col.upper()),
                                 color=color, linewidth=LINE_WIDTH)
-        ax_xray.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE, color="black")
+        ax_xray.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE, color="black", labelpad=15)
         ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
     if not sem_df.empty:
@@ -167,7 +168,7 @@ def plot_dashboard_for_event(
                 t, y = smooth_series(sem_df["time"], sem_df[col], window=3)
                 ax_xray2.plot(t, y, label=labels_map.get(col, col),
                             color=EUV_COLOR, linewidth=LINE_WIDTH, linestyle="--")
-        ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE)
+        ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=20)
         ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
     # Legend outside
@@ -175,8 +176,9 @@ def plot_dashboard_for_event(
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
         ax_xray.legend(lines1 + lines2, labels1 + labels2,
-                      loc="upper left", bbox_to_anchor=(1.02, 1),
-                      fontsize=LEGEND_FONT_SIZE, framealpha=0.8)
+                      loc="upper left", bbox_to_anchor=(1.02, 0.5),
+                      fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
+                      borderaxespad=0.)
 
     # Flare markers on X-ray panel
     add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5)
@@ -199,7 +201,7 @@ def plot_dashboard_for_event(
                fontsize=18, fontweight="bold", va="top", ha="left",
                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)

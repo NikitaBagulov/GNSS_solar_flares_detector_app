@@ -23,7 +23,7 @@ PRODUCT_VMIN_VMAX = {
 }
 
 PRODUCT_CMAPS = {
-    "roti": "viridis",
+    "roti": "plasma",
     "dtec_2_10": "RdBu_r",
     "dtec_10_20": "RdBu_r",
     "dtec_20_60": "RdBu_r",
