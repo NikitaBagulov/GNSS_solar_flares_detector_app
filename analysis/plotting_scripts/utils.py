@@ -246,15 +246,15 @@ def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Time
     ax.axvline(peak_time, color="red", linestyle="--", linewidth=peak_lw, alpha=0.9, zorder=5)
     ax.annotate(
         "Peak",
-        xy=(peak_time, 0.98),
+        xy=(peak_time, 0.99),
         xycoords=("data", "axes fraction"),
-        xytext=(6, -4),
+        xytext=(8, -8),
         textcoords="offset points",
         fontsize=LEGEND_FONT_SIZE,
         color="black",
         ha="left",
         va="top",
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7, edgecolor="none"),
     )
 
 

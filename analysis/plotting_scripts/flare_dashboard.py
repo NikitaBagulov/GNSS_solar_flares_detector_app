@@ -101,14 +101,14 @@ def plot_dashboard_for_event(
         logger.info(f"[{event_name}] Dashboard data available for {nearest_map_time}")
         return {"dashboard": True}
 
-    fig = plt.figure(figsize=PLOT_FIGSIZE_DASHBOARD, constrained_layout=False)
+    fig = plt.figure(figsize=(18, 6), constrained_layout=False)
     gs = fig.add_gridspec(
         2, 2,
-        height_ratios=[4.5, 4.5],
+        height_ratios=[1, 1.2],
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
-    gs.update(left=0.06, right=0.95, top=0.85, bottom=0.18)
+    gs.update(left=0.06, right=0.95, top=0.85, bottom=0.10)
 
     fig.suptitle(
         f"{event_name} ({flare_row['class']}-class flare)\n"
@@ -176,7 +176,7 @@ def plot_dashboard_for_event(
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
         ax_xray.legend(lines1 + lines2, labels1 + labels2,
-                      loc="upper center", bbox_to_anchor=(0.5, -0.15),
+                      loc="upper center", bbox_to_anchor=(0.5, -0.08),
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
                       ncol=2, borderaxespad=0.)
 
