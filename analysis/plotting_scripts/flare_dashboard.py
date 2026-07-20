@@ -275,10 +275,19 @@ def main() -> None:
     events = load_events(results_dir)
     catalog = load_flare_catalog(flares_csv)
 
+    logger.info(f"Found {len(events)} events, catalog has {len(catalog)} rows")
+    logger.info(f"Filtering for classes: {args.flare_classes}")
+
+    for ev in events[:3]:
+        logger.info(f"  Example event: name={ev.get('name')}, class={ev.get('class')!r}")
+
     events_to_process = events[:args.max_events] if args.max_events else events
     total = success = 0
     for event in events_to_process:
-        if event.get("class") not in args.flare_classes:
+        klass = event.get("class")
+        if klass not in args.flare_classes:
+            if args.verbose:
+                logger.debug(f"  Skipping {event.get('name')} (class={klass!r})")
             continue
         results = plot_dashboard_for_event(
             event, results_dir, catalog, output_dir,
