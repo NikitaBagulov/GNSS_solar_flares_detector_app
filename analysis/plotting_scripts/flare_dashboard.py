@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.gridspec import GridSpec
 import cartopy.crs as ccrs
 from cartopy.feature.nightshade import Nightshade
 import numpy as np
@@ -61,83 +62,38 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def plot_dashboard_for_event(
-    event: dict,
-    results_dir: Path,
-    catalog: pd.DataFrame,
-    output_dir: Path,
-    window_minutes: float,
-    no_plots: bool,
-) -> dict[str, bool]:
-    flare_row = find_flare_row(event, catalog)
-    if flare_row is None:
-        logger.warning(f"[{event.get('name')}] No matching flare in catalog")
-        return {"dashboard": False}
-
-    peak_time = flare_row.get("peak_time")
-    if pd.isna(peak_time):
-        logger.warning(f"[{event.get('name')}] No peak time")
-        return {"dashboard": False}
-
-    time_window = get_flare_time_window(peak_time, 15)  # ±15 min, 1-min steps
-    event_name = event.get("name", "unknown")
-    start_time = flare_row.get("start_time")
-    end_time = flare_row.get("end_time")
-
-    timestamps, map_data = load_hdf5_map(event, results_dir, "roti", time_window)
-    if not timestamps:
-        logger.warning(f"[{event_name}] No ROTI map timestamps in window")
-        return {"dashboard": False}
-
-    nearest_map_time = find_nearest_map_time(timestamps, peak_time, tolerance_minutes=15)
-    if nearest_map_time is None:
-        nearest_map_time = timestamps[0]
-        logger.warning(f"[{event_name}] No ROTI map near peak, using first: {nearest_map_time}")
-
-    goes_df = load_goes_xray(event, results_dir, time_window)
-    sem_df = load_soho_sem(event, results_dir, time_window)
-    solar_image = load_solar_image(event, results_dir)
-
-    if no_plots:
-        logger.info(f"[{event_name}] Dashboard data available for {nearest_map_time}")
-        return {"dashboard": True}
-
-    fig = plt.figure(figsize=(11, 5.5))
-    gs = fig.add_gridspec(
-        2, 2,
-        height_ratios=[1.5, 1],
-        width_ratios=[1, 1],
-        wspace=0.3, hspace=0.35,
-    )
-
-    fig.suptitle(
-        f"{event_name} ({flare_row['class']}-class flare)\n"
-        f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
-        fontsize=18,
-        fontweight="bold",
-        y=1.02,
-    )
-
+def plot_one_dashboard(
+    fig: plt.Figure,
+    gs: GridSpec,
+    event_name: str,
+    flare_row: pd.Series,
+    peak_time: pd.Timestamp,
+    start_time: pd.Timestamp,
+    end_time: pd.Timestamp,
+    map_time: pd.Timestamp,
+    map_points,
+    goes_df: pd.DataFrame,
+    sem_df: pd.DataFrame,
+    solar_image,
+) -> None:
     panels = []
 
     # --- Panel A: ROTI map ---
     ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
-    points = map_data.get(nearest_map_time)
-    if points is not None and points.size > 0 and points.dtype.names is not None:
-        cbar = plot_global_map(ax_map, points, "roti", nearest_map_time, vmin=0.0, vmax=0.3)
+    if map_points is not None and map_points.size > 0 and map_points.dtype.names is not None:
+        cbar = plot_global_map(ax_map, map_points, "roti", map_time, vmin=0.0, vmax=0.3)
         if cbar:
             cbar.ax.tick_params(labelsize=11)
             cbar.set_label("ROTI (TECU min$^{-1}$)", fontsize=12)
     else:
         ax_map.text(0.5, 0.5, "No data", transform=ax_map.transAxes,
                    ha="center", va="center", fontsize=LABEL_FONT_SIZE)
-    # Nightshade at peak time
     try:
         night = Nightshade(peak_time, alpha=0.3, color="black")
         ax_map.add_feature(night, zorder=3)
     except Exception as e:
         logger.warning(f"Nightshade failed: {e}")
-    ax_map.set_title("Global ROTI map", fontsize=15, fontweight="bold")
+    ax_map.set_title(f"Global ROTI map  {map_time:%H:%M} UTC", fontsize=15, fontweight="bold")
     panels.append(ax_map)
 
     # --- Panel B: Solar disk ---
@@ -177,7 +133,6 @@ def plot_dashboard_for_event(
         ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=15)
         ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
-    # Legend inside lower left
     lines1, labels1 = ax_xray.get_legend_handles_labels()
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
@@ -186,10 +141,8 @@ def plot_dashboard_for_event(
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
                       edgecolor="none", ncol=1)
 
-    # Flare markers on X-ray panel
     add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, show_label=False)
 
-    # X-axis: peak ±15 min, ticks every 5 min
     ax_xray.grid(True, which="both", alpha=0.25)
     t0 = peak_time - pd.Timedelta(minutes=15)
     t1 = peak_time + pd.Timedelta(minutes=15)
@@ -211,10 +164,86 @@ def plot_dashboard_for_event(
 
     plt.subplots_adjust(left=0.05, right=0.95, bottom=0.08, top=0.90)
 
-    filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
-    save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
-    logger.info(f"[{event_name}] Saved dashboard for map time {nearest_map_time}")
 
+def plot_dashboard_for_event(
+    event: dict,
+    results_dir: Path,
+    catalog: pd.DataFrame,
+    output_dir: Path,
+    window_minutes: float,
+    no_plots: bool,
+) -> dict[str, bool]:
+    flare_row = find_flare_row(event, catalog)
+    if flare_row is None:
+        logger.warning(f"[{event.get('name')}] No matching flare in catalog")
+        return {"dashboard": False}
+
+    peak_time = flare_row.get("peak_time")
+    if pd.isna(peak_time):
+        logger.warning(f"[{event.get('name')}] No peak time")
+        return {"dashboard": False}
+
+    time_window = get_flare_time_window(peak_time, 15)
+    event_name = event.get("name", "unknown")
+    start_time = flare_row.get("start_time")
+    end_time = flare_row.get("end_time")
+
+    timestamps, map_data = load_hdf5_map(event, results_dir, "roti", time_window)
+    if not timestamps:
+        logger.warning(f"[{event_name}] No ROTI map timestamps in window")
+        return {"dashboard": False}
+
+    goes_df = load_goes_xray(event, results_dir, time_window)
+    sem_df = load_soho_sem(event, results_dir, time_window)
+    solar_image = load_solar_image(event, results_dir)
+
+    # Generate 31 target times: peak-15 .. peak+15, step 1 min
+    target_times = pd.date_range(
+        start=peak_time - pd.Timedelta(minutes=15),
+        end=peak_time + pd.Timedelta(minutes=15),
+        freq="1min",
+    )
+
+    if no_plots:
+        logger.info(f"[{event_name}] Data available, would produce {len(target_times)} dashboards")
+        return {"dashboard": True}
+
+    success_count = 0
+    for target in target_times:
+        # Find nearest ROTI map for this target time
+        map_time = find_nearest_map_time(timestamps, target, tolerance_minutes=2)
+        if map_time is None:
+            map_time = target
+            map_pts = None
+        else:
+            map_pts = map_data.get(map_time)
+
+        fig = plt.figure(figsize=(14, 5.5))
+        gs = fig.add_gridspec(
+            2, 2,
+            height_ratios=[1.5, 1],
+            width_ratios=[1, 1],
+            wspace=0.3, hspace=0.35,
+        )
+
+        fig.suptitle(
+            f"{event_name} ({flare_row['class']}-class flare)\n"
+            f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
+            fontsize=18,
+            fontweight="bold",
+            y=1.02,
+        )
+
+        plot_one_dashboard(fig, gs, event_name, flare_row, peak_time,
+                          start_time, end_time, map_time, map_pts,
+                          goes_df, sem_df, solar_image)
+
+        filename = f"dashboard_{map_time:%H-%M-%S_UTC}.png"
+        save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
+        plt.close(fig)
+        success_count += 1
+
+    logger.info(f"[{event_name}] Saved {success_count}/{len(target_times)} dashboards")
     return {"dashboard": True}
 
 
