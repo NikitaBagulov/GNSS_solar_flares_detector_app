@@ -79,7 +79,7 @@ def plot_dashboard_for_event(
         logger.warning(f"[{event.get('name')}] No peak time")
         return {"dashboard": False}
 
-    time_window = get_flare_time_window(peak_time, window_minutes)
+    time_window = get_flare_time_window(peak_time, 15)  # ±15 min, 1-min steps
     event_name = event.get("name", "unknown")
     start_time = flare_row.get("start_time")
     end_time = flare_row.get("end_time")
@@ -89,7 +89,7 @@ def plot_dashboard_for_event(
         logger.warning(f"[{event_name}] No ROTI map timestamps in window")
         return {"dashboard": False}
 
-    nearest_map_time = find_nearest_map_time(timestamps, peak_time, tolerance_minutes=window_minutes)
+    nearest_map_time = find_nearest_map_time(timestamps, peak_time, tolerance_minutes=15)
     if nearest_map_time is None:
         nearest_map_time = timestamps[0]
         logger.warning(f"[{event_name}] No ROTI map near peak, using first: {nearest_map_time}")
@@ -102,7 +102,7 @@ def plot_dashboard_for_event(
         logger.info(f"[{event_name}] Dashboard data available for {nearest_map_time}")
         return {"dashboard": True}
 
-    fig = plt.figure(figsize=(14, 5.5))
+    fig = plt.figure(figsize=(11, 5.5))
     gs = fig.add_gridspec(
         2, 2,
         height_ratios=[1.5, 1],
@@ -189,12 +189,12 @@ def plot_dashboard_for_event(
     # Flare markers on X-ray panel
     add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, show_label=False)
 
-    # X-axis: hard range 10:49–11:49, ticks every 10 min
+    # X-axis: peak ±15 min, ticks every 5 min
     ax_xray.grid(True, which="both", alpha=0.25)
-    t0 = pd.Timestamp(f"{peak_time:%Y-%m-%d} 10:49:00")
-    t1 = pd.Timestamp(f"{peak_time:%Y-%m-%d} 11:49:00")
+    t0 = peak_time - pd.Timedelta(minutes=15)
+    t1 = peak_time + pd.Timedelta(minutes=15)
     ax_xray.set_xlim(t0, t1)
-    tick_times = pd.date_range(start=t0, end=t1, freq="10min")
+    tick_times = pd.date_range(start=t0, end=t1, freq="5min")
     ax_xray.set_xticks(tick_times)
     ax_xray.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax_xray.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
