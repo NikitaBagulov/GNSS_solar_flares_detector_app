@@ -240,9 +240,9 @@ def find_flare_row(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
     return None
 
 
-def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15) -> None:
-    ax.axvspan(start_time, end_time, color="#e49f31", alpha=alpha, zorder=0)
-    ax.axvline(peak_time, color="#d62728", linestyle="--", linewidth=LINE_WIDTH_THICK, zorder=5)
+def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15, peak_lw: float = 2.5) -> None:
+    ax.axvspan(start_time, end_time, color="orange", alpha=0.12, zorder=0)
+    ax.axvline(peak_time, color="red", linestyle="--", linewidth=peak_lw, alpha=0.9, zorder=5)
     ax.annotate(
         "Peak",
         xy=(peak_time, 0.98),
@@ -383,8 +383,9 @@ def plot_global_map(
     ax.set_extent([-180, 180, -90, 90], crs=ccrs.PlateCarree())
 
     if show_colorbar:
-        cbar_ax = ax.inset_axes([1.02, 0.1, 0.025, 0.8])
-        plt.colorbar(sc, cax=cbar_ax, label=PRODUCT_LABELS.get(product, product))
+        cbar_ax = ax.inset_axes([1.02, 0.1, 0.04, 0.8])
+        cbar = plt.colorbar(sc, cax=cbar_ax, label=PRODUCT_LABELS.get(product, product))
+        return cbar
 
     plot_terminator(ax, map_time)
     plot_subsolar_point(ax, map_time)

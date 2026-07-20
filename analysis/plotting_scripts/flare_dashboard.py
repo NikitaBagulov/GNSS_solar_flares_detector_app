@@ -35,6 +35,8 @@ from .utils import (
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+PANEL_LABELS = ["A", "B", "C", "D"]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot combined dashboard for each flare")
@@ -96,59 +98,89 @@ def plot_dashboard_for_event(
     fig = plt.figure(figsize=PLOT_FIGSIZE_DASHBOARD, constrained_layout=False)
     gs = fig.add_gridspec(
         3, 2,
-        height_ratios=[6, 2.5, 3],
+        height_ratios=[5, 3.2, 4.2],
         width_ratios=[1, 1],
         wspace=0.25, hspace=0.35,
     )
 
+    gs.update(left=0.06, right=0.9, top=0.88, bottom=0.06)
+
+    fig.suptitle(
+        f"{event_name} ({flare_row['class']}-class flare)\n"
+        f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
+        fontsize=18,
+        fontweight="bold",
+    )
+
+    # --- Panel A: ROTI map ---
     ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
     points = map_data.get(nearest_map_time)
     if points is not None and points.size > 0 and points.dtype.names is not None:
-        plot_global_map(ax_map, points, "roti", nearest_map_time, vmin=0.0, vmax=0.5)
+        cbar = plot_global_map(ax_map, points, "roti", nearest_map_time, vmin=0.0, vmax=1.0)
+        if cbar:
+            cbar.ax.tick_params(labelsize=12)
+            cbar.set_label("ROTI (TECU min$^{-1}$)", fontsize=13)
+    else:
+        ax_map.text(0.5, 0.5, "No data", transform=ax_map.transAxes, ha="center", va="center", fontsize=LABEL_FONT_SIZE)
+    ax_map.set_title("Global ROTI map", fontsize=15, fontweight="bold")
 
+    # --- Panel B: Solar disk ---
     ax_solar = fig.add_subplot(gs[0, 1])
-    plot_solar_disk_base(
-        ax_solar,
-        flare_hpc_x=flare_row.get("hpc_x") if pd.notna(flare_row.get("hpc_x")) else None,
-        flare_hpc_y=flare_row.get("hpc_y") if pd.notna(flare_row.get("hpc_y")) else None,
-        solar_image=solar_image,
-    )
+    hpc_x = flare_row.get("hpc_x") if pd.notna(flare_row.get("hpc_x")) else None
+    hpc_y = flare_row.get("hpc_y") if pd.notna(flare_row.get("hpc_y")) else None
+    plot_solar_disk_base(ax_solar, flare_hpc_x=hpc_x, flare_hpc_y=hpc_y, solar_image=solar_image)
+    ax_solar.set_title("Solar disk", fontsize=15, fontweight="bold")
+    if hpc_x is not None and hpc_y is not None:
+        ax_solar.text(0.5, -0.05,
+                     f"HPC: ({hpc_x:.0f}, {hpc_y:.0f}) arcsec",
+                     transform=ax_solar.transAxes, ha="center", fontsize=12)
 
+    # --- Panel C: Day/Night index ---
     ax_idx = fig.add_subplot(gs[1, :])
+    has_dn = False
     if indices_df is not None and not indices_df.empty and "day_night" in indices_df.columns:
         times = indices_df["time"]
         values = pd.to_numeric(indices_df["day_night"], errors="coerce")
         valid = ~values.isna()
         if valid.any():
+            has_dn = True
             ax_idx.plot(times[valid], values[valid], color="black", linewidth=LINE_WIDTH, label="Day/Night")
             fill_negative(ax_idx, times[valid], values[valid])
-            ax_idx.set_ylabel("Day/Night", fontsize=LABEL_FONT_SIZE)
-            ax_idx.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE)
-    else:
-        ax_idx.text(0.5, 0.5, "No data", transform=ax_idx.transAxes, ha="center", va="center", fontsize=LABEL_FONT_SIZE)
+            add_flare_markers(ax_idx, start_time, peak_time, end_time)
 
-    add_flare_markers(ax_idx, start_time, peak_time, end_time)
-    apply_grid(ax_idx)
+    if not has_dn:
+        ax_idx.text(0.5, 0.5, "No Day/Night data", fontsize=16, color="gray",
+                   transform=ax_idx.transAxes, ha="center", va="center")
+    else:
+        ax_idx.axhline(0, color="gray", linewidth=1)
+        ax_idx.set_ylim(-1.05, 1.05)
+        ax_idx.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE)
+
+    ax_idx.set_ylabel("Index", fontsize=LABEL_FONT_SIZE)
+    ax_idx.set_title("Day/Night index", fontsize=14)
     format_time_axis(ax_idx)
+    apply_grid(ax_idx)
     ax_idx.tick_params(labelsize=TICK_FONT_SIZE)
 
+    # --- Panel D: X-ray + EUV ---
     ax_xray = fig.add_subplot(gs[2, :])
     ax_xray2 = ax_xray.twinx()
 
     if not goes_df.empty:
+        labels_map = {"xrsa": "GOES XRS-A (0.05\u20130.4 nm)", "xrsb": "GOES XRS-B (0.1\u20130.8 nm)"}
         for col in GOES_XRAY_COLUMNS:
             if col in goes_df.columns:
                 color = XRAY_COLORS.get(col, "black")
-                ax_xray.semilogy(goes_df["time"], goes_df[col], label=f"GOES {col.upper()}",
+                ax_xray.semilogy(goes_df["time"], goes_df[col], label=labels_map.get(col, col.upper()),
                                 color=color, linewidth=LINE_WIDTH)
         ax_xray.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE)
         ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
     if not sem_df.empty:
-        label_map = {"flux_26_34": "SEM 26-34 nm", "flux_01_50": "SEM 0.1-50 nm"}
+        labels_map = {"flux_26_34": "SOHO/SEM 26\u201334 nm", "flux_01_50": "SOHO/SEM 0.1\u201350 nm"}
         for col in SOHO_SEM_COLUMNS:
             if col in sem_df.columns:
-                ax_xray2.plot(sem_df["time"], sem_df[col], label=label_map.get(col, col),
+                ax_xray2.plot(sem_df["time"], sem_df[col], label=labels_map.get(col, col),
                             color=EUV_COLOR, linewidth=LINE_WIDTH, linestyle="--")
         ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE)
         ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
@@ -159,12 +191,19 @@ def plot_dashboard_for_event(
         ax_xray.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=LEGEND_FONT_SIZE)
 
     add_flare_markers(ax_xray, start_time, peak_time, end_time)
-    apply_grid(ax_xray)
+    ax_xray.grid(True, which="both", alpha=0.25)
     format_time_axis(ax_xray)
     ax_xray.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
+    ax_xray.set_title("GOES X-ray and SOHO/SEM EUV flux", fontsize=14)
     ax_xray.tick_params(labelsize=TICK_FONT_SIZE)
 
-    fig.tight_layout()
+    # --- Panel labels A, B, C, D ---
+    for ax, label in zip([ax_map, ax_solar, ax_idx, ax_xray], PANEL_LABELS):
+        ax.text(0.01, 0.99, label, transform=ax.transAxes,
+               fontsize=18, fontweight="bold", va="top", ha="left",
+               bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
@@ -183,49 +222,31 @@ def main() -> None:
     flares_csv = args.flares_csv.resolve()
     output_dir = args.output_dir.resolve()
 
-    if not results_dir.exists():
-        logger.error(f"Results directory does not exist: {results_dir}")
-        sys.exit(1)
-
-    if not flares_csv.exists():
-        logger.error(f"Flares catalog does not exist: {flares_csv}")
+    if not results_dir.exists() or not flares_csv.exists():
+        logger.error("Results dir or flares CSV not found")
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Loading events from {results_dir}")
     events = load_events(results_dir)
-    logger.info(f"Found {len(events)} events")
-
-    logger.info(f"Loading flare catalog from {flares_csv}")
     catalog = load_flare_catalog(flares_csv)
-    logger.info(f"Catalog has {len(catalog)} flares")
 
-    events_to_process = events
-    if args.max_events:
-        events_to_process = events[:args.max_events]
-        logger.info(f"Limited to first {args.max_events} events")
-
-    total_processed = 0
-    total_success = 0
-
+    events_to_process = events[:args.max_events] if args.max_events else events
+    total = success = 0
     for event in events_to_process:
-        flare_class = event.get("class", "?")
-
-        if flare_class not in args.flare_classes:
+        if event.get("class") not in args.flare_classes:
             continue
-
         results = plot_dashboard_for_event(
             event, results_dir, catalog, output_dir,
             args.window_minutes, args.no_plots
         )
-        total_processed += 1
+        total += 1
         if results.get("dashboard", False):
-            total_success += 1
+            success += 1
         else:
             logger.warning(f"[{event.get('name')}] Failed to create dashboard")
 
-    logger.info(f"Done. Processed {total_processed} events, {total_success} successful dashboards")
+    logger.info(f"Done. {success}/{total} successful dashboards")
 
 
 if __name__ == "__main__":
