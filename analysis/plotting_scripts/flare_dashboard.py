@@ -13,7 +13,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import cartopy.crs as ccrs
-import cartopy.feature as cfeature
+from cartopy.feature.nightshade import Nightshade
 import numpy as np
 import pandas as pd
 
@@ -133,10 +133,10 @@ def plot_dashboard_for_event(
                    ha="center", va="center", fontsize=LABEL_FONT_SIZE)
     # Nightshade at peak time
     try:
-        night = cfeature.Nightshade(peak_time, alpha=0.3, color="black")
+        night = Nightshade(peak_time, alpha=0.3, color="black")
         ax_map.add_feature(night, zorder=3)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Nightshade failed: {e}")
     ax_map.set_title("Global ROTI map", fontsize=15, fontweight="bold")
     panels.append(ax_map)
 
