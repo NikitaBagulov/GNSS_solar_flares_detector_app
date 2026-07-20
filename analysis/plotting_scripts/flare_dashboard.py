@@ -121,6 +121,7 @@ def plot_one_dashboard(
                                 color=color, linewidth=LINE_WIDTH)
         ax_xray.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE, color="black", labelpad=10)
         ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
+        ax_xray.legend(fontsize=LEGEND_FONT_SIZE, framealpha=0.8, edgecolor="none", loc="lower right")
 
     add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, show_label=False)
     ax_xray.grid(True, which="both", alpha=0.25)
