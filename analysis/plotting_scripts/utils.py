@@ -10,6 +10,7 @@ import h5py
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.patheffects as pe
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
@@ -302,9 +303,14 @@ def plot_solar_disk_base(
         if flare_hpc_x is not None and flare_hpc_y is not None:
             x_pixel, y_pixel, radius_px = convert_hpc_to_pixel(solar_image, flare_hpc_x, flare_hpc_y)
             if x_pixel is not None:
-                ax.scatter([x_pixel], [y_pixel], s=120, color="red", marker="*", edgecolor="white", linewidth=0.8, zorder=10)
-                ax.annotate("Flare", (x_pixel, y_pixel), xytext=(10, -10), textcoords="offset points", color="white", fontsize=10, fontweight="bold", bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6))
-                ax.add_patch(plt.Circle((solar_image.shape[1] / 2, solar_image.shape[0] / 2), radius_px, fill=False, color="white", alpha=0.3))
+                ax.scatter([x_pixel], [y_pixel], s=250, color="red", marker="*",
+                          edgecolor="white", linewidth=2, zorder=10)
+                ax.annotate("Flare", (x_pixel, y_pixel), xytext=(12, -12),
+                           textcoords="offset points", color="white", fontsize=12,
+                           fontweight="bold",
+                           path_effects=[pe.withStroke(linewidth=2.5, foreground="black")])
+                ax.add_patch(plt.Circle((solar_image.shape[1] / 2, solar_image.shape[0] / 2),
+                                        radius_px, fill=False, color="white", alpha=0.3))
         return
 
     ax.set_xlim(0, 1)
@@ -318,8 +324,12 @@ def plot_solar_disk_base(
     if flare_hpc_x is not None and flare_hpc_y is not None:
         x_norm, y_norm = convert_hpc_to_axes(flare_hpc_x, flare_hpc_y)
         if x_norm is not None:
-            ax.scatter([x_norm], [y_norm], s=120, color="red", marker="*", edgecolor="white", linewidth=0.8, zorder=10)
-            ax.annotate("Flare", (x_norm, y_norm), xytext=(10, -10), textcoords="offset points", color="white", fontsize=10, fontweight="bold", bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6))
+            ax.scatter([x_norm], [y_norm], s=250, color="red", marker="*",
+                      edgecolor="white", linewidth=2, zorder=10)
+            ax.annotate("Flare", (x_norm, y_norm), xytext=(12, -12),
+                       textcoords="offset points", color="white", fontsize=12,
+                       fontweight="bold",
+                       path_effects=[pe.withStroke(linewidth=2.5, foreground="black")])
 
 
 def convert_hpc_to_pixel(img: np.ndarray, x_arcsec: float, y_arcsec: float, solar_radius_arcsec: float = SOLAR_RADIUS_ARCSEC) -> Tuple[Optional[float], Optional[float], float]:
@@ -375,8 +385,8 @@ def plot_global_map(
         zorder=2,
     )
 
-    ax.coastlines(linewidth=0.5)
-    ax.add_feature(cfeature.BORDERS, linewidth=0.3)
+    ax.coastlines(linewidth=0.5, color="black")
+    ax.add_feature(cfeature.BORDERS, linewidth=0.3, edgecolor="black")
     gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.5, linestyle="--")
     gl.top_labels = False
     gl.right_labels = False
