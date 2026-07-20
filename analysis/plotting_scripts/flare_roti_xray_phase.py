@@ -126,29 +126,32 @@ def main() -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-    for ax, (xcol, xlabel, logx) in [
-        (axes[0], "rising_roti", "Rising ROTI (TECu/min)", False),
-        (axes[1], "declining_roti", "Declining ROTI (TECu/min)", False),
-        (axes[2], "peak_flux", "GOES Peak Flux (W m$^{-2}$)", True),
-    ]:
-        values = df[xcol].dropna() if xcol != "ratio" else df["ratio"].dropna()
-        for i, fc in enumerate(FLARE_CLASSES):
-            subset = df[df["flare_class"] == fc]
+    panels = [
+        (axes[0], "rising_roti", "declining_roti", "Rising ROTI (TECu/min)", "Declining ROTI (TECu/min)", False),
+        (axes[1], "peak_flux", "rising_roti", "GOES Peak Flux (W m$^{-2}$)", "Rising ROTI (TECu/min)", True),
+        (axes[2], "peak_flux", "declining_roti", "GOES Peak Flux (W m$^{-2}$)", "Declining ROTI (TECu/min)", True),
+    ]
+    for ax, xcol, ycol, xlabel, ylabel, logx in panels:
+        valid = df[xcol].notna() & df[ycol].notna()
+        for fc in FLARE_CLASSES:
+            subset = df[valid & (df["flare_class"] == fc)]
             if subset.empty:
                 continue
-            ax.scatter(subset[xcol] if xcol != "ratio" else subset["ratio"],
-                      subset["rising_roti" if "declining" not in xcol else "declining_roti"],
+            ax.scatter(subset[xcol], subset[ycol],
                       s=60, alpha=0.7, marker=FLARE_CLASS_MARKERS[fc],
                       color=FLARE_CLASS_COLORS[fc], label=f"{fc}-class",
                       edgecolors="black", linewidths=0.3)
         if logx:
             ax.set_xscale("log")
         ax.set_xlabel(xlabel, fontsize=LABEL_FONT_SIZE)
-        yl = "Rising ROTI" if "declining" not in str(ax) else "Declining ROTI"
-        ax.set_ylabel("ROTI (TECu/min)", fontsize=LABEL_FONT_SIZE)
+        ax.set_ylabel(ylabel, fontsize=LABEL_FONT_SIZE)
         ax.legend(fontsize=LEGEND_FONT_SIZE)
         apply_grid(ax)
         ax.tick_params(labelsize=TICK_FONT_SIZE)
+        if xcol == "rising_roti" and ycol == "declining_roti":
+            lims = [min(ax.get_xlim()[0], ax.get_ylim()[0]),
+                    max(ax.get_xlim()[1], ax.get_ylim()[1])]
+            ax.plot(lims, lims, color="gray", linestyle="--", linewidth=1, alpha=0.5)
 
     fig.tight_layout()
     fig.savefig(stats_dir / "roti_phase_comparison.png", dpi=PLOT_DPI, bbox_inches="tight")

@@ -94,9 +94,11 @@ def plot_for_event(
         logger.warning(f"[{event_name}] All NaN profiles")
         return False
 
+    LAT_CENTERS = (LAT_BINS[:-1] + LAT_BINS[1:]) / 2
+
     fig, ax = plt.subplots(figsize=PLOT_FIGSIZE_SINGLE)
     T = np.array([t.timestamp() for t in timestamps])
-    pcm = ax.pcolormesh(T, LAT_BINS, Z.T, shading="auto",
+    pcm = ax.pcolormesh(T, LAT_CENTERS, Z.T, shading="auto",
                         cmap=PRODUCT_CMAPS.get("roti", "viridis"), vmin=0, vmax=0.5)
     cbar = fig.colorbar(pcm, ax=ax, label="ROTI (TECu/min)")
 

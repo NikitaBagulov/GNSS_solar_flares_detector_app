@@ -140,7 +140,7 @@ def main() -> None:
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-    for ax, (xcol, xlabel, logx) in [
+    for ax, xcol, xlabel, logx in [
         (axes[0], "peak_flux", "GOES Peak Flux (W m$^{-2}$)", True),
         (axes[1], "roti_peak", "Peak ROTI (TECu/min)", False),
     ]:
