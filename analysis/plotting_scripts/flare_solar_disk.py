@@ -18,11 +18,12 @@ from .config import (
     FLARE_CLASSES, FLARE_CLASS_MARKERS, FLARE_CLASS_COLORS,
     SOLAR_RADIUS_ARCSEC, PLOT_FIGSIZE_SINGLE, PLOT_DPI,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
-    OUTPUT_SUBDIRS,
+    OUTPUT_SUBDIRS, LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE, TITLE_FONT_SIZE,
 )
 from .utils import (
     load_events, load_flare_catalog, event_file_path,
-    load_solar_image, plot_solar_disk_base, save_figure,
+    load_solar_image, plot_solar_disk_base, find_flare_row,
+    convert_hpc_to_pixel, save_figure,
     logger,
 )
 
@@ -41,25 +42,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def find_flare_in_catalog(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
-    if "flare_key" in catalog.columns:
-        match = catalog[catalog["flare_key"].astype(str) == event.get("name", "")]
-        if len(match) == 1:
-            return match.iloc[0]
-
-    event_name = event.get("name", "")
-    if "_" in event_name:
-        parts = event_name.split("_")
-        if len(parts) >= 2:
-            date_str = parts[0]
-            class_str = parts[1]
-            match = catalog[(catalog["date"] == date_str) & (catalog["class"] == class_str)]
-            if len(match) == 1:
-                return match.iloc[0]
-
-    return None
-
-
 def plot_solar_disk_for_event(
     event: dict,
     results_dir: Path,
@@ -67,7 +49,7 @@ def plot_solar_disk_for_event(
     output_dir: Path,
     no_plots: bool,
 ) -> bool:
-    flare_row = find_flare_in_catalog(event, catalog)
+    flare_row = find_flare_row(event, catalog)
     if flare_row is None:
         logger.warning(f"[{event.get('name')}] No matching flare in catalog")
         return False
@@ -95,21 +77,19 @@ def plot_solar_disk_for_event(
         flare_hpc_x=float(hpc_x),
         flare_hpc_y=float(hpc_y),
         solar_image=solar_image,
-        title=f"{event_name} | {flare_class}-class Flare | Peak: {peak_time:%H:%M UTC}" if pd.notna(peak_time) else f"{event_name} | {flare_class}-class Flare",
     )
 
     marker = FLARE_CLASS_MARKERS.get(flare_class, "o")
     color = FLARE_CLASS_COLORS.get(flare_class, "red")
 
     if solar_image is not None:
-        from utils import convert_hpc_to_pixel
         x_px, y_px, r_px = convert_hpc_to_pixel(solar_image, float(hpc_x), float(hpc_y))
         if x_px is not None:
             ax.scatter([x_px], [y_px], s=200, color=color, marker=marker, edgecolor="white", linewidth=1.5, zorder=15)
             ax.annotate(
-                f"Flare {flare_class}",
+                f"{flare_class}",
                 (x_px, y_px), xytext=(15, -15), textcoords="offset points",
-                color="white", fontsize=11, fontweight="bold",
+                color="white", fontsize=LEGEND_FONT_SIZE, fontweight="bold",
                 bbox=dict(boxstyle="round,pad=0.3", fc="black", alpha=0.7),
             )
 

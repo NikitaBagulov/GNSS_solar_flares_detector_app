@@ -18,10 +18,13 @@ from .config import (
     PRODUCTS, PRODUCT_LABELS, FLARE_CLASSES, FLARE_CLASS_MARKERS, FLARE_CLASS_COLORS,
     PLOT_FIGSIZE_STATS, PLOT_DPI, DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV,
     DEFAULT_OUTPUT_DIR, OUTPUT_SUBDIRS, TIME_WINDOW_MINUTES, SOLAR_RADIUS_ARCSEC,
+    LINE_WIDTH, LINE_WIDTH_THICK, LINE_WIDTH_THIN,
+    LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE, TITLE_FONT_SIZE,
+    COLORS_CONTRAST, GRID_ALPHA, GRID_LINESTYLE,
 )
 from .utils import (
     load_events, load_flare_catalog, event_file_path,
-    get_flare_time_window, find_flare_row, load_hdf5_map,
+    get_flare_time_window, find_flare_row, load_hdf5_map, apply_grid,
     logger,
 )
 
@@ -188,9 +191,7 @@ def main() -> None:
         logger.info("Skipping plots")
         return
 
-    plt.style.use("seaborn-v0_8-whitegrid")
-
-    # Plot 1: Peak ROTI vs Flare Class
+    # Plot 1: Peak ROTI vs Flare Class (scatter)
     if "roti_max" in df.columns:
         fig, ax = plt.subplots(figsize=PLOT_FIGSIZE_STATS)
         for fc in FLARE_CLASSES:
@@ -199,23 +200,25 @@ def main() -> None:
                 continue
             ax.scatter(
                 subset["peak_flux"], subset["roti_max"],
-                s=80, alpha=0.8, marker=FLARE_CLASS_MARKERS[fc],
-                color=FLARE_CLASS_COLORS[fc], label=f"{fc}-class"
+                s=60, alpha=0.7, marker=FLARE_CLASS_MARKERS[fc],
+                color=FLARE_CLASS_COLORS[fc], label=f"{fc}-class",
+                edgecolors="black", linewidths=0.3,
             )
         ax.set_xscale("log")
-        ax.set_xlabel("GOES Peak Flux (W/m\u00b2)")
-        ax.set_ylabel("Peak ROTI (TECu/min)")
-        ax.set_title("Peak ROTI vs Flare Class")
-        ax.legend(title="Flare Class")
+        ax.set_xlabel("GOES Peak Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE)
+        ax.set_ylabel("Peak ROTI (TECu/min)", fontsize=LABEL_FONT_SIZE)
+        ax.legend(title="Flare Class", fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+        apply_grid(ax)
+        ax.tick_params(labelsize=TICK_FONT_SIZE)
         fig.tight_layout()
-        fig.savefig(stats_dir / "peak_roti_vs_flare_class.png", dpi=PLOT_DPI)
+        fig.savefig(stats_dir / "peak_roti_vs_flare_class.png", dpi=PLOT_DPI, bbox_inches="tight")
         plt.close(fig)
 
-    # Plot 2: Flare position distribution on solar disk
+    # Plot 2: Flare position distribution on solar disk (scatter)
     pos_df = df.dropna(subset=["hpc_x", "hpc_y"])
     if not pos_df.empty:
         fig, ax = plt.subplots(figsize=(8, 8))
-        disk = plt.Circle((0, 0), SOLAR_RADIUS_ARCSEC, color="black", fill=False, linewidth=1.5, alpha=0.7)
+        disk = plt.Circle((0, 0), SOLAR_RADIUS_ARCSEC, color="black", fill=False, linewidth=LINE_WIDTH_THICK, alpha=0.7)
         ax.add_patch(disk)
         for fc in FLARE_CLASSES:
             subset = pos_df[pos_df["flare_class"] == fc]
@@ -223,33 +226,39 @@ def main() -> None:
                 continue
             ax.scatter(
                 subset["hpc_x"], subset["hpc_y"],
-                s=80, alpha=0.8, marker=FLARE_CLASS_MARKERS[fc],
-                color=FLARE_CLASS_COLORS[fc], label=f"{fc}-class"
+                s=60, alpha=0.7, marker=FLARE_CLASS_MARKERS[fc],
+                color=FLARE_CLASS_COLORS[fc], label=f"{fc}-class",
+                edgecolors="black", linewidths=0.3,
             )
         ax.set_aspect("equal", adjustable="box")
-        ax.set_xlabel("HPC X (arcsec)")
-        ax.set_ylabel("HPC Y (arcsec)")
-        ax.set_title("Flare Positions on Solar Disk")
-        ax.legend(title="Flare Class")
-        ax.grid(True, alpha=0.3)
+        ax.set_xlabel("HPC X (arcsec)", fontsize=LABEL_FONT_SIZE)
+        ax.set_ylabel("HPC Y (arcsec)", fontsize=LABEL_FONT_SIZE)
+        ax.legend(title="Flare Class", fontsize=LEGEND_FONT_SIZE, title_fontsize=LEGEND_FONT_SIZE)
+        apply_grid(ax)
+        ax.tick_params(labelsize=TICK_FONT_SIZE)
         fig.tight_layout()
-        fig.savefig(stats_dir / "flare_positions_solar_disk.png", dpi=PLOT_DPI)
+        fig.savefig(stats_dir / "flare_positions_solar_disk.png", dpi=PLOT_DPI, bbox_inches="tight")
         plt.close(fig)
 
-    # Plot 3: ROTI distribution by flare class
+    # Plot 3: ROTI distribution by flare class (boxplot)
     if "roti_max" in df.columns:
         fig, ax = plt.subplots(figsize=PLOT_FIGSIZE_STATS)
         data = [df[df["flare_class"] == fc]["roti_max"].dropna().values for fc in FLARE_CLASSES if not df[df["flare_class"] == fc]["roti_max"].dropna().empty]
         labels = [fc for fc in FLARE_CLASSES if not df[df["flare_class"] == fc]["roti_max"].dropna().empty]
         if data:
-            ax.boxplot(data, labels=labels, showfliers=True)
-            ax.set_ylabel("Peak ROTI (TECu/min)")
-            ax.set_title("ROTI Distribution by Flare Class")
+            bp = ax.boxplot(data, labels=labels, showfliers=True, patch_artist=True,
+                           widths=0.5)
+            for patch, fc in zip(bp["boxes"], FLARE_CLASSES):
+                patch.set_facecolor(FLARE_CLASS_COLORS[fc])
+                patch.set_alpha(0.5)
+            ax.set_ylabel("Peak ROTI (TECu/min)", fontsize=LABEL_FONT_SIZE)
+            apply_grid(ax)
+            ax.tick_params(labelsize=TICK_FONT_SIZE)
             fig.tight_layout()
-            fig.savefig(stats_dir / "roti_distribution_by_class.png", dpi=PLOT_DPI)
+            fig.savefig(stats_dir / "roti_distribution_by_class.png", dpi=PLOT_DPI, bbox_inches="tight")
             plt.close(fig)
 
-    # Plot 4: Number of map points per product by flare class
+    # Plot 4: Number of map points per product by flare class (boxplot)
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     axes = axes.ravel()
     for idx, product in enumerate(PRODUCTS):
@@ -264,39 +273,42 @@ def main() -> None:
                     data.append(vals)
                     labels.append(fc)
         if data:
-            ax.boxplot(data, labels=labels, showfliers=True)
-        ax.set_title(f"{PRODUCT_LABELS[product]}: N Points")
-        ax.set_ylabel("Number of Points")
-        ax.grid(True, alpha=0.3)
-    fig.suptitle("Map Point Count by Product and Flare Class", fontsize=14)
+            bp = ax.boxplot(data, labels=labels, showfliers=True, patch_artist=True, widths=0.5)
+            for patch, fc in zip(bp["boxes"], FLARE_CLASSES):
+                patch.set_facecolor(FLARE_CLASS_COLORS[fc])
+                patch.set_alpha(0.5)
+        ax.set_ylabel("Number of Points", fontsize=LABEL_FONT_SIZE)
+        ax.tick_params(labelsize=TICK_FONT_SIZE)
+        ax.set_title(PRODUCT_LABELS[product], fontsize=TITLE_FONT_SIZE)
+        apply_grid(ax)
     fig.tight_layout()
-    fig.savefig(stats_dir / "n_points_by_product_class.png", dpi=PLOT_DPI)
+    fig.savefig(stats_dir / "n_points_by_product_class.png", dpi=PLOT_DPI, bbox_inches="tight")
     plt.close(fig)
 
-    # Plot 5: Time difference between map and flare peak
+    # Plot 5: Time difference between map and flare peak (histogram)
     fig, ax = plt.subplots(figsize=PLOT_FIGSIZE_STATS)
-    for product in PRODUCTS:
+    for idx, product in enumerate(PRODUCTS):
         col = f"{product}_time_diff_min"
         if col in df.columns:
             vals = df[col].dropna()
             if not vals.empty:
-                ax.hist(vals, bins=20, alpha=0.5, label=PRODUCT_LABELS[product], density=True)
-    ax.set_xlabel("Time Difference (minutes)")
-    ax.set_ylabel("Density")
-    ax.set_title("Map Timestamp vs Flare Peak Time Difference")
-    ax.legend()
+                color = COLORS_CONTRAST[idx % len(COLORS_CONTRAST)]
+                ax.hist(vals, bins=20, alpha=0.5, label=PRODUCT_LABELS[product],
+                       color=color, density=True)
+    ax.set_xlabel("Time Difference (min)", fontsize=LABEL_FONT_SIZE)
+    ax.set_ylabel("Density", fontsize=LABEL_FONT_SIZE)
+    ax.legend(fontsize=LEGEND_FONT_SIZE)
+    apply_grid(ax)
+    ax.tick_params(labelsize=TICK_FONT_SIZE)
     fig.tight_layout()
-    fig.savefig(stats_dir / "map_time_diff_distribution.png", dpi=PLOT_DPI)
+    fig.savefig(stats_dir / "map_time_diff_distribution.png", dpi=PLOT_DPI, bbox_inches="tight")
     plt.close(fig)
 
     # Plot 6: Summary table as image
-    summary = df.groupby("flare_class").agg(
-        n_events=("event", "count"),
-        mean_duration=("duration_min", "mean"),
-        mean_roti_max=("roti_max", "mean") if "roti_max" in df.columns else ("event", "count"),
-        mean_hpc_x=("hpc_x", "mean"),
-        mean_hpc_y=("hpc_y", "mean"),
-    ).round(2)
+    agg_cols = {"event": "count", "duration_min": "mean", "hpc_x": "mean", "hpc_y": "mean"}
+    if "roti_max" in df.columns:
+        agg_cols["roti_max"] = "mean"
+    summary = df.groupby("flare_class").agg(**agg_cols).round(2)
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.axis("off")
@@ -308,11 +320,10 @@ def main() -> None:
         cellLoc="center",
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(11)
+    table.set_fontsize(LEGEND_FONT_SIZE)
     table.scale(1, 2)
-    fig.suptitle("Summary Statistics by Flare Class", fontsize=14)
     fig.tight_layout()
-    fig.savefig(stats_dir / "summary_table.png", dpi=PLOT_DPI)
+    fig.savefig(stats_dir / "summary_table.png", dpi=PLOT_DPI, bbox_inches="tight")
     plt.close(fig)
 
     logger.info(f"Saved plots to {stats_dir}")

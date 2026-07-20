@@ -53,9 +53,25 @@ MAP_ALPHA = 0.7
 
 FONT_SIZE = 12
 TITLE_FONT_SIZE = 14
-LABEL_FONT_SIZE = 11
-TICK_FONT_SIZE = 9
-LEGEND_FONT_SIZE = 9
+LABEL_FONT_SIZE = 12
+TICK_FONT_SIZE = 11
+LEGEND_FONT_SIZE = 11
+
+LINE_WIDTH = 1.8
+LINE_WIDTH_THICK = 2.5
+LINE_WIDTH_THIN = 1.0
+
+GRID_ALPHA = 0.3
+GRID_LINESTYLE = "--"
+
+FILL_NEGATIVE_COLOR = "lightcoral"
+FILL_POSITIVE_COLOR = "lightblue"
+
+COLORS_CONTRAST = ["black", "#d62728", "#1f77b4"]
+INDEX_COLORS = {"day_night": "black", "gsflai": "#d62728", "isfai": "#1f77b4"}
+
+XRAY_COLORS = {"xrsa": "#1f77b4", "xrsb": "#d62728"}
+EUV_COLOR = "black"
 
 OUTPUT_SUBDIRS = {
     "maps": "maps",

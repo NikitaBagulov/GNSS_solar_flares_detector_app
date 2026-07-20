@@ -18,15 +18,25 @@ from .config import (
     PRODUCTS, PRODUCT_LABELS, FLARE_CLASSES, PLOT_FIGSIZE_SINGLE, PLOT_DPI,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS, TIME_WINDOW_MINUTES, INDEX_COLUMNS,
+    LINE_WIDTH, INDEX_COLORS,
+    LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE, TITLE_FONT_SIZE,
+    FILL_NEGATIVE_COLOR,
 )
 from .utils import (
     load_events, load_flare_catalog, event_file_path,
     normalize_time_column, get_flare_time_window, find_flare_row,
-    load_indices_csv, add_flare_markers, format_time_axis, save_figure,
+    load_indices_csv, add_flare_markers, format_time_axis, apply_grid,
+    fill_negative, save_figure,
     logger,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+INDEX_LABELS = {
+    "day_night": "Day/Night",
+    "gsflai": "GSFLAI",
+    "isfai": "ISFAI",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,12 +103,10 @@ def plot_indices_for_event(
         ax3.spines["right"].set_visible(True)
 
         axes = [ax, ax2, ax3]
-        colors = ["tab:blue", "tab:green", "tab:red"]
-
         lines = []
         labels = []
 
-        for axis, idx_col, color in zip(axes, INDEX_COLUMNS, colors):
+        for axis, idx_col in zip(axes, INDEX_COLUMNS):
             if idx_col not in df.columns:
                 continue
             times = df["time"]
@@ -106,20 +114,28 @@ def plot_indices_for_event(
             valid = ~values.isna()
             if not valid.any():
                 continue
-            line, = axis.plot(times[valid], values[valid], label=idx_col, color=color, linewidth=1.5)
-            axis.set_ylabel(idx_col, color=color, fontsize=10)
-            axis.tick_params(axis="y", colors=color, labelsize=9)
+
+            color = INDEX_COLORS.get(idx_col, "black")
+            line, = axis.plot(times[valid], values[valid], label=INDEX_LABELS.get(idx_col, idx_col),
+                            color=color, linewidth=LINE_WIDTH)
+            axis.set_ylabel(INDEX_LABELS.get(idx_col, idx_col), color=color, fontsize=LABEL_FONT_SIZE)
+            axis.tick_params(axis="y", colors=color, labelsize=TICK_FONT_SIZE)
             axis.spines["left" if axis is ax else "right"].set_color(color)
+
+            if idx_col == "day_night":
+                fill_negative(axis, times[valid], values[valid])
+
             lines.append(line)
-            labels.append(idx_col)
+            labels.append(INDEX_LABELS.get(idx_col, idx_col))
 
         if lines:
-            ax.legend(lines, labels, loc="upper left", fontsize=9)
+            ax.legend(lines, labels, loc="upper left", fontsize=LEGEND_FONT_SIZE)
 
         add_flare_markers(ax, start_time, peak_time, end_time)
+        apply_grid(ax)
         format_time_axis(ax)
-        ax.set_xlabel("Time (UTC)")
-        ax.set_title(f"{event_name} | {flare_class}-class Flare | {PRODUCT_LABELS[product]} Indices", fontsize=12)
+        ax.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
+        ax.tick_params(labelsize=TICK_FONT_SIZE)
 
         fig.tight_layout()
 

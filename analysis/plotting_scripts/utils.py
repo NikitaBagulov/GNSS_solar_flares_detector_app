@@ -26,11 +26,18 @@ from .config import (
     MAP_POINT_SIZE, MAP_ALPHA, OUTPUT_SUBDIRS, DEFAULT_OUTPUT_DIR,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV,
     GOES_XRAY_COLUMNS, SOHO_SEM_COLUMNS,
+    LINE_WIDTH, LINE_WIDTH_THICK, LINE_WIDTH_THIN,
+    GRID_ALPHA, GRID_LINESTYLE,
+    FILL_NEGATIVE_COLOR, FILL_POSITIVE_COLOR,
+    COLORS_CONTRAST, INDEX_COLORS, XRAY_COLORS, EUV_COLOR,
+    FONT_SIZE, LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE,
 )
 
 logger = logging.getLogger(__name__)
 SIMURG_MAP_TIME_KEY_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
 _UTC = pd.Timestamp.utcnow().tz
+
+TIME_FORMAT = "%H:%M UTC"
 
 
 def event_file_path(results_dir: Path, event: dict, *parts: str) -> Path:
@@ -233,17 +240,17 @@ def find_flare_row(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
     return None
 
 
-def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.2) -> None:
+def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15) -> None:
     ax.axvspan(start_time, end_time, color="#e49f31", alpha=alpha, zorder=0)
-    ax.axvline(peak_time, color="#ff1900", linestyle="--", linewidth=1.4, zorder=5)
+    ax.axvline(peak_time, color="#d62728", linestyle="--", linewidth=LINE_WIDTH_THICK, zorder=5)
     ax.annotate(
         "Peak",
         xy=(peak_time, 0.98),
         xycoords=("data", "axes fraction"),
         xytext=(6, -4),
         textcoords="offset points",
-        fontsize=10,
-        color="#000000",
+        fontsize=LEGEND_FONT_SIZE,
+        color="black",
         ha="left",
         va="top",
         bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
@@ -253,6 +260,19 @@ def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Time
 def format_time_axis(ax: plt.Axes) -> None:
     ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter("%H:%M"))
     ax.xaxis.set_major_locator(plt.matplotlib.dates.AutoDateLocator(maxticks=8))
+    ax.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
+
+
+def apply_grid(ax: plt.Axes) -> None:
+    ax.grid(True, alpha=GRID_ALPHA, linestyle=GRID_LINESTYLE)
+
+
+def fill_negative(ax: plt.Axes, x: np.ndarray, y: np.ndarray, color: str = FILL_NEGATIVE_COLOR, alpha: float = 0.3) -> None:
+    ax.fill_between(x, y, 0, where=(y < 0), color=color, alpha=alpha)
+
+
+def fill_positive(ax: plt.Axes, x: np.ndarray, y: np.ndarray, color: str = FILL_POSITIVE_COLOR, alpha: float = 0.3) -> None:
+    ax.fill_between(x, y, 0, where=(y > 0), color=color, alpha=alpha)
 
 
 def save_figure(fig: plt.Figure, flare_key: str, subdir: str, filename: str, output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
@@ -269,9 +289,10 @@ def plot_solar_disk_base(
     flare_hpc_x: Optional[float] = None,
     flare_hpc_y: Optional[float] = None,
     solar_image: Optional[np.ndarray] = None,
-    title: str = "Solar Disk",
+    title: str = "",
 ) -> None:
-    ax.set_title(title)
+    if title:
+        ax.set_title(title, fontsize=TITLE_FONT_SIZE)
     ax.axis("off")
 
     if solar_image is not None:
@@ -333,7 +354,7 @@ def plot_global_map(
     show_colorbar: bool = True,
 ) -> None:
     if points.size == 0 or points.dtype.names is None:
-        ax.set_title(f"No data for {PRODUCT_LABELS.get(product, product)}")
+        ax.set_title(f"No data", fontsize=TITLE_FONT_SIZE)
         return
 
     lats = points['lat']
@@ -360,8 +381,6 @@ def plot_global_map(
     gl.top_labels = False
     gl.right_labels = False
     ax.set_extent([-180, 180, -90, 90], crs=ccrs.PlateCarree())
-
-    ax.set_title(f"{PRODUCT_LABELS.get(product, product)} @ {map_time:%Y-%m-%d %H:%M UTC}", fontsize=11, pad=4)
 
     if show_colorbar:
         cbar_ax = ax.inset_axes([1.02, 0.1, 0.025, 0.8])

@@ -18,11 +18,14 @@ from .config import (
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS, GOES_XRAY_COLUMNS, SOHO_SEM_COLUMNS,
     TIME_WINDOW_MINUTES,
+    LINE_WIDTH, XRAY_COLORS, EUV_COLOR,
+    LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE, TITLE_FONT_SIZE,
 )
 from .utils import (
     load_events, load_flare_catalog, event_file_path,
     normalize_time_column, get_flare_time_window, find_flare_row,
-    add_flare_markers, format_time_axis, save_figure,
+    add_flare_markers, format_time_axis, apply_grid, save_figure,
+    load_goes_xray, load_soho_sem,
     logger,
 )
 
@@ -40,50 +43,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-events", type=int, default=None)
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
-
-
-def load_goes_xray(event: dict, results_dir: Path, time_window: tuple) -> pd.DataFrame:
-    path = event_file_path(results_dir, event, "goes_xray", "goes_xray.csv")
-    if not path.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(path)
-    df = normalize_time_column(df, preferred="time")
-    for col in GOES_XRAY_COLUMNS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    mask = (df["time"] >= time_window[0]) & (df["time"] <= time_window[1])
-    return df[mask].reset_index(drop=True)
-
-
-def load_soho_sem(event: dict, results_dir: Path, time_window: tuple) -> pd.DataFrame:
-    path = event_file_path(results_dir, event, "soho_sem", "soho_sem.csv")
-    if not path.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(path)
-    df = normalize_time_column(df, preferred="time")
-    for col in SOHO_SEM_COLUMNS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    mask = (df["time"] >= time_window[0]) & (df["time"] <= time_window[1])
-    return df[mask].reset_index(drop=True)
-
-
-def find_flare_row(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
-    if "flare_key" in catalog.columns:
-        match = catalog[catalog["flare_key"].astype(str) == event.get("name", "")]
-        if len(match) == 1:
-            return match.iloc[0]
-
-    event_name = event.get("name", "")
-    if "_" in event_name:
-        parts = event_name.split("_")
-        if len(parts) >= 2:
-            date_str = parts[0]
-            class_str = parts[1]
-            match = catalog[(catalog["date"] == date_str) & (catalog["class"] == class_str)]
-            if len(match) == 1:
-                return match.iloc[0]
-    return None
 
 
 def plot_xray_euv_timeseries(
@@ -129,33 +88,35 @@ def plot_xray_euv_timeseries(
         for col in GOES_XRAY_COLUMNS:
             if col in goes_df.columns:
                 label = f"GOES {col.upper()}"
-                ax.semilogy(goes_df["time"], goes_df[col], label=label, linewidth=1.2)
-        ax.set_ylabel("Flux (W/m\u00b2)")
-        ax.set_title(f"{event_name} | {flare_class}-class Flare | GOES X-ray")
-        ax.legend(loc="upper left", fontsize=9)
-        ax.grid(True, alpha=0.3)
+                color = XRAY_COLORS.get(col, "black")
+                ax.semilogy(goes_df["time"], goes_df[col], label=label,
+                           color=color, linewidth=LINE_WIDTH)
+        ax.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE)
+        ax.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE)
+        apply_grid(ax)
         add_flare_markers(ax, start_time, peak_time, end_time)
+        ax.tick_params(labelsize=TICK_FONT_SIZE)
 
     if not sem_df.empty:
         ax = axes[1]
         for col in SOHO_SEM_COLUMNS:
             if col in sem_df.columns:
-                label = f"SOHO SEM {col}"
-                ax.semilogy(sem_df["time"], sem_df[col], label=label, linewidth=1.2)
-        ax.set_ylabel("Flux (photons/cm\u00b2/s)")
-        ax.set_title("SOHO SEM EUV")
-        ax.legend(loc="upper left", fontsize=9)
-        ax.grid(True, alpha=0.3)
+                label_map = {"flux_26_34": "26-34 nm", "flux_01_50": "0.1-50 nm"}
+                label = f"SOHO SEM {label_map.get(col, col)}"
+                ax.plot(sem_df["time"], sem_df[col], label=label,
+                       color=EUV_COLOR, linewidth=LINE_WIDTH)
+        ax.set_ylabel("Flux (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE)
+        ax.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE)
+        apply_grid(ax)
         add_flare_markers(ax, start_time, peak_time, end_time)
+        ax.tick_params(labelsize=TICK_FONT_SIZE)
 
     format_time_axis(axes[-1])
-    axes[-1].set_xlabel("Time (UTC)")
+    axes[-1].tick_params(labelsize=TICK_FONT_SIZE)
 
-    fig.suptitle(f"{event_name} | Peak: {peak_time:%Y-%m-%d %H:%M UTC}", fontsize=14, fontweight="bold", y=0.98)
     fig.tight_layout()
-    fig.subplots_adjust(top=0.92)
 
-    filename = f"timeseries_xray_euv_{peak_time:%H-%M-%S_UTC}.png"
+    filename = f"xray_euv_{peak_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["timeseries_xray_euv"], filename, output_dir)
     logger.info(f"[{event_name}] Saved X-ray/EUV timeseries")
     return True

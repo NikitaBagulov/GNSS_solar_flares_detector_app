@@ -18,12 +18,12 @@ from .config import (
     PRODUCTS, PRODUCT_LABELS, PRODUCT_VMIN_VMAX, PRODUCT_CMAPS,
     FLARE_CLASSES, TIME_WINDOW_MINUTES, PLOT_FIGSIZE_SINGLE,
     PLOT_DPI, DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
-    OUTPUT_SUBDIRS,
+    OUTPUT_SUBDIRS, LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE, TITLE_FONT_SIZE,
 )
 from .utils import (
-    load_events, find_event_by_name, event_file_path, load_hdf5_map,
+    load_events, event_file_path, load_hdf5_map,
     get_flare_time_window, find_nearest_map_time, plot_global_map,
-    load_flare_catalog, load_solar_image, save_figure, logger,
+    load_flare_catalog, find_flare_row, save_figure, logger,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -43,25 +43,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def find_flare_peak_time(event: dict, catalog: pd.DataFrame) -> pd.Timestamp | None:
-    if "flare_key" in catalog.columns:
-        match = catalog[catalog["flare_key"].astype(str) == event.get("name", "")]
-        if len(match) == 1 and pd.notna(match.iloc[0].get("peak_time")):
-            return match.iloc[0]["peak_time"]
-
-    event_name = event.get("name", "")
-    if "_" in event_name:
-        parts = event_name.split("_")
-        if len(parts) >= 2:
-            date_str = parts[0]
-            class_str = parts[1]
-            match = catalog[(catalog["date"] == date_str) & (catalog["class"] == class_str)]
-            if len(match) == 1 and pd.notna(match.iloc[0].get("peak_time")):
-                return match.iloc[0]["peak_time"]
-
-    return None
-
-
 def plot_maps_for_event(
     event: dict,
     results_dir: Path,
@@ -71,9 +52,14 @@ def plot_maps_for_event(
     window_minutes: float,
     no_plots: bool,
 ) -> dict[str, bool]:
-    flare_peak = find_flare_peak_time(event, catalog)
-    if flare_peak is None:
-        logger.warning(f"[{event.get('name')}] No flare peak time found in catalog")
+    flare_row = find_flare_row(event, catalog)
+    if flare_row is None:
+        logger.warning(f"[{event.get('name')}] No matching flare in catalog")
+        return {p: False for p in products}
+
+    flare_peak = flare_row.get("peak_time")
+    if pd.isna(flare_peak):
+        logger.warning(f"[{event.get('name')}] No peak time in catalog")
         return {p: False for p in products}
 
     time_window = get_flare_time_window(flare_peak, window_minutes)
@@ -116,11 +102,6 @@ def plot_maps_for_event(
 
         plot_global_map(ax, points, product, nearest_time, vmin=vmin, vmax=vmax)
 
-        flare_class = event.get("class", "?")
-        fig.suptitle(
-            f"{event_name}  |  Flare: {flare_class}-class  |  Peak: {flare_peak:%H:%M UTC}  |  Map: {nearest_time:%H:%M UTC}",
-            fontsize=14, fontweight="bold", y=0.95
-        )
         fig.tight_layout()
 
         filename = f"map_{product}_{nearest_time:%H-%M-%S_UTC}.png"
