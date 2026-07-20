@@ -227,7 +227,7 @@ def plot_dashboard_for_event(
         else:
             map_pts = map_data.get(map_time)
 
-        fig = plt.figure(figsize=(11, 8))
+        fig = plt.figure(figsize=(11, 9))
         gs = fig.add_gridspec(
             3, 2,
             height_ratios=[1.5, 1, 1],
