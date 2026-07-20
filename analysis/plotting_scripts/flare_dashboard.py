@@ -108,9 +108,8 @@ def plot_one_dashboard(
                      transform=ax_solar.transAxes, ha="center", fontsize=12)
     panels.append(ax_solar)
 
-    # --- Panel C: GOES X-ray + SOHO SEM EUV flux ---
+    # --- Panel C: GOES X-ray + SOHO SEM EUV flux (normalized to same scale) ---
     ax_xray = fig.add_subplot(gs[1, :])
-    ax_xray2 = ax_xray.twinx()
 
     if not goes_df.empty:
         labels_map = {"xrsa": "GOES XRS-A (0.05\u20130.4 nm)", "xrsb": "GOES XRS-B (0.1\u20130.8 nm)"}
@@ -118,25 +117,26 @@ def plot_one_dashboard(
             if col in goes_df.columns:
                 color = XRAY_COLORS.get(col, "black")
                 t, y = smooth_series(goes_df["time"], goes_df[col], window=5)
-                ax_xray.semilogy(t, y, label=labels_map.get(col, col.upper()),
-                                color=color, linewidth=LINE_WIDTH)
-        ax_xray.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE, color="black", labelpad=15)
-        ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
+                y_norm = y / y.max() if y.max() > 0 else y
+                ax_xray.plot(t, y_norm, label=labels_map.get(col, col.upper()),
+                            color=color, linewidth=LINE_WIDTH)
+        ax_xray.set_ylabel("Normalized flux", fontsize=LABEL_FONT_SIZE, color="black", labelpad=10)
 
     if not sem_df.empty:
         labels_map = {"flux_26_34": "SOHO/SEM 26\u201334 nm", "flux_01_50": "SOHO/SEM 0.1\u201350 nm"}
         for col in SOHO_SEM_COLUMNS:
             if col in sem_df.columns:
                 t, y = smooth_series(sem_df["time"], sem_df[col], window=3)
-                ax_xray2.plot(t, y, label=labels_map.get(col, col),
+                y_norm = y / y.max() if y.max() > 0 else y
+                ax_xray.plot(t, y_norm, label=labels_map.get(col, col),
                             color=EUV_COLOR, linewidth=LINE_WIDTH, linestyle="--")
-        ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=15)
-        ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
-    lines1, labels1 = ax_xray.get_legend_handles_labels()
-    lines2, labels2 = ax_xray2.get_legend_handles_labels()
-    if lines1 or lines2:
-        ax_xray.legend(lines1 + lines2, labels1 + labels2,
+    ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
+    ax_xray.set_ylim(0, 1.15)
+
+    lines, labels = ax_xray.get_legend_handles_labels()
+    if lines:
+        ax_xray.legend(lines, labels,
                       loc='lower left', bbox_to_anchor=(0.65, 0.05),
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
                       edgecolor="none", ncol=1)
@@ -151,7 +151,7 @@ def plot_one_dashboard(
     ax_xray.set_xticks(tick_times)
     ax_xray.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax_xray.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
-    ax_xray.set_title("GOES X-ray and SOHO/SEM EUV flux", fontsize=14)
+    ax_xray.set_title("GOES X-ray and SOHO/SEM EUV (normalized)", fontsize=14)
     ax_xray.tick_params(labelsize=TICK_FONT_SIZE)
 
     panels.append(ax_xray)
