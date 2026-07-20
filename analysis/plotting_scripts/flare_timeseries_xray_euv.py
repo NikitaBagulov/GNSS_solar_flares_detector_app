@@ -13,15 +13,15 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from config import (
+from .config import (
     FLARE_CLASSES, PLOT_FIGSIZE_SINGLE, PLOT_DPI,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS, GOES_XRAY_COLUMNS, SOHO_SEM_COLUMNS,
     TIME_WINDOW_MINUTES,
 )
-from utils import (
+from .utils import (
     load_events, load_flare_catalog, event_file_path,
-    normalize_time_column, get_flare_time_window, find_flare_in_catalog,
+    normalize_time_column, get_flare_time_window, find_flare_row,
     add_flare_markers, format_time_axis, save_figure,
     logger,
 )

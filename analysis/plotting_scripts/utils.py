@@ -18,7 +18,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from results_server import scan_events
-from config import (
+from .config import (
     PRODUCTS, PRODUCT_LABELS, PRODUCT_VMIN_VMAX, PRODUCT_CMAPS,
     FLARE_CLASSES, FLARE_CLASS_MARKERS, FLARE_CLASS_COLORS,
     TIME_WINDOW_MINUTES, SOLAR_RADIUS_ARCSEC,
@@ -211,6 +211,26 @@ def flare_class_letter(value: object) -> str | None:
         return None
     match = re.match(r"\s*([ABCMX])", str(value).upper())
     return match.group(1) if match else None
+
+
+def find_flare_row(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
+    """Find matching flare row in catalog for an event."""
+    if "flare_key" in catalog.columns:
+        match = catalog[catalog["flare_key"].astype(str) == event.get("name", "")]
+        if len(match) == 1:
+            return match.iloc[0]
+
+    event_name = event.get("name", "")
+    if "_" in event_name:
+        parts = event_name.split("_")
+        if len(parts) >= 2:
+            date_str = parts[0]
+            class_str = parts[1]
+            match = catalog[(catalog["date"] == date_str) & (catalog["class"] == class_str)]
+            if len(match) == 1:
+                return match.iloc[0]
+
+    return None
 
 
 def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.2) -> None:

@@ -14,15 +14,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-from config import (
+from .config import (
     PRODUCTS, PRODUCT_LABELS, FLARE_CLASSES, PLOT_FIGSIZE_SINGLE, PLOT_DPI,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS, TIME_WINDOW_MINUTES, INDEX_COLUMNS,
 )
-from utils import (
+from .utils import (
     load_events, load_flare_catalog, event_file_path,
     normalize_time_column, get_flare_time_window, find_flare_row,
-    load_indices_data, add_flare_markers, format_time_axis, save_figure,
+    load_indices_csv, add_flare_markers, format_time_axis, save_figure,
     logger,
 )
 
@@ -75,7 +75,7 @@ def plot_indices_for_event(
             results[product] = False
             continue
 
-        df = load_indices_data(event, results_dir, product, time_window)
+        df = load_indices_csv(event, results_dir, product, time_window)
         if df.empty:
             logger.warning(f"[{event_name}] Empty indices data for {product}")
             results[product] = False

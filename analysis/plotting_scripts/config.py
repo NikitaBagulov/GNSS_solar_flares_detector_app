@@ -41,6 +41,7 @@ SOLAR_RADIUS_ARCSEC = 960.0
 
 GOES_XRAY_COLUMNS = ["xrsa", "xrsb"]
 SOHO_SEM_COLUMNS = ["flux_26_34", "flux_01_50"]
+INDEX_COLUMNS = ["day_night", "gsflai", "isfai"]
 
 PLOT_DPI = 150
 PLOT_FIGSIZE_SINGLE = (12, 10)

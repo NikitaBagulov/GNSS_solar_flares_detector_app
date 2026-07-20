@@ -17,14 +17,14 @@ import numpy as np
 import pandas as pd
 import h5py
 
-from config import (
+from .config import (
     PRODUCTS, PRODUCT_LABELS, PRODUCT_VMIN_VMAX, PRODUCT_CMAPS,
     FLARE_CLASSES, PLOT_FIGSIZE_DASHBOARD, PLOT_DPI, MAP_POINT_SIZE, MAP_ALPHA,
     SOLAR_RADIUS_ARCSEC, TIME_WINDOW_MINUTES,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS, GOES_XRAY_COLUMNS, SOHO_SEM_COLUMNS, INDEX_COLUMNS,
 )
-from utils import (
+from .utils import (
     load_events, load_flare_catalog, event_file_path,
     normalize_time_column, get_flare_time_window, find_flare_row,
     load_solar_image, plot_solar_disk_base, plot_global_map,

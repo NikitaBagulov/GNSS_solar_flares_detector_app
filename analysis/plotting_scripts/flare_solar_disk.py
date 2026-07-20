@@ -14,13 +14,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from config import (
+from .config import (
     FLARE_CLASSES, FLARE_CLASS_MARKERS, FLARE_CLASS_COLORS,
     SOLAR_RADIUS_ARCSEC, PLOT_FIGSIZE_SINGLE, PLOT_DPI,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS,
 )
-from utils import (
+from .utils import (
     load_events, load_flare_catalog, event_file_path,
     load_solar_image, plot_solar_disk_base, save_figure,
     logger,

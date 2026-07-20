@@ -12,14 +12,15 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
+import pandas as pd
 
-from config import (
+from .config import (
     PRODUCTS, PRODUCT_LABELS, PRODUCT_VMIN_VMAX, PRODUCT_CMAPS,
     FLARE_CLASSES, TIME_WINDOW_MINUTES, PLOT_FIGSIZE_SINGLE,
     PLOT_DPI, DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
     OUTPUT_SUBDIRS,
 )
-from utils import (
+from .utils import (
     load_events, find_event_by_name, event_file_path, load_hdf5_map,
     get_flare_time_window, find_nearest_map_time, plot_global_map,
     load_flare_catalog, load_solar_image, save_figure, logger,

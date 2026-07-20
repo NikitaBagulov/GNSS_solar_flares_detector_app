@@ -14,14 +14,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from config import (
+from .config import (
     PRODUCTS, PRODUCT_LABELS, FLARE_CLASSES, FLARE_CLASS_MARKERS, FLARE_CLASS_COLORS,
     PLOT_FIGSIZE_STATS, PLOT_DPI, DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV,
     DEFAULT_OUTPUT_DIR, OUTPUT_SUBDIRS, TIME_WINDOW_MINUTES,
 )
-from utils import (
+from .utils import (
     load_events, load_flare_catalog, event_file_path,
-    get_flare_time_window, find_flare_row, load_hdf5_map_data,
+    get_flare_time_window, find_flare_row, load_hdf5_map,
     logger,
 )
 
@@ -71,7 +71,7 @@ def compute_flare_metrics(event: dict, results_dir: Path, catalog: pd.DataFrame,
             metrics[f"{product}_has_map"] = False
             continue
 
-        timestamps, product_data = load_hdf5_map_data(event, results_dir, product, time_window)
+        timestamps, product_data = load_hdf5_map(event, results_dir, product, time_window)
         if not timestamps:
             metrics[f"{product}_has_map"] = False
             continue
