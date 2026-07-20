@@ -13,6 +13,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import numpy as np
 import pandas as pd
 
@@ -104,7 +105,7 @@ def plot_dashboard_for_event(
     fig = plt.figure(figsize=(14, 5.5))
     gs = fig.add_gridspec(
         2, 2,
-        height_ratios=[1.2, 1],
+        height_ratios=[1.5, 1],
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
@@ -130,6 +131,12 @@ def plot_dashboard_for_event(
     else:
         ax_map.text(0.5, 0.5, "No data", transform=ax_map.transAxes,
                    ha="center", va="center", fontsize=LABEL_FONT_SIZE)
+    # Nightshade at peak time
+    try:
+        night = cfeature.Nightshade(peak_time, alpha=0.3, color="black")
+        ax_map.add_feature(night, zorder=3)
+    except Exception:
+        pass
     ax_map.set_title("Global ROTI map", fontsize=15, fontweight="bold")
     panels.append(ax_map)
 
@@ -170,33 +177,25 @@ def plot_dashboard_for_event(
         ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=15)
         ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
-    # Legend inside lower right
+    # Legend inside lower left
     lines1, labels1 = ax_xray.get_legend_handles_labels()
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
         ax_xray.legend(lines1 + lines2, labels1 + labels2,
-                      loc="lower right",
+                      loc='lower left', bbox_to_anchor=(0.65, 0.05),
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
                       edgecolor="none", ncol=1)
 
     # Flare markers on X-ray panel
-    peak_y = None
-    if not goes_df.empty:
-        for col in ["xrsb", "xrsa"]:
-            if col in goes_df.columns:
-                near = goes_df.iloc[(goes_df["time"] - peak_time).abs().argmin()]
-                peak_y = near[col]
-                break
-    add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, peak_data_y=peak_y)
+    add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, show_label=False)
 
-    # X-axis: tight around flare, ticks, grid
+    # X-axis: hard range 10:49–11:49, ticks every 10 min
     ax_xray.grid(True, which="both", alpha=0.25)
-    pad = pd.Timedelta(minutes=5)
-    flare_start = start_time - pad if pd.notna(start_time) else time_window[0]
-    flare_end = end_time + pad if pd.notna(end_time) else time_window[1]
-    ax_xray.set_xlim(flare_start, flare_end)
-    ax_xray.xaxis.set_major_locator(mdates.MinuteLocator(interval=10))
-    ax_xray.xaxis.set_minor_locator(mdates.MinuteLocator(interval=5))
+    t0 = pd.Timestamp(f"{peak_time:%Y-%m-%d} 10:49:00")
+    t1 = pd.Timestamp(f"{peak_time:%Y-%m-%d} 11:49:00")
+    ax_xray.set_xlim(t0, t1)
+    tick_times = pd.date_range(start=t0, end=t1, freq="10min")
+    ax_xray.set_xticks(tick_times)
     ax_xray.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax_xray.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
     ax_xray.set_title("GOES X-ray and SOHO/SEM EUV flux", fontsize=14)
@@ -210,7 +209,7 @@ def plot_dashboard_for_event(
                fontsize=18, fontweight="bold", va="top", ha="left",
                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
-    plt.subplots_adjust(top=0.92, bottom=0.08, left=0.05, right=0.95)
+    plt.subplots_adjust(left=0.05, right=0.95, bottom=0.08, top=0.90)
 
     filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)

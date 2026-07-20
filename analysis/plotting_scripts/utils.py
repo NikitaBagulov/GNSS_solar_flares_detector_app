@@ -241,31 +241,22 @@ def find_flare_row(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
     return None
 
 
-def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15, peak_lw: float = 2.5, peak_data_y: float = None) -> None:
+def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15, peak_lw: float = 2.5, show_label: bool = True) -> None:
     ax.axvspan(start_time, end_time, color="orange", alpha=0.12, zorder=0)
     ax.axvline(peak_time, color="red", linestyle="--", linewidth=peak_lw, alpha=0.9, zorder=5)
-    if peak_data_y is not None:
-        xy = (peak_time, peak_data_y * 1.2)
-        xycoords = ("data", "data")
-        xytext = (8, 8)
-        va = "bottom"
-    else:
-        xy = (peak_time, 1.0)
-        xycoords = ("data", "axes fraction")
-        xytext = (8, -12)
-        va = "top"
-    ax.annotate(
-        "Peak",
-        xy=xy,
-        xycoords=xycoords,
-        xytext=xytext,
-        textcoords="offset points",
-        fontsize=LEGEND_FONT_SIZE,
-        color="black",
-        ha="left",
-        va=va,
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6, edgecolor="none"),
-    )
+    if show_label:
+        ax.annotate(
+            "Peak",
+            xy=(peak_time, 1.0),
+            xycoords=("data", "axes fraction"),
+            xytext=(8, -12),
+            textcoords="offset points",
+            fontsize=LEGEND_FONT_SIZE,
+            color="black",
+            ha="left",
+            va="top",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6, edgecolor="none"),
+        )
 
 
 def format_time_axis(ax: plt.Axes) -> None:
