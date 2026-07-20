@@ -185,7 +185,11 @@ def plot_dashboard_for_event(
         logger.warning(f"[{event.get('name')}] No peak time")
         return {"dashboard": False}
 
-    time_window = get_flare_time_window(peak_time, 15)
+    if not event.get("maps", {}).get("roti"):
+        logger.warning(f"[{event.get('name')}] No ROTI map data for this event")
+        return {"dashboard": False}
+
+    time_window = get_flare_time_window(peak_time, window_minutes)
     event_name = event.get("name", "unknown")
     start_time = flare_row.get("start_time")
     end_time = flare_row.get("end_time")
@@ -199,10 +203,14 @@ def plot_dashboard_for_event(
     sem_df = load_soho_sem(event, results_dir, time_window)
     solar_image = load_solar_image(event, results_dir)
 
-    # Generate 31 target times: peak-15 .. peak+15, step 1 min
+    if goes_df.empty and sem_df.empty:
+        logger.warning(f"[{event_name}] No GOES or SOHO data in window")
+        return {"dashboard": False}
+
+    # Generate target times: peak-window .. peak+window, step 1 min
     target_times = pd.date_range(
-        start=peak_time - pd.Timedelta(minutes=15),
-        end=peak_time + pd.Timedelta(minutes=15),
+        start=peak_time - pd.Timedelta(minutes=window_minutes),
+        end=peak_time + pd.Timedelta(minutes=window_minutes),
         freq="1min",
     )
 
@@ -212,8 +220,7 @@ def plot_dashboard_for_event(
 
     success_count = 0
     for target in target_times:
-        # Find nearest ROTI map for this target time
-        map_time = find_nearest_map_time(timestamps, target, tolerance_minutes=2)
+        map_time = find_nearest_map_time(timestamps, target, tolerance_minutes=window_minutes / 2)
         if map_time is None:
             map_time = target
             map_pts = None
