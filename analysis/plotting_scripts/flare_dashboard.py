@@ -148,7 +148,7 @@ def plot_one_dashboard(
                            color=EUV_COLOR, linewidth=LINE_WIDTH, linestyle="--")
         ax_sem.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=10)
         ax_sem.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
-        ax_sem.legend(fontsize=LEGEND_FONT_SIZE, framealpha=0.8, edgecolor="none")
+        ax_sem.legend(fontsize=LEGEND_FONT_SIZE, framealpha=0.8, edgecolor="none", loc="lower right")
     ax_sem.grid(True, alpha=0.25)
     ax_sem.set_xlim(t0, t1)
     ax_sem.set_xticks(tick_times)
