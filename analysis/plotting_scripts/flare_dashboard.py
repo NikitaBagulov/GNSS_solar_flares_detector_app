@@ -101,10 +101,10 @@ def plot_dashboard_for_event(
         logger.info(f"[{event_name}] Dashboard data available for {nearest_map_time}")
         return {"dashboard": True}
 
-    fig = plt.figure(figsize=(16, 7))
+    fig = plt.figure(figsize=(14, 5.5))
     gs = fig.add_gridspec(
         2, 2,
-        height_ratios=[2.5, 1],
+        height_ratios=[1.2, 1],
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
@@ -170,17 +170,24 @@ def plot_dashboard_for_event(
         ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=15)
         ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
-    # Legend outside
+    # Legend inside lower right
     lines1, labels1 = ax_xray.get_legend_handles_labels()
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
         ax_xray.legend(lines1 + lines2, labels1 + labels2,
-                      loc="upper center", bbox_to_anchor=(0.5, -0.15),
+                      loc="lower right",
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
-                      ncol=2, borderaxespad=0.)
+                      edgecolor="none", ncol=1)
 
     # Flare markers on X-ray panel
-    add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5)
+    peak_y = None
+    if not goes_df.empty:
+        for col in ["xrsb", "xrsa"]:
+            if col in goes_df.columns:
+                near = goes_df.iloc[(goes_df["time"] - peak_time).abs().argmin()]
+                peak_y = near[col]
+                break
+    add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, peak_data_y=peak_y)
 
     # X-axis: limit, ticks, grid
     ax_xray.grid(True, which="both", alpha=0.25)
@@ -200,7 +207,7 @@ def plot_dashboard_for_event(
                fontsize=18, fontweight="bold", va="top", ha="left",
                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
-    plt.subplots_adjust(top=0.88, bottom=0.10, left=0.05, right=0.95)
+    plt.subplots_adjust(top=0.92, bottom=0.08, left=0.05, right=0.95)
 
     filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
