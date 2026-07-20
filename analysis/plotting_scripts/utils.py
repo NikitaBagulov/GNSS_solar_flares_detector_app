@@ -246,9 +246,9 @@ def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Time
     ax.axvline(peak_time, color="red", linestyle="--", linewidth=peak_lw, alpha=0.9, zorder=5)
     ax.annotate(
         "Peak",
-        xy=(peak_time, 0.99),
+        xy=(peak_time, 1.0),
         xycoords=("data", "axes fraction"),
-        xytext=(8, -8),
+        xytext=(8, -12),
         textcoords="offset points",
         fontsize=LEGEND_FONT_SIZE,
         color="black",

@@ -101,14 +101,13 @@ def plot_dashboard_for_event(
         logger.info(f"[{event_name}] Dashboard data available for {nearest_map_time}")
         return {"dashboard": True}
 
-    fig = plt.figure(figsize=(18, 6), constrained_layout=False)
+    fig = plt.figure(figsize=(16, 7))
     gs = fig.add_gridspec(
         2, 2,
-        height_ratios=[1.8, 1],
+        height_ratios=[2.5, 1],
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
-    gs.update(left=0.05, right=0.95, top=0.92, bottom=0.12)
 
     fig.suptitle(
         f"{event_name} ({flare_row['class']}-class flare)\n"
@@ -176,7 +175,7 @@ def plot_dashboard_for_event(
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
         ax_xray.legend(lines1 + lines2, labels1 + labels2,
-                      loc="upper center", bbox_to_anchor=(0.5, -0.08),
+                      loc="upper center", bbox_to_anchor=(0.5, -0.15),
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
                       ncol=2, borderaxespad=0.)
 
@@ -201,7 +200,7 @@ def plot_dashboard_for_event(
                fontsize=18, fontweight="bold", va="top", ha="left",
                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
-    plt.subplots_adjust(bottom=0.12, top=0.92, left=0.05, right=0.95)
+    plt.subplots_adjust(top=0.88, bottom=0.10, left=0.05, right=0.95)
 
     filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
