@@ -108,7 +108,7 @@ def plot_dashboard_for_event(
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
-    gs.update(left=0.06, right=0.85, top=0.85, bottom=0.08)
+    gs.update(left=0.06, right=0.95, top=0.85, bottom=0.18)
 
     fig.suptitle(
         f"{event_name} ({flare_row['class']}-class flare)\n"
@@ -168,7 +168,7 @@ def plot_dashboard_for_event(
                 t, y = smooth_series(sem_df["time"], sem_df[col], window=3)
                 ax_xray2.plot(t, y, label=labels_map.get(col, col),
                             color=EUV_COLOR, linewidth=LINE_WIDTH, linestyle="--")
-        ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=20)
+        ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE, labelpad=15)
         ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
     # Legend outside
@@ -176,9 +176,9 @@ def plot_dashboard_for_event(
     lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
         ax_xray.legend(lines1 + lines2, labels1 + labels2,
-                      loc="upper left", bbox_to_anchor=(1.02, 0.5),
+                      loc="upper center", bbox_to_anchor=(0.5, -0.15),
                       fontsize=LEGEND_FONT_SIZE, framealpha=0.8,
-                      borderaxespad=0.)
+                      ncol=2, borderaxespad=0.)
 
     # Flare markers on X-ray panel
     add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5)
