@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Combined multi-panel dashboard: 4 maps + 4 index panels + solar disk + X-ray/EUV.
+Combined dashboard: ROTI map + solar disk + Day/Night index + X-ray/EUV.
 """
 
 import argparse
@@ -20,8 +20,8 @@ from .config import (
     FLARE_CLASSES, PLOT_FIGSIZE_DASHBOARD, PLOT_DPI, MAP_POINT_SIZE, MAP_ALPHA,
     SOLAR_RADIUS_ARCSEC, TIME_WINDOW_MINUTES,
     DEFAULT_RESULTS_DIR, DEFAULT_FLARES_CSV, DEFAULT_OUTPUT_DIR,
-    OUTPUT_SUBDIRS, GOES_XRAY_COLUMNS, SOHO_SEM_COLUMNS, INDEX_COLUMNS,
-    LINE_WIDTH, INDEX_COLORS, XRAY_COLORS, EUV_COLOR,
+    OUTPUT_SUBDIRS, GOES_XRAY_COLUMNS, SOHO_SEM_COLUMNS,
+    LINE_WIDTH, XRAY_COLORS, EUV_COLOR,
     LABEL_FONT_SIZE, TICK_FONT_SIZE, LEGEND_FONT_SIZE, TITLE_FONT_SIZE,
 )
 from .utils import (
@@ -34,12 +34,6 @@ from .utils import (
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-INDEX_LABELS = {
-    "day_night": "Day/Night",
-    "gsflai": "GSFLAI",
-    "isfai": "ISFAI",
-}
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,39 +69,21 @@ def plot_dashboard_for_event(
 
     time_window = get_flare_time_window(peak_time, window_minutes)
     event_name = event.get("name", "unknown")
-    flare_class = str(flare_row.get("class", event.get("class", "?"))).upper()[0]
     start_time = flare_row.get("start_time")
     end_time = flare_row.get("end_time")
 
-    map_timestamps = {}
-    map_data = {}
-    for product in PRODUCTS:
-        if event.get("maps", {}).get(product):
-            timestamps, data = load_hdf5_map(event, results_dir, product, time_window)
-            if timestamps:
-                map_timestamps[product] = timestamps
-                map_data[product] = data
-
-    all_timestamps = set()
-    for ts in map_timestamps.values():
-        all_timestamps.update(ts)
-    all_timestamps = sorted(all_timestamps)
-
-    if not all_timestamps:
-        logger.warning(f"[{event_name}] No map timestamps in window")
+    timestamps, map_data = load_hdf5_map(event, results_dir, "roti", time_window)
+    if not timestamps:
+        logger.warning(f"[{event_name}] No ROTI map timestamps in window")
         return {"dashboard": False}
 
-    nearest_map_time = find_nearest_map_time(all_timestamps, peak_time, tolerance_minutes=window_minutes)
+    nearest_map_time = find_nearest_map_time(timestamps, peak_time, tolerance_minutes=window_minutes)
     if nearest_map_time is None:
-        nearest_map_time = all_timestamps[0]
-        logger.warning(f"[{event_name}] No map time near peak, using first: {nearest_map_time}")
+        nearest_map_time = timestamps[0]
+        logger.warning(f"[{event_name}] No ROTI map near peak, using first: {nearest_map_time}")
 
     index_time_window = get_flare_time_window(nearest_map_time, window_minutes=5.0)
-    indices_data = {}
-    for product in PRODUCTS:
-        df = load_indices_csv(event, results_dir, product, index_time_window)
-        if not df.empty:
-            indices_data[product] = df
+    indices_df = load_indices_csv(event, results_dir, "roti", index_time_window)
 
     goes_df = load_goes_xray(event, results_dir, time_window)
     sem_df = load_soho_sem(event, results_dir, time_window)
@@ -119,120 +95,74 @@ def plot_dashboard_for_event(
 
     fig = plt.figure(figsize=PLOT_FIGSIZE_DASHBOARD, constrained_layout=False)
     gs = fig.add_gridspec(
-        7, 2,
-        height_ratios=[6, 6, 2.2, 2.2, 2.2, 2.2, 2.8],
+        3, 2,
+        height_ratios=[6, 2.5, 3],
         width_ratios=[1, 1],
-        wspace=0.2, hspace=0.45,
+        wspace=0.25, hspace=0.35,
     )
 
-    map_axes = []
-    for idx, product in enumerate(PRODUCTS):
-        row = idx // 2
-        col = idx % 2
-        ax = fig.add_subplot(gs[row, col], projection=ccrs.PlateCarree())
-        map_axes.append(ax)
+    ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
+    points = map_data.get(nearest_map_time)
+    if points is not None and points.size > 0 and points.dtype.names is not None:
+        plot_global_map(ax_map, points, "roti", nearest_map_time, vmin=0.0, vmax=0.5)
 
-        points = map_data.get(product, {}).get(nearest_map_time)
-        if points is not None and points.size > 0 and points.dtype.names is not None:
-            vmin, vmax = PRODUCT_VMIN_VMAX.get(product, (None, None))
-            plot_global_map(ax, points, product, nearest_map_time, vmin=vmin, vmax=vmax)
-        else:
-            ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=LABEL_FONT_SIZE)
-
-    index_axes = []
-    for row in range(2, 6):
-        ax = fig.add_subplot(gs[row, :])
-        index_axes.append(ax)
-
-        idx = row - 2
-        product = PRODUCTS[idx]
-        df = indices_data.get(product)
-
-        if df is not None and not df.empty:
-            ax2 = ax.twinx()
-            ax3 = ax.twinx()
-            ax3.spines["right"].set_position(("axes", 1.1))
-            ax3.spines["right"].set_visible(True)
-
-            axes = [ax, ax2, ax3]
-            lines = []
-            labels = []
-
-            for axis, idx_col in zip(axes, INDEX_COLUMNS):
-                if idx_col not in df.columns:
-                    continue
-                times = df["time"]
-                values = pd.to_numeric(df[idx_col], errors="coerce")
-                valid = ~values.isna()
-                if not valid.any():
-                    continue
-                color = INDEX_COLORS.get(idx_col, "black")
-                line, = axis.plot(times[valid], values[valid], label=INDEX_LABELS.get(idx_col, idx_col),
-                                color=color, linewidth=LINE_WIDTH)
-                axis.set_ylabel(INDEX_LABELS.get(idx_col, idx_col), color=color, fontsize=LABEL_FONT_SIZE)
-                axis.tick_params(axis="y", colors=color, labelsize=TICK_FONT_SIZE)
-                axis.spines["left" if axis is ax else "right"].set_color(color)
-
-                if idx_col == "day_night":
-                    fill_negative(axis, times[valid], values[valid])
-
-                lines.append(line)
-                labels.append(INDEX_LABELS.get(idx_col, idx_col))
-
-            if lines:
-                ax.legend(lines, labels, loc="upper left", fontsize=LEGEND_FONT_SIZE, ncol=3)
-
-            add_flare_markers(ax, start_time, peak_time, end_time)
-        else:
-            ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=LABEL_FONT_SIZE)
-
-        apply_grid(ax)
-        format_time_axis(ax)
-        ax.tick_params(labelsize=TICK_FONT_SIZE)
-        if row < 5:
-            ax.set_xticklabels([])
-        else:
-            ax.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
-
-    solar_ax = fig.add_subplot(gs[6, 0])
+    ax_solar = fig.add_subplot(gs[0, 1])
     plot_solar_disk_base(
-        solar_ax,
+        ax_solar,
         flare_hpc_x=flare_row.get("hpc_x") if pd.notna(flare_row.get("hpc_x")) else None,
         flare_hpc_y=flare_row.get("hpc_y") if pd.notna(flare_row.get("hpc_y")) else None,
         solar_image=solar_image,
     )
 
-    xray_ax = fig.add_subplot(gs[6, 1])
-    xray_ax2 = xray_ax.twinx()
+    ax_idx = fig.add_subplot(gs[1, :])
+    if indices_df is not None and not indices_df.empty and "day_night" in indices_df.columns:
+        times = indices_df["time"]
+        values = pd.to_numeric(indices_df["day_night"], errors="coerce")
+        valid = ~values.isna()
+        if valid.any():
+            ax_idx.plot(times[valid], values[valid], color="black", linewidth=LINE_WIDTH, label="Day/Night")
+            fill_negative(ax_idx, times[valid], values[valid])
+            ax_idx.set_ylabel("Day/Night", fontsize=LABEL_FONT_SIZE)
+            ax_idx.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE)
+    else:
+        ax_idx.text(0.5, 0.5, "No data", transform=ax_idx.transAxes, ha="center", va="center", fontsize=LABEL_FONT_SIZE)
+
+    add_flare_markers(ax_idx, start_time, peak_time, end_time)
+    apply_grid(ax_idx)
+    format_time_axis(ax_idx)
+    ax_idx.tick_params(labelsize=TICK_FONT_SIZE)
+
+    ax_xray = fig.add_subplot(gs[2, :])
+    ax_xray2 = ax_xray.twinx()
 
     if not goes_df.empty:
         for col in GOES_XRAY_COLUMNS:
             if col in goes_df.columns:
                 color = XRAY_COLORS.get(col, "black")
-                xray_ax.semilogy(goes_df["time"], goes_df[col], label=f"GOES {col.upper()}",
+                ax_xray.semilogy(goes_df["time"], goes_df[col], label=f"GOES {col.upper()}",
                                 color=color, linewidth=LINE_WIDTH)
-        xray_ax.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE)
-        xray_ax.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
+        ax_xray.set_ylabel("Flux (W m$^{-2}$)", fontsize=LABEL_FONT_SIZE)
+        ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
     if not sem_df.empty:
         label_map = {"flux_26_34": "SEM 26-34 nm", "flux_01_50": "SEM 0.1-50 nm"}
         for col in SOHO_SEM_COLUMNS:
             if col in sem_df.columns:
-                xray_ax2.plot(sem_df["time"], sem_df[col], label=label_map.get(col, col),
+                ax_xray2.plot(sem_df["time"], sem_df[col], label=label_map.get(col, col),
                             color=EUV_COLOR, linewidth=LINE_WIDTH, linestyle="--")
-        xray_ax2.set_ylabel("EUV Flux (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE)
-        xray_ax2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
+        ax_xray2.set_ylabel("EUV (phot. cm$^{-2}$ s$^{-1}$)", fontsize=LABEL_FONT_SIZE)
+        ax_xray2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
 
-    lines1, labels1 = xray_ax.get_legend_handles_labels()
-    lines2, labels2 = xray_ax2.get_legend_handles_labels()
+    lines1, labels1 = ax_xray.get_legend_handles_labels()
+    lines2, labels2 = ax_xray2.get_legend_handles_labels()
     if lines1 or lines2:
-        xray_ax.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=LEGEND_FONT_SIZE)
+        ax_xray.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=LEGEND_FONT_SIZE)
 
-    add_flare_markers(xray_ax, start_time, peak_time, end_time)
-    apply_grid(xray_ax)
-    format_time_axis(xray_ax)
-    xray_ax.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
-    xray_ax.tick_params(labelsize=TICK_FONT_SIZE)
+    add_flare_markers(ax_xray, start_time, peak_time, end_time)
+    apply_grid(ax_xray)
+    format_time_axis(ax_xray)
+    ax_xray.set_xlabel("Time (UTC)", fontsize=LABEL_FONT_SIZE)
+    ax_xray.tick_params(labelsize=TICK_FONT_SIZE)
 
     fig.tight_layout()
 
@@ -280,7 +210,6 @@ def main() -> None:
     total_success = 0
 
     for event in events_to_process:
-        event_name = event.get("name", "unknown")
         flare_class = event.get("class", "?")
 
         if flare_class not in args.flare_classes:
@@ -294,7 +223,7 @@ def main() -> None:
         if results.get("dashboard", False):
             total_success += 1
         else:
-            logger.warning(f"[{event_name}] Failed to create dashboard")
+            logger.warning(f"[{event.get('name')}] Failed to create dashboard")
 
     logger.info(f"Done. Processed {total_processed} events, {total_success} successful dashboards")
 
