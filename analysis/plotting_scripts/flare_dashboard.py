@@ -104,11 +104,11 @@ def plot_dashboard_for_event(
     fig = plt.figure(figsize=(18, 6), constrained_layout=False)
     gs = fig.add_gridspec(
         2, 2,
-        height_ratios=[1, 1.2],
+        height_ratios=[1.8, 1],
         width_ratios=[1, 1],
         wspace=0.3, hspace=0.35,
     )
-    gs.update(left=0.06, right=0.95, top=0.85, bottom=0.10)
+    gs.update(left=0.05, right=0.95, top=0.92, bottom=0.12)
 
     fig.suptitle(
         f"{event_name} ({flare_row['class']}-class flare)\n"
@@ -201,7 +201,7 @@ def plot_dashboard_for_event(
                fontsize=18, fontweight="bold", va="top", ha="left",
                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.subplots_adjust(bottom=0.12, top=0.92, left=0.05, right=0.95)
 
     filename = f"dashboard_{nearest_map_time:%H-%M-%S_UTC}.png"
     save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)

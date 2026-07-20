@@ -254,7 +254,7 @@ def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Time
         color="black",
         ha="left",
         va="top",
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7, edgecolor="none"),
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6, edgecolor="none"),
     )
 
 
