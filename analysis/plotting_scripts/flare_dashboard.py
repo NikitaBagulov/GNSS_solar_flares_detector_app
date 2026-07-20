@@ -189,9 +189,12 @@ def plot_dashboard_for_event(
                 break
     add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, peak_data_y=peak_y)
 
-    # X-axis: limit, ticks, grid
+    # X-axis: tight around flare, ticks, grid
     ax_xray.grid(True, which="both", alpha=0.25)
-    ax_xray.set_xlim(time_window[0], time_window[1])
+    pad = pd.Timedelta(minutes=5)
+    flare_start = start_time - pad if pd.notna(start_time) else time_window[0]
+    flare_end = end_time + pad if pd.notna(end_time) else time_window[1]
+    ax_xray.set_xlim(flare_start, flare_end)
     ax_xray.xaxis.set_major_locator(mdates.MinuteLocator(interval=10))
     ax_xray.xaxis.set_minor_locator(mdates.MinuteLocator(interval=5))
     ax_xray.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))

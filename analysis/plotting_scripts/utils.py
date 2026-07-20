@@ -381,6 +381,10 @@ def plot_global_map(
     lons = points['lon']
     vals = points['vals']
 
+    # Sort so highest values plot on top
+    order = np.argsort(vals)
+    lats, lons, vals = lats[order], lons[order], vals[order]
+
     if vmin is None or vmax is None:
         vmin, vmax = PRODUCT_VMIN_VMAX.get(product, (np.nanmin(vals), np.nanmax(vals)))
 
