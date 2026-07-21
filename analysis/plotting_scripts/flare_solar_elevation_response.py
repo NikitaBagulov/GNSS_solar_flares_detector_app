@@ -432,12 +432,12 @@ def aggregate_by_elevation(
         .reset_index()
     )
 
-    grouped["elevation_left_deg"] = grouped["elevation_bin"].map(
-        lambda interval: float(interval.left)
-    )
-    grouped["elevation_right_deg"] = grouped["elevation_bin"].map(
-        lambda interval: float(interval.right)
-    )
+    grouped["elevation_left_deg"] = grouped["elevation_bin"].apply(
+        lambda iv: float(iv.left)
+    ).astype(float)
+    grouped["elevation_right_deg"] = grouped["elevation_bin"].apply(
+        lambda iv: float(iv.right)
+    ).astype(float)
     grouped["elevation_center_deg"] = (
         grouped["elevation_left_deg"] + grouped["elevation_right_deg"]
     ) / 2.0
