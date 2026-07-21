@@ -57,6 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--flare-classes", nargs="+", default=list(FLARE_CLASSES), choices=FLARE_CLASSES)
     parser.add_argument("--events", nargs="+", default=None,
                         help="Specific event names to process (e.g., 2011-08-09_X6.9).")
+    parser.add_argument("--products", nargs="+", default=["roti"], choices=list(PRODUCTS),
+                        help="Map products for panel A (default: roti).")
     parser.add_argument("--window-minutes", type=float, default=TIME_WINDOW_MINUTES)
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--max-events", type=int, default=None)
@@ -72,21 +74,24 @@ def plot_one_dashboard(
     peak_time: pd.Timestamp,
     start_time: pd.Timestamp,
     end_time: pd.Timestamp,
+    map_points: np.ndarray | None,
     map_time: pd.Timestamp,
-    map_points,
+    product: str,
     goes_df: pd.DataFrame,
     sem_df: pd.DataFrame,
     solar_image,
 ) -> None:
     panels = []
+    vmin, vmax = PRODUCT_VMIN_VMAX.get(product, (None, None))
+    product_label = PRODUCT_LABELS.get(product, product)
 
-    # --- Panel A: ROTI map ---
+    # --- Panel A: Map ---
     ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
     if map_points is not None and map_points.size > 0 and map_points.dtype.names is not None:
-        cbar = plot_global_map(ax_map, map_points, "roti", map_time, vmin=0.0, vmax=0.3)
+        cbar = plot_global_map(ax_map, map_points, product, map_time, vmin=vmin, vmax=vmax)
         if cbar:
             cbar.ax.tick_params(labelsize=11)
-            cbar.set_label("ROTI (TECU min$^{-1}$)", fontsize=12)
+            cbar.set_label(product_label, fontsize=12)
     else:
         ax_map.text(0.5, 0.5, "No data", transform=ax_map.transAxes,
                    ha="center", va="center", fontsize=LABEL_FONT_SIZE)
@@ -95,7 +100,7 @@ def plot_one_dashboard(
         ax_map.add_feature(night, zorder=3)
     except Exception as e:
         logger.warning(f"Nightshade failed: {e}")
-    ax_map.set_title(f"Global ROTI map  {map_time:%H:%M} UTC", fontsize=15, fontweight="bold")
+    ax_map.set_title(f"Global {product} map  {map_time:%H:%M} UTC", fontsize=15, fontweight="bold")
     panels.append(ax_map)
 
     # --- Panel B: Solar disk ---
@@ -176,6 +181,7 @@ def plot_dashboard_for_event(
     catalog: pd.DataFrame,
     output_dir: Path,
     window_minutes: float,
+    products: list[str],
     no_plots: bool,
 ) -> dict[str, bool]:
     flare_row = find_flare_row(event, catalog)
@@ -188,19 +194,17 @@ def plot_dashboard_for_event(
         logger.warning(f"[{event.get('name')}] No peak time")
         return {"dashboard": False}
 
-    if not event.get("maps", {}).get("roti"):
-        logger.warning(f"[{event.get('name')}] No ROTI map data for this event")
+    event_name = event.get("name", "unknown")
+    time_window = get_flare_time_window(peak_time, window_minutes)
+
+    # Pre-check products
+    available = [p for p in products if event.get("maps", {}).get(p)]
+    if not available:
+        logger.warning(f"[{event_name}] No map data for any requested product")
         return {"dashboard": False}
 
-    time_window = get_flare_time_window(peak_time, window_minutes)
-    event_name = event.get("name", "unknown")
     start_time = flare_row.get("start_time")
     end_time = flare_row.get("end_time")
-
-    timestamps, map_data = load_hdf5_map(event, results_dir, "roti", time_window)
-    if not timestamps:
-        logger.warning(f"[{event_name}] No ROTI map timestamps in window")
-        return {"dashboard": False}
 
     goes_df = load_goes_xray(event, results_dir, time_window)
     sem_df = load_soho_sem(event, results_dir, time_window)
@@ -218,44 +222,51 @@ def plot_dashboard_for_event(
     )
 
     if no_plots:
-        logger.info(f"[{event_name}] Data available, would produce {len(target_times)} dashboards")
+        logger.info(f"[{event_name}] Data available, would produce {len(target_times) * len(available)} dashboards")
         return {"dashboard": True}
 
-    success_count = 0
-    for target in target_times:
-        map_time = find_nearest_map_time(timestamps, target, tolerance_minutes=window_minutes / 2)
-        if map_time is None:
-            map_time = target
-            map_pts = None
-        else:
-            map_pts = map_data.get(map_time)
+    for product in available:
+        timestamps, map_data = load_hdf5_map(event, results_dir, product, time_window)
+        if not timestamps:
+            logger.warning(f"[{event_name}] No {product} map timestamps in window")
+            continue
 
-        fig = plt.figure(figsize=(11, 9))
-        gs = fig.add_gridspec(
-            3, 2,
-            height_ratios=[1.5, 1, 1],
-            width_ratios=[1, 1],
-            wspace=0.3, hspace=0.4,
-        )
+        success_count = 0
+        for target in target_times:
+            map_time = find_nearest_map_time(timestamps, target, tolerance_minutes=window_minutes / 2)
+            if map_time is None:
+                map_time = target
+                map_pts = None
+            else:
+                map_pts = map_data.get(map_time)
 
-        fig.suptitle(
-            f"{event_name} Solar Flare\n"
-            f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
-            fontsize=18,
-            fontweight="bold",
-            y=0.98,
-        )
+            fig = plt.figure(figsize=(11, 9))
+            gs = fig.add_gridspec(
+                3, 2,
+                height_ratios=[1.5, 1, 1],
+                width_ratios=[1, 1],
+                wspace=0.3, hspace=0.4,
+            )
 
-        plot_one_dashboard(fig, gs, event_name, flare_row, peak_time,
-                          start_time, end_time, map_time, map_pts,
-                          goes_df, sem_df, solar_image)
+            fig.suptitle(
+                f"{event_name} Solar Flare — {product}\n"
+                f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
+                fontsize=18,
+                fontweight="bold",
+                y=0.98,
+            )
 
-        filename = f"dashboard_{map_time:%H-%M-%S_UTC}.png"
-        save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
-        plt.close(fig)
-        success_count += 1
+            plot_one_dashboard(fig, gs, event_name, flare_row, peak_time,
+                              start_time, end_time, map_pts, map_time, product,
+                              goes_df, sem_df, solar_image)
 
-    logger.info(f"[{event_name}] Saved {success_count}/{len(target_times)} dashboards")
+            filename = f"dashboard_{product}_{map_time:%H-%M-%S_UTC}.png"
+            save_figure(fig, event_name, OUTPUT_SUBDIRS["dashboard"], filename, output_dir)
+            plt.close(fig)
+            success_count += 1
+
+        logger.info(f"[{event_name}/{product}] Saved {success_count}/{len(target_times)} dashboards")
+
     return {"dashboard": True}
 
 
@@ -293,7 +304,7 @@ def main() -> None:
     for event in events_to_process:
         results = plot_dashboard_for_event(
             event, results_dir, catalog, output_dir,
-            args.window_minutes, args.no_plots
+            args.window_minutes, args.products, args.no_plots
         )
         total += 1
         if results.get("dashboard", False):
