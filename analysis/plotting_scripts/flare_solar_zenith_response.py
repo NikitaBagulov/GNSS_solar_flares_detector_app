@@ -120,6 +120,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional limit on the number of event directories.",
     )
     parser.add_argument(
+        "--events",
+        nargs="+",
+        default=None,
+        help="Specific event names to process (e.g., 2011-08-09_X6.9). Overrides --max-events and --last-n-per-class.",
+    )
+    parser.add_argument(
         "--last-n-per-class",
         type=int,
         default=None,
@@ -357,10 +363,14 @@ def collect_points(
     response_mode: str,
     max_events: int | None,
     last_n_per_class: int | None,
+    events: list[str] | None = None,
 ) -> pd.DataFrame:
     event_dirs = find_event_dirs(results_dir)
 
-    if last_n_per_class is not None:
+    if events is not None:
+        wanted = set(events)
+        event_dirs = [d for d in event_dirs if d.name in wanted]
+    elif last_n_per_class is not None:
         event_dirs = _filter_last_n_per_class(event_dirs, last_n_per_class)
     elif max_events is not None:
         event_dirs = event_dirs[:max_events]
@@ -461,6 +471,7 @@ def plot_one_product(
     output_dir: Path,
     response_mode: str,
     min_count: int,
+    event_name: str | None = None,
 ) -> None:
     data = stats[
         (stats["product"] == product) & (stats["count"] >= min_count)
@@ -480,12 +491,14 @@ def plot_one_product(
     ax.axvline(90.0, linestyle="--", linewidth=1.2, label="Horizon (SZA = 90\u00b0)")
     ax.set_xlabel("Solar zenith angle (degrees)")
     ax.set_ylabel(ylabel_for_mode(product, response_mode))
-    ax.set_title(f"{PRODUCT_LABELS.get(product, product)} vs solar zenith angle")
+    suffix = f" — {event_name}" if event_name else ""
+    ax.set_title(f"{PRODUCT_LABELS.get(product, product)} vs solar zenith angle{suffix}")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
+    label = f"_{event_name}" if event_name else ""
     fig.savefig(
-        output_dir / f"response_vs_solar_zenith_{product}.png",
+        output_dir / f"response_vs_solar_zenith_{product}{label}.png",
         dpi=160,
         bbox_inches="tight",
     )
@@ -498,6 +511,7 @@ def plot_all_products(
     output_dir: Path,
     response_mode: str,
     min_count: int,
+    event_name: str | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(11, 7))
     plotted = False
@@ -530,12 +544,14 @@ def plot_all_products(
     ax.axvline(90.0, linestyle="--", linewidth=1.2, label="Horizon (SZA = 90\u00b0)")
     ax.set_xlabel("Solar zenith angle (degrees)")
     ax.set_ylabel(f"Normalized mean {response_mode} response")
-    ax.set_title("Normalized response versus solar zenith angle")
+    suffix = f" — {event_name}" if event_name else ""
+    ax.set_title(f"Normalized response versus solar zenith angle{suffix}")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
+    label = f"_{event_name}" if event_name else ""
     fig.savefig(
-        output_dir / "response_vs_solar_zenith_all.png",
+        output_dir / f"response_vs_solar_zenith_all{label}.png",
         dpi=160,
         bbox_inches="tight",
     )
@@ -564,6 +580,7 @@ def main() -> None:
         response_mode=args.response_mode,
         max_events=args.max_events,
         last_n_per_class=args.last_n_per_class,
+        events=args.events,
     )
     if points.empty:
         raise SystemExit(
@@ -587,6 +604,9 @@ def main() -> None:
         points.to_csv(points_path, index=False)
         LOGGER.info("Saved %s", points_path)
 
+    events_in_data = points["event"].unique()
+    event_name = events_in_data[0] if len(events_in_data) == 1 else None
+
     for product in args.products:
         plot_one_product(
             stats=stats,
@@ -594,6 +614,7 @@ def main() -> None:
             output_dir=output_dir,
             response_mode=args.response_mode,
             min_count=args.min_count,
+            event_name=event_name,
         )
 
     plot_all_products(
@@ -602,6 +623,7 @@ def main() -> None:
         output_dir=output_dir,
         response_mode=args.response_mode,
         min_count=args.min_count,
+        event_name=event_name,
     )
 
     LOGGER.info(
