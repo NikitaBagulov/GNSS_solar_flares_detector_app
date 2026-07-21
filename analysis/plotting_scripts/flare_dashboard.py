@@ -55,6 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--flares-csv", type=Path, default=DEFAULT_FLARES_CSV)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--flare-classes", nargs="+", default=list(FLARE_CLASSES), choices=FLARE_CLASSES)
+    parser.add_argument("--events", nargs="+", default=None,
+                        help="Specific event names to process (e.g., 2011-08-09_X6.9).")
     parser.add_argument("--window-minutes", type=float, default=TIME_WINDOW_MINUTES)
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--max-events", type=int, default=None)
@@ -279,17 +281,16 @@ def main() -> None:
     logger.info(f"Found {len(events)} events, catalog has {len(catalog)} rows")
     logger.info(f"Filtering for classes: {args.flare_classes}")
 
-    for ev in events[:3]:
-        logger.info(f"  Example event: name={ev.get('name')}, class={ev.get('class')!r}")
-
-    events_to_process = events[:args.max_events] if args.max_events else events
+    # Filter by events, class, then max-events
+    filtered = events
+    if args.events:
+        wanted = set(args.events)
+        filtered = [ev for ev in filtered if ev.get("name") in wanted]
+        logger.info(f"Filtered to {len(filtered)} events by name")
+    filtered = [ev for ev in filtered if ev.get("class") in args.flare_classes]
+    events_to_process = filtered[:args.max_events] if args.max_events else filtered
     total = success = 0
     for event in events_to_process:
-        klass = event.get("class")
-        if klass not in args.flare_classes:
-            if args.verbose:
-                logger.debug(f"  Skipping {event.get('name')} (class={klass!r})")
-            continue
         results = plot_dashboard_for_event(
             event, results_dir, catalog, output_dir,
             args.window_minutes, args.no_plots
