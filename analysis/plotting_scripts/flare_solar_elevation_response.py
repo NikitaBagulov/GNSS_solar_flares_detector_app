@@ -499,11 +499,8 @@ def plot_one_product(
     fig, ax = plt.subplots(figsize=(10, 6))
     x = data["elevation_center_deg"].to_numpy()
     y = data["mean"].to_numpy()
-    q25 = data["q25"].to_numpy()
-    q75 = data["q75"].to_numpy()
 
-    ax.plot(x, y, marker="o", linewidth=1.8, label="Mean")
-    ax.fill_between(x, q25, q75, alpha=0.2, label="25\u201375 percentile")
+    ax.plot(x, y, marker="o", linewidth=1.8)
     ax.axvline(0.0, linestyle="--", linewidth=1.2, label="Horizon")
     ax.set_xlabel("Solar elevation angle (degrees)")
     ax.set_ylabel(ylabel_for_mode(product, response_mode))
