@@ -120,6 +120,13 @@ def parse_args() -> argparse.Namespace:
         help="Specific event names to process (e.g., 2011-08-09_X6.9). Overrides --max-events and --last-n-per-class.",
     )
     parser.add_argument(
+        "--classes",
+        nargs="+",
+        default=None,
+        choices=("C", "M", "X"),
+        help="Filter by flare class (C, M, X). Used together with --last-n-per-class.",
+    )
+    parser.add_argument(
         "--last-n-per-class",
         type=int,
         default=None,
@@ -345,17 +352,20 @@ def _parse_event_class(name: str) -> str | None:
 
 
 def _filter_last_n_per_class(
-    event_dirs: list[Path], n: int
+    event_dirs: list[Path], n: int, classes: tuple[str, ...] | None = None
 ) -> list[Path]:
-    """Keep last n event dirs per class (C, M, X), sorted by name."""
     by_class: dict[str, list[Path]] = {}
     for d in event_dirs:
         cls = _parse_event_class(d.name)
+        if classes is not None and cls not in classes:
+            continue
         if cls and cls in ("C", "M", "X"):
             by_class.setdefault(cls, []).append(d)
+    target_classes = classes or ("C", "M", "X")
     result: list[Path] = []
-    for cls in ("C", "M", "X"):
+    for cls in target_classes:
         selected = by_class.get(cls, [])
+        result.extend(selected[-n:])
         result.extend(selected[-n:])
     return sorted(result, key=lambda p: p.name)
 
@@ -367,6 +377,7 @@ def collect_points(
     max_events: int | None,
     last_n_per_class: int | None,
     events: list[str] | None = None,
+    classes: list[str] | None = None,
 ) -> pd.DataFrame:
     event_dirs = find_event_dirs(results_dir)
 
@@ -374,7 +385,10 @@ def collect_points(
         wanted = set(events)
         event_dirs = [d for d in event_dirs if d.name in wanted]
     elif last_n_per_class is not None:
-        event_dirs = _filter_last_n_per_class(event_dirs, last_n_per_class)
+        event_dirs = _filter_last_n_per_class(
+            event_dirs, last_n_per_class,
+            classes=tuple(classes) if classes else None,
+        )
     elif max_events is not None:
         event_dirs = event_dirs[:max_events]
 
@@ -583,6 +597,7 @@ def main() -> None:
         max_events=args.max_events,
         last_n_per_class=args.last_n_per_class,
         events=args.events,
+        classes=args.classes,
     )
     if points.empty:
         raise SystemExit(
