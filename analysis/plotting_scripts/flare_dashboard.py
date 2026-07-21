@@ -237,7 +237,7 @@ def plot_dashboard_for_event(
         )
 
         fig.suptitle(
-            f"{event_name} ({flare_row['class']}-class flare)\n"
+            f"{event_name} Solar Flare\n"
             f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
             fontsize=18,
             fontweight="bold",
