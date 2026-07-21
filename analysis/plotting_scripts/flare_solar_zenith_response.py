@@ -499,9 +499,17 @@ def plot_one_product(
     fig, ax = plt.subplots(figsize=(10, 6))
     x = data["zenith_center_deg"].to_numpy()
     y = data["mean"].to_numpy()
+    counts = data["count"].to_numpy()
 
-    ax.plot(x, y, marker="o", linewidth=1.8)
-    ax.axvline(90.0, linestyle="--", linewidth=1.2, label="Horizon (SZA = 90\u00b0)")
+    # Connector line
+    ax.plot(x, y, color="grey", linewidth=1.2, alpha=0.6, zorder=2)
+    # Scatter points colored by count using plasma colormap
+    sc = ax.scatter(x, y, c=counts, cmap="plasma", s=60, edgecolors="grey",
+                    linewidths=0.6, zorder=3)
+    cbar = fig.colorbar(sc, ax=ax, label="Number of observations")
+    cbar.ax.tick_params(labelsize=11)
+
+    ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=0.7, label="Horizon (SZA = 90\u00b0)")
     ax.set_xlabel("Solar zenith angle (degrees)")
     ax.set_ylabel(ylabel_for_mode(product, response_mode))
     suffix = f" — {event_name}" if event_name else ""
@@ -528,8 +536,10 @@ def plot_all_products(
 ) -> None:
     fig, ax = plt.subplots(figsize=(11, 7))
     plotted = False
+    plasma = plt.colormaps["plasma"]
+    product_list = [p for p in products]
 
-    for product in products:
+    for i, product in enumerate(product_list):
         data = stats[
             (stats["product"] == product) & (stats["count"] >= min_count)
         ].copy()
@@ -540,11 +550,13 @@ def plot_all_products(
         if not np.isfinite(scale) or scale == 0:
             continue
 
+        color = plasma(i / max(len(product_list) - 1, 1))
         ax.plot(
             data["zenith_center_deg"],
             data["mean"] / scale,
             marker="o",
             linewidth=1.7,
+            color=color,
             label=PRODUCT_LABELS.get(product, product),
         )
         plotted = True
@@ -554,7 +566,7 @@ def plot_all_products(
         LOGGER.warning("No data available for combined normalized plot")
         return
 
-    ax.axvline(90.0, linestyle="--", linewidth=1.2, label="Horizon (SZA = 90\u00b0)")
+    ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=0.7, label="Horizon (SZA = 90\u00b0)")
     ax.set_xlabel("Solar zenith angle (degrees)")
     ax.set_ylabel(f"Normalized mean {response_mode} response")
     suffix = f" — {event_name}" if event_name else ""

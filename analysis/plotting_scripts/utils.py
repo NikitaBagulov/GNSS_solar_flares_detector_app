@@ -241,8 +241,9 @@ def find_flare_row(event: dict, catalog: pd.DataFrame) -> pd.Series | None:
     return None
 
 
-def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15, peak_lw: float = 2.5, show_label: bool = True) -> None:
-    ax.axvspan(start_time, end_time, color="orange", alpha=0.12, zorder=0)
+def add_flare_markers(ax: plt.Axes, start_time: pd.Timestamp, peak_time: pd.Timestamp, end_time: pd.Timestamp, alpha: float = 0.15, peak_lw: float = 2.5, show_label: bool = True, show_vspan: bool = True) -> None:
+    if show_vspan:
+        ax.axvspan(start_time, end_time, color="orange", alpha=0.12, zorder=0)
     ax.axvline(peak_time, color="red", linestyle="--", linewidth=peak_lw, alpha=0.9, zorder=5)
     if show_label:
         ax.annotate(

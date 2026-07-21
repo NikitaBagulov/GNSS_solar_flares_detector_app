@@ -130,7 +130,7 @@ def plot_one_dashboard(
         ax_xray.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
         ax_xray.legend(fontsize=LEGEND_FONT_SIZE, framealpha=0.8, edgecolor="none", loc="lower right")
 
-    add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, show_label=False)
+    add_flare_markers(ax_xray, start_time, peak_time, end_time, peak_lw=1.5, show_label=False, show_vspan=False)
     ax_xray.grid(True, which="both", alpha=0.25)
     t0 = peak_time - pd.Timedelta(minutes=15)
     t1 = peak_time + pd.Timedelta(minutes=15)
@@ -249,7 +249,7 @@ def plot_dashboard_for_event(
             )
 
             fig.suptitle(
-                f"{event_name} Solar Flare — {product}\n"
+                f"{event_name} Solar Flare\n"
                 f"Peak: {peak_time:%Y-%m-%d %H:%M:%S UTC}",
                 fontsize=18,
                 fontweight="bold",
