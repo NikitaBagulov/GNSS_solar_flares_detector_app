@@ -583,6 +583,93 @@ def plot_all_products(
     plt.close(fig)
 
 
+def select_event_dirs(
+    results_dir: Path,
+    events: list[str] | None,
+    max_events: int | None,
+    last_n_per_class: int | None,
+    classes: list[str] | None,
+) -> list[Path]:
+    """Select event directories using the command-line filters."""
+    event_dirs = find_event_dirs(results_dir)
+
+    if events is not None:
+        wanted = set(events)
+        event_dirs = [d for d in event_dirs if d.name in wanted]
+        missing = sorted(wanted - {d.name for d in event_dirs})
+        for event_name in missing:
+            LOGGER.warning("Event directory with map data was not found: %s", event_name)
+    elif last_n_per_class is not None:
+        event_dirs = _filter_last_n_per_class(
+            event_dirs,
+            last_n_per_class,
+            classes=tuple(classes) if classes else None,
+        )
+    elif max_events is not None:
+        event_dirs = event_dirs[:max_events]
+
+    return event_dirs
+
+
+def write_event_outputs(
+    points: pd.DataFrame,
+    products: Iterable[str],
+    output_dir: Path,
+    response_mode: str,
+    bin_width: float,
+    min_zenith_angle: float,
+    max_zenith_angle: float,
+    min_count: int,
+    save_points: bool,
+    event_name: str,
+) -> None:
+    """Write CSV tables and plots for one event."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stats = aggregate_by_zenith_angle(
+        points=points,
+        bin_width=bin_width,
+        min_zenith_angle=min_zenith_angle,
+        max_zenith_angle=max_zenith_angle,
+    )
+
+    stats_path = output_dir / "response_vs_solar_zenith_stats.csv"
+    stats.to_csv(stats_path, index=False)
+    LOGGER.info("Saved %s", stats_path)
+
+    if save_points:
+        points_path = output_dir / "response_vs_solar_zenith_points.csv"
+        points.to_csv(points_path, index=False)
+        LOGGER.info("Saved %s", points_path)
+
+    for product in products:
+        plot_one_product(
+            stats=stats,
+            product=product,
+            output_dir=output_dir,
+            response_mode=response_mode,
+            min_count=min_count,
+            event_name=event_name,
+        )
+
+    plot_all_products(
+        stats=stats,
+        products=products,
+        output_dir=output_dir,
+        response_mode=response_mode,
+        min_count=min_count,
+        event_name=event_name,
+    )
+
+    LOGGER.info(
+        "[%s] Done: %d points, %d statistical rows, output=%s",
+        event_name,
+        len(points),
+        len(stats),
+        output_dir,
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -597,65 +684,66 @@ def main() -> None:
     if not results_dir.exists():
         raise SystemExit(f"Results directory does not exist: {results_dir}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    points = collect_points(
+    event_dirs = select_event_dirs(
         results_dir=results_dir,
-        products=args.products,
-        response_mode=args.response_mode,
+        events=args.events,
         max_events=args.max_events,
         last_n_per_class=args.last_n_per_class,
-        events=args.events,
         classes=args.classes,
     )
-    if points.empty:
+    if not event_dirs:
         raise SystemExit(
-            "No valid map points were found. Check the directory layout, "
-            "HDF5 group 'data', and structured fields lat/lon/vals."
+            "No matching event directories with map files were found. "
+            "Check --events and the results directory layout."
         )
 
-    stats = aggregate_by_zenith_angle(
-        points=points,
-        bin_width=args.bin_width,
-        min_zenith_angle=args.min_zenith_angle,
-        max_zenith_angle=args.max_zenith_angle,
-    )
+    LOGGER.info("Processing %d events separately", len(event_dirs))
+    successful = 0
 
-    stats_path = output_dir / "response_vs_solar_zenith_stats.csv"
-    stats.to_csv(stats_path, index=False)
-    LOGGER.info("Saved %s", stats_path)
+    for index, event_dir in enumerate(event_dirs, start=1):
+        event_name = event_dir.name
+        LOGGER.info("[%d/%d] %s", index, len(event_dirs), event_name)
 
-    if args.save_points:
-        points_path = output_dir / "response_vs_solar_zenith_points.csv"
-        points.to_csv(points_path, index=False)
-        LOGGER.info("Saved %s", points_path)
-
-    events_in_data = points["event"].unique()
-    event_name = events_in_data[0] if len(events_in_data) == 1 else None
-
-    for product in args.products:
-        plot_one_product(
-            stats=stats,
-            product=product,
-            output_dir=output_dir,
+        points = collect_points(
+            results_dir=results_dir,
+            products=args.products,
             response_mode=args.response_mode,
+            max_events=None,
+            last_n_per_class=None,
+            events=[event_name],
+            classes=None,
+        )
+        if points.empty:
+            LOGGER.warning(
+                "[%s] No valid map points; skipping this event",
+                event_name,
+            )
+            continue
+
+        write_event_outputs(
+            points=points,
+            products=args.products,
+            output_dir=output_dir / event_name,
+            response_mode=args.response_mode,
+            bin_width=args.bin_width,
+            min_zenith_angle=args.min_zenith_angle,
+            max_zenith_angle=args.max_zenith_angle,
             min_count=args.min_count,
+            save_points=args.save_points,
             event_name=event_name,
         )
+        successful += 1
 
-    plot_all_products(
-        stats=stats,
-        products=args.products,
-        output_dir=output_dir,
-        response_mode=args.response_mode,
-        min_count=args.min_count,
-        event_name=event_name,
-    )
+    if successful == 0:
+        raise SystemExit(
+            "No valid map points were found for any selected event. Check the "
+            "HDF5 group 'data' and structured fields lat/lon/vals."
+        )
 
     LOGGER.info(
-        "Done: %d points, %d statistical rows, output=%s",
-        len(points),
-        len(stats),
+        "Done: %d/%d events produced outputs under %s",
+        successful,
+        len(event_dirs),
         output_dir,
     )
 
