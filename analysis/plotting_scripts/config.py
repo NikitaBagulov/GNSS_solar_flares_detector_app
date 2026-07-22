@@ -24,9 +24,9 @@ PRODUCT_VMIN_VMAX = {
 
 PRODUCT_CMAPS = {
     "roti": "plasma",
-    "dtec_2_10": "RdBu_r",
-    "dtec_10_20": "RdBu_r",
-    "dtec_20_60": "RdBu_r",
+    "dtec_2_10": "plasma",
+    "dtec_10_20": "plasma",
+    "dtec_20_60": "plasma",
 }
 
 FLARE_CLASSES = ("C", "M", "X")

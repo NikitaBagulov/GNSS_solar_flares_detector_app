@@ -536,7 +536,7 @@ def plot_all_products(
 ) -> None:
     fig, ax = plt.subplots(figsize=(11, 7))
     plotted = False
-    plasma = plt.colormaps["plasma"]
+    plasma = plt.cm.plasma
     product_list = [p for p in products]
 
     for i, product in enumerate(product_list):
