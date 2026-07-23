@@ -511,6 +511,8 @@ def plot_one_product(
 
     ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=0.7, label="Horizon (SZA = 90\u00b0)")
     ax.set_xlabel("Solar zenith angle (degrees)")
+    ax.set_xlim(0.0, 180.0)
+    ax.set_xticks(np.arange(0.0, 181.0, 30.0))
     ax.set_ylabel(ylabel_for_mode(product, response_mode))
     suffix = f" — {event_name}" if event_name else ""
     ax.set_title(f"{PRODUCT_LABELS.get(product, product)} vs solar zenith angle{suffix}")
@@ -568,6 +570,8 @@ def plot_all_products(
 
     ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=0.7, label="Horizon (SZA = 90\u00b0)")
     ax.set_xlabel("Solar zenith angle (degrees)")
+    ax.set_xlim(0.0, 180.0)
+    ax.set_xticks(np.arange(0.0, 181.0, 30.0))
     ax.set_ylabel(f"Normalized mean {response_mode} response")
     suffix = f" — {event_name}" if event_name else ""
     ax.set_title(f"Normalized response versus solar zenith angle{suffix}")
