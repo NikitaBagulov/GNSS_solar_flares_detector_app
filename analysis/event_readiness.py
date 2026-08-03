@@ -28,7 +28,8 @@ def valid_map(path: Path) -> bool:
     try:
         with h5py.File(path, "r") as handle:
             return "data" in handle and len(handle["data"]) > 0
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"WARNING: invalid HDF5 map {path}: {exc}", file=sys.stderr)
         return False
 
 
