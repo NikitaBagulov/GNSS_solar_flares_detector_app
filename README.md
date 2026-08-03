@@ -111,6 +111,46 @@ results/
       graphs/
 ```
 
+## Проверка готовности уже вычисленных событий
+
+Показать, какие карты, индексы и графики уже существуют и какие события можно
+быстро довычислить:
+
+```bash
+python3 -m analysis.event_readiness --results-dir results
+```
+
+Сохранить полный отчёт в CSV:
+
+```bash
+python3 -m analysis.event_readiness \
+  --results-dir results \
+  --output analysis/event_readiness.csv
+```
+
+Вывести только события с готовыми картами и отсутствующими индексами:
+
+```bash
+python3 -m analysis.event_readiness \
+  --results-dir results \
+  --status ready_for_index \
+  --format events
+```
+
+Пересчитать индексы для выбранных событий напрямую из уже готовых HDF5-карт:
+
+```bash
+python3 -m analysis.recompute_existing_indices \
+  --results-dir results \
+  --events 2025-11-11_X5.2 \
+  --policy overwrite \
+  --backup-existing \
+  --report analysis/recompute_report.csv
+```
+
+Последовательность вычислений для статьи приведена в
+[`docs/SERVER_COMPUTATION_STAGES.md`](docs/SERVER_COMPUTATION_STAGES.md).
+
 State и скачанные данные по умолчанию:
 
 ```text
