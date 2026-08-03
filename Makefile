@@ -1,4 +1,4 @@
-PYTHON ?= python
+PYTHON ?= python3
 PIP ?= pip
 PYTEST ?= pytest
 
@@ -11,7 +11,7 @@ DATA_DOWNLOAD_PATH ?= ./data
 STATE_JSON_PATH ?= ./data/state.json
 STEPS ?= discovery preprocessing index plotting
 RESULTS_DIR ?= ./results
-RESULTS_PORT ?= 8000
+RESULTS_PORT ?= 8001
 EXISTING_DATA_POLICY ?= validate
 
 .PHONY: help install test test-verbose run run-service serve-results cli-help lint clean
@@ -63,7 +63,7 @@ run-service:
 		--steps $(STEPS)
 
 serve-results:
-	$(PYTHON) results_server.py --port $(RESULTS_PORT) --directory $(RESULTS_DIR)
+	$(PYTHON) results_server.py --bind 0.0.0.0 --port $(RESULTS_PORT) --directory $(RESULTS_DIR)
 
 lint:
 	@echo "Lint target не настроен: в репозитории не найден конфиг линтера."
