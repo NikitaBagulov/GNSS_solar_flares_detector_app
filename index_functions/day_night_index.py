@@ -87,6 +87,21 @@ def _mad(x):
     return float(np.median(np.abs(x - med)))
 
 
+def _day_geometry(distance_from_subsolar, min_cos=1e-6):
+    """Return day weights and cos(chi) divisors for subsolar distances.
+
+    The linear distance weight is 1 at the subsolar point and 0 at the
+    terminator.  The divisor is clipped only for numerical safety; the weight
+    simultaneously tends to zero as cos(chi) tends to zero.
+    """
+    distances = np.asarray(distance_from_subsolar, dtype=float)
+    quarter_circ = np.pi * RE_meters / 2.0
+    weights = np.clip(1.0 - distances / quarter_circ, 0.0, 1.0)
+    cos_chi = np.cos(distances / RE_meters)
+    divisors = np.maximum(cos_chi, float(min_cos))
+    return weights, divisors
+
+
 def calculate_index(points, is_day=True):
     if len(points) == 0:
         return 0.0
@@ -140,17 +155,15 @@ def compute_day_night_index(
     if np.sum(day_mask) == 0 or np.sum(night_mask) == 0:
         return 0.0
 
-    d_term = np.abs(delta) * RE_meters
-
-    d_day = d_term[day_mask]
+    d_day = distances[day_mask]
     v_day = vals[day_mask]
     v_night = vals[night_mask]
 
-    quarter_circ = 2 * np.pi * RE_meters / 4.0
-    w_day = np.maximum(0.0, 1.0 - d_day / quarter_circ)
+    w_day, cos_day = _day_geometry(d_day, min_cos=eps_abs)
+    v_day_corrected = v_day / cos_day
 
     if np.sum(w_day) > 0:
-        mu_day = np.sum(v_day * w_day) / np.sum(w_day)
+        mu_day = np.sum(v_day_corrected * w_day) / np.sum(w_day)
     else:
         mu_day = 0.0
 
