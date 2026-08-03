@@ -5,6 +5,7 @@ import pytest
 
 from index_functions.day_night_index import (
     RE_meters,
+    _day_geometry,
     compute_day_night_index,
     great_circle_distance_vec,
 )
@@ -27,6 +28,19 @@ def test_great_circle_distance_zero_and_quarter_circumference():
 def test_day_night_index_returns_zero_for_invalid_or_one_sided_data():
     assert compute_day_night_index([], datetime(2025, 1, 1), debug=False) == 0.0
     assert compute_day_night_index([[0.0, 0.0, 1.0]], datetime(2025, 1, 1), debug=False) == 0.0
+
+
+def test_day_geometry_weight_decreases_from_subsolar_point_to_terminator():
+    quarter_circ = np.pi * RE_meters / 2.0
+    weights, divisors = _day_geometry(
+        np.array([0.0, quarter_circ / 2.0, quarter_circ]),
+        min_cos=1e-6,
+    )
+
+    assert weights == pytest.approx([1.0, 0.5, 0.0])
+    assert divisors[0] == pytest.approx(1.0)
+    assert divisors[1] == pytest.approx(np.sqrt(0.5))
+    assert divisors[2] == pytest.approx(1e-6)
 
 
 def test_day_night_index_produces_finite_value_for_day_and_night_points():
