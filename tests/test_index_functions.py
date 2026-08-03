@@ -6,6 +6,7 @@ import pytest
 from index_functions.day_night_index import (
     RE_meters,
     _day_geometry,
+    _subsolar_point,
     compute_day_night_index,
     great_circle_distance_vec,
 )
@@ -81,3 +82,45 @@ def test_isfai_index_filters_invalid_points_and_returns_finite_value():
     )
 
     assert np.isfinite(value)
+
+
+def test_day_night_variants_are_explicit_and_distinct():
+    when = datetime(2025, 3, 20, 12, 0, 0)
+    sub_lat, sub_lon = _subsolar_point(when)
+    wrap = lambda lon: (lon + 180.0) % 360.0 - 180.0
+    points = [
+        [sub_lat, sub_lon, 1.0],
+        [sub_lat, wrap(sub_lon + 80.0), 8.0],
+        [sub_lat, wrap(sub_lon + 180.0), 0.5],
+    ]
+
+    legacy = compute_day_night_index(points, when, variant="legacy")
+    weighted = compute_day_night_index(points, when, variant="distance_weight")
+    corrected = compute_day_night_index(points, when, variant="distance_weight_cos")
+
+    assert legacy != pytest.approx(weighted)
+    assert corrected != pytest.approx(weighted)
+    assert all(np.isfinite(value) for value in (legacy, weighted, corrected))
+
+
+def test_cosine_variant_supports_terminator_exclusion_and_epsilon_sensitivity():
+    when = datetime(2025, 3, 20, 12, 0, 0)
+    sub_lat, sub_lon = _subsolar_point(when)
+    wrap = lambda lon: (lon + 180.0) % 360.0 - 180.0
+    points = [
+        [sub_lat, sub_lon, 1.0],
+        [sub_lat, wrap(sub_lon + 89.9), 20.0],
+        [sub_lat, wrap(sub_lon + 180.0), 0.5],
+    ]
+
+    included = compute_day_night_index(
+        points, when, variant="distance_weight_cos", eps_abs=1e-3,
+    )
+    excluded = compute_day_night_index(
+        points, when, variant="distance_weight_cos", eps_abs=1e-3,
+        exclude_terminator_deg=5.0,
+    )
+
+    assert np.isfinite(included)
+    assert np.isfinite(excluded)
+    assert included != pytest.approx(excluded)

@@ -105,8 +105,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-count",
         type=int,
-        default=20,
-        help="Minimum number of points required to plot a bin.",
+        default=3,
+        help="Minimum number of independent time slices required to plot a bin.",
+    )
+    parser.add_argument(
+        "--baseline-slices",
+        type=int,
+        default=0,
+        help="Subtract the per-bin median of the first N time slices (0 disables baseline subtraction).",
     )
     parser.add_argument(
         "--save-points",
@@ -415,175 +421,127 @@ def aggregate_by_zenith_angle(
     bin_width: float,
     min_zenith_angle: float,
     max_zenith_angle: float,
+    baseline_slices: int = 0,
 ) -> pd.DataFrame:
+    """Aggregate independent time-bin medians, not millions of map points."""
     if bin_width <= 0:
         raise ValueError("--bin-width must be positive")
     if min_zenith_angle >= max_zenith_angle:
         raise ValueError("--min-zenith-angle must be below --max-zenith-angle")
+    if baseline_slices < 0:
+        raise ValueError("--baseline-slices cannot be negative")
 
-    edges = np.arange(
-        min_zenith_angle,
-        max_zenith_angle + bin_width,
-        bin_width,
-        dtype=float,
-    )
+    edges = np.arange(min_zenith_angle, max_zenith_angle + bin_width, bin_width, dtype=float)
     if edges[-1] < max_zenith_angle:
         edges = np.append(edges, max_zenith_angle)
-
-    selected = points[
-        points["solar_zenith_angle_deg"].between(
-            min_zenith_angle, max_zenith_angle, inclusive="both"
-        )
-    ].copy()
-
+    selected = points[points["solar_zenith_angle_deg"].between(
+        min_zenith_angle, max_zenith_angle, inclusive="both"
+    )].copy()
     selected["zenith_bin"] = pd.cut(
-        selected["solar_zenith_angle_deg"],
-        bins=edges,
-        include_lowest=True,
-        right=False,
+        selected["solar_zenith_angle_deg"], bins=edges,
+        include_lowest=True, right=False,
     )
 
-    grouped = (
-        selected.groupby(["product", "zenith_bin"], observed=True)["response"]
-        .agg(
-            count="count",
-            mean="mean",
-            median="median",
-            std="std",
-            q25=lambda x: x.quantile(0.25),
-            q75=lambda x: x.quantile(0.75),
+    per_time = selected.groupby(
+        ["event", "time", "product", "zenith_bin"], observed=True
+    )["response"].agg(time_response="median", point_count="count").reset_index()
+    per_time = per_time.sort_values(["product", "zenith_bin", "time"])
+    if baseline_slices:
+        baseline = per_time.groupby(["product", "zenith_bin"], observed=True)["time_response"].transform(
+            lambda values: values.iloc[:baseline_slices].median()
         )
-        .reset_index()
-    )
+        per_time["time_response"] = per_time["time_response"] - baseline
 
-    grouped["zenith_left_deg"] = grouped["zenith_bin"].apply(
-        lambda iv: float(iv.left)
-    ).astype(float)
-    grouped["zenith_right_deg"] = grouped["zenith_bin"].apply(
-        lambda iv: float(iv.right)
-    ).astype(float)
-    grouped["zenith_center_deg"] = (
-        grouped["zenith_left_deg"] + grouped["zenith_right_deg"]
-    ) / 2.0
-    grouped["sem"] = grouped["std"] / np.sqrt(grouped["count"].clip(lower=1))
-
-    return grouped.drop(columns="zenith_bin").sort_values(
-        ["product", "zenith_center_deg"]
-    )
+    grouped = per_time.groupby(["product", "zenith_bin"], observed=True).agg(
+        time_count=("time_response", "count"),
+        point_count=("point_count", "sum"),
+        mean=("time_response", "mean"),
+        median=("time_response", "median"),
+        std=("time_response", "std"),
+        q25=("time_response", lambda x: x.quantile(0.25)),
+        q75=("time_response", lambda x: x.quantile(0.75)),
+    ).reset_index()
+    grouped["count"] = grouped["time_count"]
+    grouped["zenith_left_deg"] = grouped["zenith_bin"].apply(lambda iv: float(iv.left)).astype(float)
+    grouped["zenith_right_deg"] = grouped["zenith_bin"].apply(lambda iv: float(iv.right)).astype(float)
+    grouped["zenith_center_deg"] = (grouped["zenith_left_deg"] + grouped["zenith_right_deg"]) / 2.0
+    grouped["sem"] = grouped["std"] / np.sqrt(grouped["time_count"].clip(lower=1))
+    return grouped.drop(columns="zenith_bin").sort_values(["product", "zenith_center_deg"])
 
 
 def ylabel_for_mode(product: str, response_mode: str) -> str:
     base = PRODUCT_LABELS.get(product, product)
-    if response_mode == "signed":
-        return f"Mean response: {base}"
-    if response_mode == "absolute":
-        return f"Mean absolute response: {base}"
-    return f"Mean squared response: {base}\u00b2"
+    return f"Median {response_mode} response: {base}"
 
 
 def plot_one_product(
-    stats: pd.DataFrame,
-    product: str,
-    output_dir: Path,
-    response_mode: str,
-    min_count: int,
-    event_name: str | None = None,
+    stats: pd.DataFrame, product: str, output_dir: Path,
+    response_mode: str, min_count: int, event_name: str | None = None,
 ) -> None:
-    data = stats[
-        (stats["product"] == product) & (stats["count"] >= min_count)
-    ].copy()
+    data = stats[(stats["product"] == product) & (stats["time_count"] >= min_count)].copy()
     if data.empty:
-        LOGGER.warning("No sufficiently populated bins for %s", product)
+        LOGGER.warning("No bins with at least %d time slices for %s", min_count, product)
         return
-
     fig, ax = plt.subplots(figsize=(10, 6))
-    x = data["zenith_center_deg"].to_numpy()
-    y = data["mean"].to_numpy()
-    counts = data["count"].to_numpy()
-
-    # Connector line
-    ax.plot(x, y, color="grey", linewidth=1.2, alpha=0.6, zorder=2)
-    # Scatter points colored by count using plasma colormap
-    sc = ax.scatter(x, y, c=counts, cmap="plasma", s=60, edgecolors="grey",
-                    linewidths=0.6, zorder=3)
-    cbar = fig.colorbar(sc, ax=ax, label="Number of observations")
-    cbar.ax.tick_params(labelsize=11)
-
-    ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=0.7, label="Horizon (SZA = 90\u00b0)")
+    x = data["zenith_center_deg"].to_numpy(dtype=float)
+    median = data["median"].to_numpy(dtype=float)
+    q25 = data["q25"].to_numpy(dtype=float)
+    q75 = data["q75"].to_numpy(dtype=float)
+    ax.fill_between(x, q25, q75, color="tab:blue", alpha=.2, label="IQR across time slices")
+    ax.plot(x, median, marker="o", color="tab:blue", linewidth=1.5, label="Median across time slices")
+    ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=.7, label="Terminator (SZA = 90°)")
     ax.set_xlabel("Solar zenith angle (degrees)")
     ax.set_xlim(0.0, 180.0)
     ax.set_xticks(np.arange(0.0, 181.0, 30.0))
     ax.set_ylabel(ylabel_for_mode(product, response_mode))
     suffix = f" — {event_name}" if event_name else ""
     ax.set_title(f"{PRODUCT_LABELS.get(product, product)} vs solar zenith angle{suffix}")
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=.3)
     ax.legend()
     fig.tight_layout()
     label = f"_{event_name}" if event_name else ""
-    fig.savefig(
-        output_dir / f"response_vs_solar_zenith_{product}{label}.png",
-        dpi=160,
-        bbox_inches="tight",
-    )
+    fig.savefig(output_dir / f"response_vs_solar_zenith_{product}{label}.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_all_products(
-    stats: pd.DataFrame,
-    products: Iterable[str],
-    output_dir: Path,
-    response_mode: str,
-    min_count: int,
-    event_name: str | None = None,
+    stats: pd.DataFrame, products: Iterable[str], output_dir: Path,
+    response_mode: str, min_count: int, event_name: str | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(11, 7))
     plotted = False
-    plasma = plt.cm.plasma
-    product_list = [p for p in products]
-
+    product_list = list(products)
     for i, product in enumerate(product_list):
-        data = stats[
-            (stats["product"] == product) & (stats["count"] >= min_count)
-        ].copy()
+        data = stats[(stats["product"] == product) & (stats["time_count"] >= min_count)].copy()
         if data.empty:
             continue
-
-        scale = data["mean"].abs().max()
+        scale = data["median"].abs().max()
         if not np.isfinite(scale) or scale == 0:
             continue
-
-        color = plasma(i / max(len(product_list) - 1, 1))
-        ax.plot(
-            data["zenith_center_deg"],
-            data["mean"] / scale,
-            marker="o",
-            linewidth=1.7,
-            color=color,
-            label=PRODUCT_LABELS.get(product, product),
-        )
+        color = plt.cm.plasma(i / max(len(product_list) - 1, 1))
+        x = data["zenith_center_deg"].to_numpy(dtype=float)
+        y = data["median"].to_numpy(dtype=float) / scale
+        lo = data["q25"].to_numpy(dtype=float) / scale
+        hi = data["q75"].to_numpy(dtype=float) / scale
+        ax.fill_between(x, lo, hi, color=color, alpha=.12)
+        ax.plot(x, y, marker="o", linewidth=1.7, color=color, label=PRODUCT_LABELS.get(product, product))
         plotted = True
-
     if not plotted:
         plt.close(fig)
         LOGGER.warning("No data available for combined normalized plot")
         return
-
-    ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=0.7, label="Horizon (SZA = 90\u00b0)")
+    ax.axvline(90.0, linestyle="--", linewidth=1.2, color="tab:red", alpha=.7, label="Terminator (SZA = 90°)")
     ax.set_xlabel("Solar zenith angle (degrees)")
     ax.set_xlim(0.0, 180.0)
     ax.set_xticks(np.arange(0.0, 181.0, 30.0))
-    ax.set_ylabel(f"Normalized mean {response_mode} response")
+    ax.set_ylabel("Median response / max |median response|")
     suffix = f" — {event_name}" if event_name else ""
-    ax.set_title(f"Normalized response versus solar zenith angle{suffix}")
-    ax.grid(True, alpha=0.3)
+    ax.set_title(f"Time-aggregated response versus solar zenith angle{suffix}")
+    ax.grid(True, alpha=.3)
     ax.legend()
     fig.tight_layout()
     label = f"_{event_name}" if event_name else ""
-    fig.savefig(
-        output_dir / f"response_vs_solar_zenith_all{label}.png",
-        dpi=160,
-        bbox_inches="tight",
-    )
+    fig.savefig(output_dir / f"response_vs_solar_zenith_all{label}.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -626,6 +584,7 @@ def write_event_outputs(
     min_count: int,
     save_points: bool,
     event_name: str,
+    baseline_slices: int = 0,
 ) -> None:
     """Write CSV tables and plots for one event."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -635,6 +594,7 @@ def write_event_outputs(
         bin_width=bin_width,
         min_zenith_angle=min_zenith_angle,
         max_zenith_angle=max_zenith_angle,
+        baseline_slices=baseline_slices,
     )
 
     stats_path = output_dir / "response_vs_solar_zenith_stats.csv"
@@ -735,6 +695,7 @@ def main() -> None:
             min_count=args.min_count,
             save_points=args.save_points,
             event_name=event_name,
+            baseline_slices=args.baseline_slices,
         )
         successful += 1
 

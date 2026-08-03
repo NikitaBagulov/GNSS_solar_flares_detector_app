@@ -1,0 +1,22 @@
+{
+  "instrument": "SOHO/SEM",
+  "product_name": null,
+  "product_level": null,
+  "product_version": null,
+  "provider": null,
+  "source_url": null,
+  "retrieved_at_utc": null,
+  "time_standard": "UTC",
+  "cadence_seconds": null,
+  "columns": {
+    "flux_26_34": {
+      "spectral_band_nm": "26-34",
+      "units": "photons cm-2 s-1"
+    },
+    "flux_01_50": {
+      "spectral_band_nm": "0.1-50",
+      "units": "photons cm-2 s-1"
+    }
+  },
+  "provenance_note": "Fill every null from the actual download endpoint or provider documentation; the CSV filename alone is not sufficient provenance."
+}

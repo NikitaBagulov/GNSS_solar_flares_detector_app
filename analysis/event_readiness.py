@@ -19,7 +19,7 @@ import h5py
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 INDEX_COLUMNS = {"time", "day_night_index", "gsflai_index", "isfai_index"}
-STATUSES = ("complete", "ready_for_plots", "ready_for_index", "needs_preprocessing")
+STATUSES = ("complete", "ready_for_index", "needs_preprocessing")
 
 
 def valid_map(path: Path) -> bool:
@@ -44,31 +44,64 @@ def valid_index(path: Path) -> bool:
         return False
 
 
+def _map_state(path: Path) -> str:
+    if not path.is_file() or path.stat().st_size == 0:
+        return "missing"
+    return "valid" if valid_map(path) else "broken"
+
+
+def _euv_metadata_state(event_dir: Path, has_euv: bool) -> str:
+    if not has_euv:
+        return "source_missing"
+    candidates = (
+        event_dir / "soho_sem" / "metadata.json",
+        event_dir / "soho_sem_metadata.json",
+        event_dir / "metadata" / "soho_sem.json",
+    )
+    return "documented" if any(path.is_file() for path in candidates) else "metadata_missing"
+
+
 def inspect_event(results_dir: Path, event: dict) -> dict[str, object]:
     event_dir = results_dir / event["path"]
-    map_products = [p for p in PRODUCTS if valid_map(event_dir / "maps" / f"map_{p}.h5")]
+    map_states = {
+        product: _map_state(event_dir / "maps" / f"map_{product}.h5")
+        for product in PRODUCTS
+    }
+    map_products = [product for product, state in map_states.items() if state == "valid"]
     index_products = [p for p in PRODUCTS if valid_index(event_dir / "indices" / f"indices_{p}.csv")]
-    missing_indices = [p for p in map_products if p not in index_products]
+    missing_indices = [p for p in PRODUCTS if p not in index_products]
     graph_count = sum(1 for path in (event_dir / "graphs").rglob("*.png") if path.is_file())
 
-    if len(map_products) == len(PRODUCTS) and len(index_products) == len(PRODUCTS) and graph_count:
+    # Scientific readiness is defined by the four index tables. Graphs are
+    # derived presentation products and therefore never block inclusion.
+    if len(index_products) == len(PRODUCTS):
         status = "complete"
-    elif index_products and graph_count == 0:
-        status = "ready_for_plots"
-    elif missing_indices:
+        decision = "include"
+        reason = "all_four_indices_valid"
+    elif any(map_states[p] == "valid" for p in missing_indices):
         status = "ready_for_index"
+        decision = "exclude"
+        reason = "indices_missing_but_maps_available"
     else:
         status = "needs_preprocessing"
+        decision = "exclude"
+        reason = "indices_missing_and_maps_unavailable"
 
+    has_euv = bool(event.get("sources", {}).get("soho_sem"))
     return {
         "event": event["name"],
         "path": event["path"],
         "status": status,
+        "qc_decision": decision,
+        "qc_reason": reason,
         "maps": len(map_products),
         "indices": len(index_products),
         "graphs": graph_count,
         "goes": bool(event.get("sources", {}).get("goes_xray")),
-        "soho_sem": bool(event.get("sources", {}).get("soho_sem")),
+        "soho_sem": has_euv,
+        "euv_metadata": _euv_metadata_state(event_dir, has_euv),
+        "missing_maps": " ".join(p for p, state in map_states.items() if state == "missing"),
+        "broken_maps": " ".join(p for p, state in map_states.items() if state == "broken"),
         "missing_indices": " ".join(missing_indices),
     }
 
@@ -81,7 +114,7 @@ def inventory(results_dir: Path) -> list[dict[str, object]]:
 
 
 def print_table(rows: list[dict[str, object]]) -> None:
-    columns = ("event", "status", "maps", "indices", "graphs", "goes", "soho_sem", "missing_indices")
+    columns = ("event", "status", "qc_decision", "qc_reason", "maps", "indices", "graphs", "goes", "soho_sem", "euv_metadata", "missing_maps", "broken_maps", "missing_indices")
     widths = {column: max(len(column), *(len(str(row[column])) for row in rows)) for column in columns}
     print("  ".join(column.ljust(widths[column]) for column in columns))
     print("  ".join("-" * widths[column] for column in columns))

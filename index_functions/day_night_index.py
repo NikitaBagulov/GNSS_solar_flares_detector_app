@@ -119,74 +119,104 @@ def calculate_index(points, is_day=True):
     I = np.nan_to_num(I, nan=0.0)
     return np.sum(I)
 
+DAY_NIGHT_VARIANTS = ("legacy", "distance_weight", "distance_weight_cos")
+
+
+def compute_day_night_components(
+        points,
+        time_key,
+        variant="distance_weight_cos",
+        eps_abs=1e-6,
+        exclude_terminator_deg=0.0):
+    """Return the day/night terms used by the normalized contrast index.
+
+    Variants are explicit so comparisons never overwrite old results.
+    legacy reproduces the historical reversed weight; distance_weight uses
+    weight 1 at the subsolar point and 0 at the terminator; and
+    distance_weight_cos also divides dayside values by cos(chi).
+    """
+    if variant not in DAY_NIGHT_VARIANTS:
+        raise ValueError(f"Unknown day/night variant: {variant}")
+    if eps_abs <= 0:
+        raise ValueError("eps_abs must be positive")
+    if not 0.0 <= exclude_terminator_deg < 90.0:
+        raise ValueError("exclude_terminator_deg must be in [0, 90)")
+
+    data = np.asarray(points, dtype=float)
+    if data.size == 0 or data.ndim != 2 or data.shape[1] < 3:
+        return None
+    lat, lon, vals = data[:, 0], data[:, 1], data[:, 2]
+    valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(vals)
+    if not np.any(valid):
+        return None
+    lat, lon, vals = lat[valid], lon[valid], vals[valid]
+
+    sub_lat, sub_lon = _subsolar_point(time_key)
+    distances = great_circle_distance_vec(lat, lon, lat0=sub_lat, lon0=sub_lon)
+    zenith_deg = np.degrees(distances / RE_meters)
+    day_mask = zenith_deg < (90.0 - float(exclude_terminator_deg))
+    night_mask = zenith_deg >= 90.0
+    if not np.any(day_mask) or not np.any(night_mask):
+        return None
+
+    d_day = distances[day_mask]
+    v_day = vals[day_mask]
+    v_night = vals[night_mask]
+    corrected_weights, cos_day = _day_geometry(d_day, min_cos=eps_abs)
+    if variant == "legacy":
+        distance_to_terminator = (np.pi / 2.0 * RE_meters) - d_day
+        weights = np.clip(1.0 - distance_to_terminator / (np.pi / 2.0 * RE_meters), 0.0, 1.0)
+        day_values = v_day
+    elif variant == "distance_weight":
+        weights = corrected_weights
+        day_values = v_day
+    else:
+        weights = corrected_weights
+        day_values = v_day / cos_day
+
+    weight_sum = float(np.sum(weights))
+    if weight_sum <= 0:
+        return None
+    mu_day = float(np.sum(day_values * weights) / weight_sum)
+    mu_night = float(np.median(v_night))
+    numerator = mu_day - mu_night
+    denominator = abs(mu_day) + abs(mu_night) + 0.05
+    return {
+        "variant": variant,
+        "mu_day": mu_day,
+        "mu_night": mu_night,
+        "numerator": numerator,
+        "denominator": denominator,
+        "index": numerator / denominator,
+        "n_day": int(np.sum(day_mask)),
+        "n_night": int(np.sum(night_mask)),
+        "subsolar_lat": float(sub_lat),
+        "subsolar_lon": float(sub_lon),
+    }
+
+
 def compute_day_night_index(
         points,
         time_key,
         debug=False,
         log_file="day_night_debug_log.csv",
-        eps_abs=1e-6):
-
-    data = np.asarray(points, dtype=float)
-    if data.size == 0 or data.ndim != 2 or data.shape[1] < 3:
+        eps_abs=1e-6,
+        variant="distance_weight_cos",
+        exclude_terminator_deg=0.0):
+    components = compute_day_night_components(
+        points, time_key, variant=variant, eps_abs=eps_abs,
+        exclude_terminator_deg=exclude_terminator_deg,
+    )
+    if components is None:
         return 0.0
-
-    lat = data[:, 0]
-    lon = data[:, 1]
-    vals = data[:, 2]
-
-    valid = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(vals)
-    if not np.any(valid):
-        return 0.0
-
-    lat = lat[valid]
-    lon = lon[valid]
-    vals = vals[valid]
-
-    sub_lat, sub_lon = _subsolar_point(time_key)
-
-    distances = great_circle_distance_vec(lat, lon, lat0=sub_lat, lon0=sub_lon)
-
-    gamma = distances / RE_meters
-    delta = (np.pi / 2.0) - gamma
-
-    day_mask = delta > 0
-    night_mask = ~day_mask
-
-    if np.sum(day_mask) == 0 or np.sum(night_mask) == 0:
-        return 0.0
-
-    d_day = distances[day_mask]
-    v_day = vals[day_mask]
-    v_night = vals[night_mask]
-
-    w_day, cos_day = _day_geometry(d_day, min_cos=eps_abs)
-    v_day_corrected = v_day / cos_day
-
-    if np.sum(w_day) > 0:
-        mu_day = np.sum(v_day_corrected * w_day) / np.sum(w_day)
-    else:
-        mu_day = 0.0
-
-    mu_night = np.median(v_night)
-
-    num = mu_day - mu_night
-    den = abs(mu_day) + abs(mu_night) + 0.05
-    I_B = num / den
-
-    # ---- DEBUG ----
     if debug:
-
-        N_day = int(np.sum(day_mask))
-        N_night = int(np.sum(night_mask))
-
-        # запись в файл
-        with open(log_file, "a") as f:
-            f.write(
-                f"{time_key},"
-                f"{sub_lat:.6f},{sub_lon:.6f},"
-                f"{N_day},{N_night},"
-                f"{mu_day:.6f},{mu_night:.6f},"
-                f"{num:.6f},{den:.6f},{I_B:.6f}\n"
+        with open(log_file, "a") as stream:
+            stream.write(
+                f"{time_key},{components['variant']},"
+                f"{components['subsolar_lat']:.6f},{components['subsolar_lon']:.6f},"
+                f"{components['n_day']},{components['n_night']},"
+                f"{components['mu_day']:.6f},{components['mu_night']:.6f},"
+                f"{components['numerator']:.6f},{components['denominator']:.6f},"
+                f"{components['index']:.6f}\\n"
             )
-
-    return float(I_B)
+    return float(components["index"])
