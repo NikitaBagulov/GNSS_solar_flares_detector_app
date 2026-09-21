@@ -22,8 +22,8 @@ service_restart() {
 
 health_check() {
   local port="${RESULTS_PORT:-8001}"
-  systemctl_cmd is-active --quiet "${service_prefix}-results.service"
-  systemctl_cmd is-active --quiet "${service_prefix}-worker.service"
+  systemctl_cmd is-active "${service_prefix}-results.service" >/dev/null
+  systemctl_cmd is-active "${service_prefix}-worker.service" >/dev/null
   curl --fail --silent --show-error --max-time 15 "http://127.0.0.1:${port}/" >/dev/null
   [[ "$(git symbolic-ref --short HEAD)" == "main" ]]
 }
