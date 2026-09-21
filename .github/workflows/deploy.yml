@@ -20,4 +20,7 @@ jobs:
       - name: Deploy on server runner
         run: |
           cd "/home/user/app/GNSS_solar_flares_detector_app"
+          git fetch --prune origin main
+          git cat-file -e "${{ github.sha }}^{commit}"
+          git checkout --force "${{ github.sha }}"
           ./deploy/deploy.sh "${{ github.sha }}"
