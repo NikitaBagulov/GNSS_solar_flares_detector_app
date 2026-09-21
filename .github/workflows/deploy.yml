@@ -22,5 +22,5 @@ jobs:
           cd "/home/user/app/GNSS_solar_flares_detector_app"
           git fetch --prune origin main
           git cat-file -e "${{ github.sha }}^{commit}"
-          git checkout --force "${{ github.sha }}"
+          git checkout --force -B main "${{ github.sha }}"
           ./deploy/deploy.sh "${{ github.sha }}"

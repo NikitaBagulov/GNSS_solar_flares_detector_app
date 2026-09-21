@@ -22,11 +22,14 @@ python3 -m venv "$venv_dir" 2>/dev/null || true
 "$venv_dir/bin/python" -m pip install --upgrade pip
 "$venv_dir/bin/python" -m pip install -r requirements.txt
 
-if command -v systemctl >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   systemctl --user daemon-reload
   systemctl --user restart gnss-results.service
   systemctl --user restart gnss-worker.service
-  curl --fail --silent --show-error http://127.0.0.1:${RESULTS_PORT:-8001}/ >/dev/null
+else
+  printf 'User systemd is unavailable; leaving services unchanged.\n'
 fi
+
+curl --fail --silent --show-error http://127.0.0.1:${RESULTS_PORT:-8001}/ >/dev/null
 
 printf 'Deployed %s\n' "$commit"
