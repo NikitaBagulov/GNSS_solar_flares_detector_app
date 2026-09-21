@@ -1,0 +1,13 @@
+[Unit]
+Description=GNSS results catalog
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/app/GNSS_solar_flares_detector_app
+ExecStart=%h/app/GNSS_solar_flares_detector_app/.venv/bin/python results_server.py --directory results --bind 0.0.0.0 --port 8001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

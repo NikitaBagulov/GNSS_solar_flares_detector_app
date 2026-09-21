@@ -1,0 +1,13 @@
+[Unit]
+Description=GNSS flare processing worker
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/app/GNSS_solar_flares_detector_app
+ExecStart=%h/app/GNSS_solar_flares_detector_app/.venv/bin/python main.py --start_date 2008-01-01 --end_date 2099-12-31 --min_flare_class X1.0 --mode service --poll-interval-seconds 1800 --data_download_path ./data --state_json_path ./data/state.json --existing-data-policy validate --steps discovery preprocessing index plotting
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
