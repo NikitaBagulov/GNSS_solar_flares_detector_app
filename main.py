@@ -3,6 +3,7 @@ import logging
 import signal
 import sys
 import time
+import threading
 from datetime import date
 from pathlib import Path
 from typing import List
@@ -66,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["once", "service"],
+        choices=["once", "service", "queue"],
         default="once",
         help="Режим выполнения: once (один прогон) или service (периодический запуск)",
     )
@@ -102,6 +103,23 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3600,
         help="Интервал в секундах между прогонами в service-режиме (по умолчанию: 3600)",
+    )
+    parser.add_argument(
+        "--queue-db-path",
+        default="./data/pipeline_queue.sqlite3",
+        help="SQLite database for queue mode",
+    )
+    parser.add_argument(
+        "--queue-max-attempts",
+        type=int,
+        default=3,
+        help="Maximum attempts for one queue job",
+    )
+    parser.add_argument(
+        "--queue-stale-timeout-seconds",
+        type=int,
+        default=7200,
+        help="Timeout after which a running job is reclaimed",
     )
     return parser.parse_args()
 
@@ -148,6 +166,7 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
         state_json_path=state_json_path,
         data_download_path=data_download_path,
         run_config=run_config,
+        queue_db_path=Path(getattr(args, "queue_db_path", "./data/pipeline_queue.sqlite3")).resolve(),
     )
 
 
@@ -218,6 +237,27 @@ def run_orchestration(
 ) -> None:
     logger = logging.getLogger(__name__)
     stop_requested = False
+
+    if mode == "queue":
+        from pipeline.dispatcher import QueueDispatcher
+
+        queue_db_path = config.queue_db_path or config.data_download_path / "pipeline_queue.sqlite3"
+        dispatcher = QueueDispatcher(queue_db_path, config)
+        dispatcher.discover()
+        stop_event = threading.Event()
+
+        def _queue_signal(signum: int, _frame: object) -> None:
+            logger.info("Получен сигнал %s. Остановка queue worker.", signal.Signals(signum).name)
+            stop_event.set()
+
+        signal.signal(signal.SIGINT, _queue_signal)
+        signal.signal(signal.SIGTERM, _queue_signal)
+        dispatcher.run(
+            stop_event,
+            poll_seconds=min(5, poll_interval_seconds),
+            discovery_interval_seconds=poll_interval_seconds,
+        )
+        return
 
     def _handle_signal(signum: int, _frame: object) -> None:
         nonlocal stop_requested

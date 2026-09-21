@@ -27,6 +27,7 @@ class PipelineConfig:
     state_json_path: Path
     data_download_path: Path
     run_config: RunConfig
+    queue_db_path: Path | None = None
 
 
 @dataclass(frozen=True)

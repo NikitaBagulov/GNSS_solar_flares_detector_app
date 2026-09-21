@@ -97,10 +97,12 @@ def test_day_night_variants_are_explicit_and_distinct():
     legacy = compute_day_night_index(points, when, variant="legacy")
     weighted = compute_day_night_index(points, when, variant="distance_weight")
     corrected = compute_day_night_index(points, when, variant="distance_weight_cos")
+    aggregate_cos = compute_day_night_index(points, when, variant="distance_weight_cos_sum")
 
     assert legacy != pytest.approx(weighted)
     assert corrected != pytest.approx(weighted)
-    assert all(np.isfinite(value) for value in (legacy, weighted, corrected))
+    assert aggregate_cos != pytest.approx(corrected)
+    assert all(np.isfinite(value) for value in (legacy, weighted, corrected, aggregate_cos))
 
 
 def test_cosine_variant_supports_terminator_exclusion_and_epsilon_sensitivity():
