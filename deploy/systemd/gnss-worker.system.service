@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=simple
 User=user
 WorkingDirectory=/home/user/app/GNSS_solar_flares_detector_app
-ExecStart=/home/user/app/GNSS_solar_flares_detector_app/.venv/bin/python main.py --start_date 2008-01-01 --end_date 2099-12-31 --min_flare_class X1.0 --mode queue --poll-interval-seconds 1800 --data_download_path ./data --state_json_path ./data/state.json --queue-db-path ./data/pipeline_queue.sqlite3 --queue-max-attempts 3 --queue-stale-timeout-seconds 7200
+ExecStart=/home/user/app/GNSS_solar_flares_detector_app/.venv/bin/python main.py --start_date 2008-01-01 --min_flare_class X1.0 --mode queue --poll-interval-seconds 1800 --data_download_path ./data --state_json_path ./data/state.json --queue-db-path ./data/pipeline_queue.sqlite3 --queue-max-attempts 3 --queue-stale-timeout-seconds 7200
 Restart=always
 RestartSec=10
+TimeoutStopSec=300
 
 [Install]
 WantedBy=multi-user.target
