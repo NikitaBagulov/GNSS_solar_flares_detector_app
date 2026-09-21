@@ -17,7 +17,8 @@ systemctl_cmd() {
 }
 
 service_restart() {
-  systemctl_cmd restart "${service_prefix}-results.service" "${service_prefix}-worker.service"
+  systemctl_cmd restart "${service_prefix}-results.service"
+  systemctl_cmd restart "${service_prefix}-worker.service"
 }
 
 health_check() {
