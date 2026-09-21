@@ -69,7 +69,9 @@ def inspect_event(results_dir: Path, event: dict) -> dict[str, object]:
     }
     map_products = [product for product, state in map_states.items() if state == "valid"]
     index_products = [p for p in PRODUCTS if valid_index(event_dir / "indices" / f"indices_{p}.csv")]
-    missing_indices = [p for p in PRODUCTS if p not in index_products]
+    # An index can only be computed for a product whose source map exists.
+    # Keep unavailable products in `missing_maps`, not in the actionable index list.
+    missing_indices = [p for p in map_products if p not in index_products]
     graph_count = sum(1 for path in (event_dir / "graphs").rglob("*.png") if path.is_file())
 
     # Scientific readiness is defined by the four index tables. Graphs are
