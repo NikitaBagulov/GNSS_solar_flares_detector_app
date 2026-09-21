@@ -119,7 +119,12 @@ def calculate_index(points, is_day=True):
     I = np.nan_to_num(I, nan=0.0)
     return np.sum(I)
 
-DAY_NIGHT_VARIANTS = ("legacy", "distance_weight", "distance_weight_cos")
+DAY_NIGHT_VARIANTS = (
+    "legacy",
+    "distance_weight",
+    "distance_weight_cos",
+    "distance_weight_cos_sum",
+)
 
 
 def compute_day_night_components(
@@ -131,9 +136,10 @@ def compute_day_night_components(
     """Return the day/night terms used by the normalized contrast index.
 
     Variants are explicit so comparisons never overwrite old results.
-    legacy reproduces the historical reversed weight; distance_weight uses
-    weight 1 at the subsolar point and 0 at the terminator; and
-    distance_weight_cos also divides dayside values by cos(chi).
+     legacy reproduces the historical reversed weight; distance_weight uses
+     weight 1 at the subsolar point and 0 at the terminator; distance_weight_cos
+     divides dayside values by cos(chi); and distance_weight_cos_sum uses the
+     ISFAI-style aggregate denominator sum(w_i cos(chi_i)).
     """
     if variant not in DAY_NIGHT_VARIANTS:
         raise ValueError(f"Unknown day/night variant: {variant}")
@@ -170,11 +176,19 @@ def compute_day_night_components(
     elif variant == "distance_weight":
         weights = corrected_weights
         day_values = v_day
-    else:
+    elif variant == "distance_weight_cos":
         weights = corrected_weights
         day_values = v_day / cos_day
+    elif variant == "distance_weight_cos_sum":
+        weights = corrected_weights
+        day_values = v_day
+    else:
+        raise ValueError(f"Unknown day/night variant: {variant}")
 
-    weight_sum = float(np.sum(weights))
+    if variant == "distance_weight_cos_sum":
+        weight_sum = float(np.sum(weights * cos_day))
+    else:
+        weight_sum = float(np.sum(weights))
     if weight_sum <= 0:
         return None
     mu_day = float(np.sum(day_values * weights) / weight_sum)

@@ -108,6 +108,18 @@ class SQLiteJobQueue:
             raise ValueError("max_attempts must be positive")
         now = _now()
         connection = self._connection()
+        existing = connection.execute(
+            "SELECT id, status FROM jobs WHERE job_type=? AND flare_key IS ? AND target_date IS ?",
+            (job_type, flare_key, target_date),
+        ).fetchone()
+        if existing is not None:
+            if existing["status"] in {"failed", "dead"}:
+                connection.execute(
+                    """UPDATE jobs SET status='pending', available_at=?, updated_at=?,
+                       max_attempts=?, payload_json=?, last_error=NULL WHERE id=?""",
+                    (now, now, max_attempts, json.dumps(payload or {}, sort_keys=True), existing["id"]),
+                )
+            return int(existing["id"])
         cursor = connection.execute(
             """
             INSERT INTO jobs (
