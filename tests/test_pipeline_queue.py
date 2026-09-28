@@ -1,5 +1,6 @@
 from datetime import date
 from pathlib import Path
+import threading
 
 from pipeline.dispatcher import QueueDispatcher
 from pipeline.queue import Job, SQLiteJobQueue, stable_flare_key
@@ -33,6 +34,51 @@ def test_queue_marks_dead_after_max_attempts(tmp_path: Path):
     row = queue._connection().execute("SELECT status, last_error FROM jobs WHERE id=?", (job_id,)).fetchone()
     assert row["status"] == "dead"
     assert "broken" in row["last_error"]
+
+
+def test_stale_running_job_is_requeued_when_attempts_remain(tmp_path: Path):
+    queue = SQLiteJobQueue(tmp_path / "queue.sqlite3", worker_id="test")
+    job_id = queue.enqueue("download", target_date="2025-01-01", max_attempts=3)
+    assert queue.claim() is not None
+    queue._connection().execute(
+        "UPDATE jobs SET locked_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+        (job_id,),
+    )
+
+    assert queue.recover_stale(timeout_seconds=60) == 1
+    row = queue._connection().execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+    assert row["status"] == "pending"
+    retried = queue.claim()
+    assert retried is not None
+    assert retried.id == job_id
+    assert retried.attempts == 2
+
+
+def test_dispatcher_recovers_and_checks_queue_before_discovery():
+    calls = []
+    stop_event = threading.Event()
+
+    class EmptyQueue:
+        def recover_stale(self, _timeout_seconds):
+            calls.append("recover")
+            return 0
+
+        def claim(self):
+            calls.append("claim")
+            return None
+
+    dispatcher = QueueDispatcher.__new__(QueueDispatcher)
+    dispatcher.queue = EmptyQueue()
+
+    def discover():
+        calls.append("discover")
+        stop_event.set()
+        return 0
+
+    dispatcher.discover = discover
+    dispatcher.run(stop_event, poll_seconds=0, discovery_interval_seconds=1800)
+
+    assert calls == ["recover", "claim", "discover"]
 
 
 def test_plot_selection_includes_x_class_before_2019_and_all_classes_from_2019():

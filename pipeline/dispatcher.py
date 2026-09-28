@@ -29,6 +29,7 @@ class QueueDispatcher:
         self.max_attempts = max_attempts
 
     def discover(self) -> int:
+        LOGGER.info("Refreshing flare catalog from upstream sources")
         result = run_discovery(self.config)
         grouped = {}
         for flare_key in result.flare_keys:
@@ -46,22 +47,37 @@ class QueueDispatcher:
         stale_timeout_seconds: int = 7200,
         discovery_interval_seconds: int = 1800,
     ) -> None:
-        last_discovery = time.monotonic()
+        # Recover and drain existing queue work before potentially expensive API discovery.
+        last_discovery = time.monotonic() - discovery_interval_seconds
         while not stop_event.is_set():
-            self.queue.recover_stale(stale_timeout_seconds)
+            recovered = self.queue.recover_stale(stale_timeout_seconds)
+            if recovered:
+                LOGGER.warning("Recovered %s stale queue job(s)", recovered)
             job = self.queue.claim()
             if job is None:
                 if time.monotonic() - last_discovery >= discovery_interval_seconds:
+                    last_discovery = time.monotonic()
                     try:
-                        self.discover()
-                        last_discovery = time.monotonic()
+                        LOGGER.info("Starting flare discovery")
+                        discovered_dates = self.discover()
+                        LOGGER.info("Flare discovery completed; queued %s date(s)", discovered_dates)
                     except Exception:
                         LOGGER.exception("Discovery iteration failed; queue worker will retry later")
                 stop_event.wait(poll_seconds)
                 continue
             try:
+                LOGGER.info(
+                    "Starting queue job id=%s type=%s flare=%s date=%s attempt=%s/%s",
+                    job.id,
+                    job.job_type,
+                    job.flare_key,
+                    job.target_date,
+                    job.attempts,
+                    job.max_attempts,
+                )
                 self._execute(job)
                 self.queue.succeed(job.id)
+                LOGGER.info("Completed queue job id=%s type=%s", job.id, job.job_type)
             except Exception as error:
                 LOGGER.exception("Queue job %s failed: %s", job.id, error)
                 self.queue.fail(job.id, error)

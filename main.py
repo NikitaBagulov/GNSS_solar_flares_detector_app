@@ -243,7 +243,6 @@ def run_orchestration(
 
         queue_db_path = config.queue_db_path or config.data_download_path / "pipeline_queue.sqlite3"
         dispatcher = QueueDispatcher(queue_db_path, config)
-        dispatcher.discover()
         stop_event = threading.Event()
 
         def _queue_signal(signum: int, _frame: object) -> None:
@@ -252,6 +251,7 @@ def run_orchestration(
 
         signal.signal(signal.SIGINT, _queue_signal)
         signal.signal(signal.SIGTERM, _queue_signal)
+        logger.info("Starting queue worker; queued jobs are processed before discovery")
         dispatcher.run(
             stop_event,
             poll_seconds=min(5, poll_interval_seconds),

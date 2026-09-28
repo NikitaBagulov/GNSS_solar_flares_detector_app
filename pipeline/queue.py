@@ -201,7 +201,7 @@ class SQLiteJobQueue:
             datetime.now(timezone.utc).timestamp() - timeout_seconds, timezone.utc
         ).isoformat()
         cursor = self._connection().execute(
-            """UPDATE jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'failed' END,
+            """UPDATE jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END,
                available_at=?, locked_at=NULL, locked_by=NULL, updated_at=?
                WHERE status='running' AND locked_at < ?""",
             (_now(), _now(), cutoff),
