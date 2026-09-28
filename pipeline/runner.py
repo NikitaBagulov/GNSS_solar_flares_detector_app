@@ -19,6 +19,16 @@ from pipeline.run_config import RunConfig
 from results_layout import event_results_dir, publish_file, source_file_name
 
 
+PLOT_ALL_FLARES_FROM = date(2019, 1, 1)
+
+
+def should_plot_flare(flare_key: str, flare_date: date | None, flare_class: str | None) -> bool:
+    """Plot X-class events from any year and all events from the 2019 solar cycle onward."""
+    if flare_date is not None and flare_date >= PLOT_ALL_FLARES_FROM:
+        return True
+    return bool(flare_class and flare_class.strip().upper().startswith("X"))
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
     start_date: date
@@ -162,6 +172,10 @@ def _flare_date_for_key(tracker: FlareTracker, flare_key: str) -> date | None:
         return None
     value = matched.iloc[0]["date"]
     return _coerce_flare_date(value)
+
+
+def _flare_class_for_key(tracker: FlareTracker, flare_key: str) -> str | None:
+    return _flare_classes_by_key(tracker).get(flare_key)
 
 
 def flare_keys_grouped_by_date(config: PipelineConfig, flare_keys: List[str]) -> List[tuple[date, List[str]]]:
@@ -414,6 +428,9 @@ def run_plotting(config: PipelineConfig) -> PlottingResult:
     flare_classes = _flare_classes_by_key(tracker)
 
     for flare_key in flare_keys:
+        flare_date = _flare_date_for_key(tracker, flare_key)
+        if not should_plot_flare(flare_key, flare_date, flare_classes.get(flare_key)):
+            continue
         if _plot_single_flare(tracker, loader, flare_key, plot_policy, flare_classes):
             plotted_flare_keys.append(flare_key)
 
@@ -429,5 +446,8 @@ def run_plotting_for_flare(config: PipelineConfig, flare_key: str) -> PlottingRe
     loader = PlotDataLoader(tracker.all_flares_file, tracker.state_file)
     plot_policy = config.run_config.policy_for("plot")
     flare_classes = _flare_classes_by_key(tracker)
+    flare_date = _flare_date_for_key(tracker, flare_key)
+    if not should_plot_flare(flare_key, flare_date, flare_classes.get(flare_key)):
+        return PlottingResult(plotted_flare_keys=[])
     plotted = _plot_single_flare(tracker, loader, flare_key, plot_policy, flare_classes)
     return PlottingResult(plotted_flare_keys=[flare_key] if plotted else [])

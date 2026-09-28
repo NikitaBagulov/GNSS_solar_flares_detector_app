@@ -10,6 +10,7 @@ from .runner import (
     run_index_calculation_for_flare,
     run_plotting,
     run_plotting_for_flare,
+    should_plot_flare,
     run_preprocessing,
     run_preprocessing_for_flares,
     run_preprocessing_for_flare,
@@ -30,4 +31,5 @@ __all__ = [
     "run_index_calculation_for_flare",
     "run_plotting",
     "run_plotting_for_flare",
+    "should_plot_flare",
 ]

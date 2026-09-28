@@ -16,6 +16,7 @@ from pipeline.runner import (
     run_index_calculation_for_flare,
     run_plotting_for_flare,
     run_preprocessing_for_flares,
+    should_plot_flare,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -90,7 +91,8 @@ class QueueDispatcher:
             result = run_index_calculation_for_flare(self.config, job.flare_key)
             if job.flare_key not in result.flare_keys:
                 raise RuntimeError(f"index produced no result for {job.flare_key}")
-            self.queue.enqueue("plot", flare_key=job.flare_key, target_date=job.target_date, max_attempts=self.max_attempts)
+            if self._should_plot(job.flare_key):
+                self.queue.enqueue("plot", flare_key=job.flare_key, target_date=job.target_date, max_attempts=self.max_attempts)
             return
         if job.job_type == "plot":
             if not job.flare_key:
@@ -102,6 +104,16 @@ class QueueDispatcher:
         raise ValueError(f"unknown queue job type: {job.job_type}")
 
     def _flare_date(self, flare_key: str) -> date | None:
-        from pipeline.runner import _load_tracker, _flare_date_for_key
+        from pipeline.runner import _flare_date_for_key, _load_tracker
 
         return _flare_date_for_key(_load_tracker(self.config), flare_key)
+
+    def _should_plot(self, flare_key: str) -> bool:
+        from pipeline.runner import _flare_classes_by_key, _flare_date_for_key, _load_tracker
+
+        tracker = _load_tracker(self.config)
+        return should_plot_flare(
+            flare_key,
+            _flare_date_for_key(tracker, flare_key),
+            _flare_classes_by_key(tracker).get(flare_key),
+        )
