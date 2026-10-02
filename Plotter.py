@@ -5,35 +5,53 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.dates import AutoDateLocator
 import cartopy.crs as ccrs
-import matplotlib.colors as mcolors
 import numpy as np
 import matplotlib.patches as patches
 import math
 from map_filters import filter_roti_time_slice
 
+PLOT_STYLE = {
+    "ink": "#17243a",
+    "muted": "#63738a",
+    "grid": "#dce4ee",
+    "panel": "#ffffff",
+    "figure": "#f4f7fb",
+    "accent": "#e76f51",
+    "xray": "#d1495b",
+    "euv": "#2878a5",
+    "index_day": "#2878a5",
+    "index_gsflai": "#2a9d8f",
+    "index_isfai": "#e76f51",
+}
+
 DEFAULT_PARAMS = {
-    'font.size': 18,
-    'figure.dpi': 100,
-    'font.family': 'serif',
-    'font.weight': 'light',
-    'axes.titlesize': 18,
-    'axes.labelsize': 18,
-    'xtick.labelsize': 16,
-    'ytick.labelsize': 16,
-    'legend.fontsize': 12
+    "font.size": 10,
+    "figure.dpi": 120,
+    "font.family": "DejaVu Sans",
+    "font.weight": "regular",
+    "text.color": PLOT_STYLE["ink"],
+    "axes.titlesize": 11,
+    "axes.titleweight": "bold",
+    "axes.labelsize": 9,
+    "axes.labelcolor": PLOT_STYLE["muted"],
+    "axes.edgecolor": PLOT_STYLE["grid"],
+    "axes.linewidth": 0.8,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "xtick.color": PLOT_STYLE["muted"],
+    "ytick.color": PLOT_STYLE["muted"],
+    "legend.fontsize": 8,
+    "savefig.facecolor": PLOT_STYLE["figure"],
 }
 plt.rcParams.update(DEFAULT_PARAMS)
 
-MAP_POINT_SIZE = 45
+MAP_POINT_SIZE = 30
 DEFAULT_CMAPS = {
     "roti": "viridis",
-    "dtec_2_10": "plasma",
-    "dtec_10_20": "cividis",
-    "dtec_20_60": "inferno"
+    "dtec_2_10": "RdBu_r",
+    "dtec_10_20": "RdBu_r",
+    "dtec_20_60": "RdBu_r",
 }
-MAP_CMAP = mcolors.LinearSegmentedColormap.from_list(
-    "custom_cmap", ["blue", "cyan", "yellow", "red"]
-)
 
 class Plotter:
     def __init__(self, plot_data, products_to_plot=None, output_dir="results"):
@@ -54,20 +72,25 @@ class Plotter:
             flare = self._select_nearest_flare(map_time)
 
             for product_name in products:
-                fig = plt.figure(figsize=(15, 15), constrained_layout=False)
+                fig = plt.figure(figsize=(14, 11), facecolor=PLOT_STYLE["figure"], constrained_layout=False)
                 gs = fig.add_gridspec(
-                    3,
+                    4,
                     2,
-                    height_ratios=[7, 2.5, 2.5],
-                    width_ratios=[3.6, 1.4],
-                    wspace=0.25,
-                    hspace=0.45,
+                    height_ratios=[5.2, 1.5, 1.8, 1.8],
+                    width_ratios=[2.2, 1],
+                    left=0.10,
+                    right=0.92,
+                    top=0.89,
+                    bottom=0.08,
+                    wspace=0.22,
+                    hspace=0.38,
                 )
 
                 ax_map = fig.add_subplot(gs[0, 0], projection=ccrs.PlateCarree())
                 ax_sun = fig.add_subplot(gs[0, 1])
                 ax_indices = fig.add_subplot(gs[1, :])
-                ax_solar = fig.add_subplot(gs[2, :])
+                ax_xray = fig.add_subplot(gs[2, :])
+                ax_euv = fig.add_subplot(gs[3, :])
                 vmin, vmax = CombinedPlotter._get_product_color_range(product_name)
                 # ⬇️ рисуем карту конкретного продукта
                 self._plot_map(ax_map, i, product_name=product_name, map_time=map_time, vmin=vmin, vmax=vmax)
@@ -77,21 +100,47 @@ class Plotter:
                 # ⬇️ индексы конкретного продукта
                 self._plot_indices(ax_indices, highlight_time=map_time, product_name=product_name, flare=flare)
 
-                self._plot_solar(ax_solar, highlight_time=map_time)
+                self._plot_flux_panel(
+                    ax_xray,
+                    self.data.xray_times,
+                    self.data.xray_values,
+                    title="GOES X-ray flux",
+                    ylabel="Flux (W m⁻²)",
+                    color=PLOT_STYLE["xray"],
+                    highlight_time=map_time,
+                    flare=flare,
+                )
+                self._plot_flux_panel(
+                    ax_euv,
+                    self.data.euv_times,
+                    self.data.euv_values,
+                    title="SOHO/SEM EUV flux",
+                    ylabel="Flux (photons cm⁻² s⁻¹)",
+                    color=PLOT_STYLE["euv"],
+                    highlight_time=map_time,
+                    flare=flare,
+                )
 
                 self._format_time_axis(ax_indices)
-                self._format_time_axis(ax_solar)
+                self._format_time_axis(ax_xray)
+                self._format_time_axis(ax_euv)
 
-                title = f"{self._format_product_name(product_name)} — {map_time:%Y-%m-%d %H:%M UTC}"
+                title = f"{self._format_product_name(product_name)}  ·  {map_time:%Y-%m-%d %H:%M UTC}"
                 if flare:
-                    title += f"{flare.start_time:%H:%M}–{flare.end_time:%H:%M}"
-                fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
-                fig.subplots_adjust(top=0.9, bottom=0.08, right=0.88)
+                    peak_label = f"peak {flare.peak_time:%H:%M} UTC" if flare.peak_time else "peak time unavailable"
+                    title = (
+                        f"Solar flare  ·  {flare.start_time:%Y-%m-%d}  ·  "
+                        f"{self._flare_class(flare)}\n"
+                        f"{title}   |   {peak_label}"
+                    )
+                fig.suptitle(title, fontsize=16, fontweight="bold", color=PLOT_STYLE["ink"], y=0.965, linespacing=1.35)
+                for ax, label in ((ax_map, "A"), (ax_sun, "B"), (ax_indices, "C"), (ax_xray, "D"), (ax_euv, "E")):
+                    self._panel_label(ax, label)
 
                 # ⬇️ путь теперь включает папку продукта
                 output_path = self._build_output_path(map_time, flare, product_name=product_name)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                fig.savefig(output_path, dpi=200, bbox_inches="tight")
+                fig.savefig(output_path, dpi=220, facecolor=fig.get_facecolor())
                 plt.close(fig)
 
 
@@ -114,35 +163,41 @@ class Plotter:
 
         sc = ax.scatter(
             all_lons, all_lats, c=all_vals,
-            s=MAP_POINT_SIZE, cmap=MAP_CMAP,
+            s=MAP_POINT_SIZE, cmap=DEFAULT_CMAPS.get(product_name, "viridis"),
             vmin=vmin, vmax=vmax,
-            alpha=0.85,
+            alpha=0.9,
+            linewidths=0,
             transform=ccrs.PlateCarree()
         )
-        ax.coastlines()
-        gridlines = ax.gridlines(draw_labels=True, linewidth=0.4, color="gray", alpha=0.6, linestyle="--")
+        ax.set_facecolor("#edf2f7")
+        ax.coastlines(color="#53647a", linewidth=0.55, alpha=0.8)
+        gridlines = ax.gridlines(draw_labels=True, linewidth=0.45, color="#ffffff", alpha=0.85, linestyle="-")
         gridlines.top_labels = False
         gridlines.right_labels = False
+        gridlines.xlabel_style = {"size": 8, "color": PLOT_STYLE["muted"]}
+        gridlines.ylabel_style = {"size": 8, "color": PLOT_STYLE["muted"]}
         ax.set_extent([-180, 180, -90, 90], crs=ccrs.PlateCarree())
-        ax.set_xlabel("Longitude (deg)")
-        ax.set_ylabel("Latitude (deg)")
         if map_time is None:
             map_time = self.data.timestamps[time_index]
         ax.set_title(
             f"{self._format_product_name(product_name)} @ {map_time:%Y-%m-%d %H:%M UTC}",
-            fontsize=14,
-            pad=6,
+            fontsize=11,
+            pad=8,
+            color=PLOT_STYLE["ink"],
         )
         if show_colorbar:
-            cbar_ax = ax.inset_axes([1.02, 0.05, 0.03, 0.9])
-            plt.colorbar(sc, cax=cbar_ax, label=self.get_product_unit(product_name))
+            cbar_ax = ax.inset_axes([1.025, 0.08, 0.025, 0.84])
+            colorbar = plt.colorbar(sc, cax=cbar_ax)
+            colorbar.set_label(self.get_product_unit(product_name), fontsize=8, color=PLOT_STYLE["muted"])
+            colorbar.ax.tick_params(labelsize=7, length=2, colors=PLOT_STYLE["muted"])
         if map_time:
             self._plot_terminator(ax, map_time)
             self._plot_subsolar_point(ax, map_time)
 
     def _plot_sun(self, ax, flare):
-        ax.set_title("Solar Disk")
+        ax.set_title("Solar disk", loc="left", color=PLOT_STYLE["ink"], pad=8)
         ax.axis("off")
+        ax.set_facecolor("#101b2b")
         img = self.data.sun_image
         if img is not None:
             ax.imshow(img, origin="upper")
@@ -152,16 +207,16 @@ class Plotter:
                 x_arcsec, y_arcsec = flare.location
                 x_pixel, y_pixel, radius_px = self._convert_hpc_to_pixel(img, x_arcsec, y_arcsec)
                 if x_pixel is not None:
-                    ax.scatter([x_pixel], [y_pixel], s=120, color="red", marker="*", edgecolor="white", linewidth=0.8)
+                    ax.scatter([x_pixel], [y_pixel], s=150, color=PLOT_STYLE["accent"], marker="*", edgecolor="white", linewidth=1.5, zorder=5)
                     ax.annotate(
                         "Flare",
                         (x_pixel, y_pixel),
                         xytext=(10, -10),
                         textcoords="offset points",
                         color="white",
-                        fontsize=10,
+                        fontsize=8,
                         fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6),
+                        bbox=dict(boxstyle="round,pad=0.3", fc="#17243a", ec="none", alpha=0.82),
                     )
                     ax.add_patch(plt.Circle((img.shape[1] / 2, img.shape[0] / 2), radius_px, fill=False, color="white", alpha=0.3))
             return
@@ -169,8 +224,8 @@ class Plotter:
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.set_aspect("equal")
-        ax.set_facecolor("#0b1026")
-        sun = patches.Circle((0.5, 0.5), 0.45, facecolor="#f9d94a", edgecolor="#f6a800", linewidth=2, alpha=0.95)
+        ax.set_facecolor("#101b2b")
+        sun = patches.Circle((0.5, 0.5), 0.45, facecolor="#f6c85f", edgecolor="#e6a23c", linewidth=1.8, alpha=0.98)
         ax.add_patch(sun)
         ax.add_patch(patches.Circle((0.5, 0.5), 0.45, fill=False, edgecolor="white", alpha=0.4, linewidth=1))
 
@@ -178,16 +233,16 @@ class Plotter:
             x_arcsec, y_arcsec = flare.location
             x_norm, y_norm = self._convert_hpc_to_axes(x_arcsec, y_arcsec)
             if x_norm is not None:
-                ax.scatter([x_norm], [y_norm], s=120, color="red", marker="*", edgecolor="white", linewidth=0.8)
+                ax.scatter([x_norm], [y_norm], s=150, color=PLOT_STYLE["accent"], marker="*", edgecolor="white", linewidth=1.5, zorder=5)
                 ax.annotate(
                     "Flare",
                     (x_norm, y_norm),
                     xytext=(10, -10),
                     textcoords="offset points",
                     color="white",
-                    fontsize=10,
+                    fontsize=8,
                     fontweight="bold",
-                    bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6),
+                    bbox=dict(boxstyle="round,pad=0.3", fc="#17243a", ec="none", alpha=0.82),
                 )
 
     def _plot_indices(self, ax, highlight_time=None, product_name="dtec_2_10", flare=None):
@@ -195,15 +250,23 @@ class Plotter:
         times = self._to_naive(product_times if product_times is not None else self.data.index_times)
 
         prod_block = getattr(self.data, "indices", {}).get(product_name)
-        if not prod_block:
-            ax.set_title(f"No indices for {product_name}")
-            ax.grid(True)
+        has_index_values = bool(prod_block) and any(
+            np.asarray(prod_block.get(name, []), dtype=float).size
+            for name in ("day_night_index", "gsflai_index", "isfai_index")
+        )
+        if not has_index_values:
+            ax.set_axis_off()
+            ax.text(
+                0.5, 0.5, f"No activity-index data available for {self._format_product_name(product_name)}",
+                transform=ax.transAxes, ha="center", va="center",
+                color=PLOT_STYLE["muted"], fontsize=9,
+            )
             return
 
         series = [
-            ("Day/Night", np.asarray(prod_block.get("day_night_index", []), dtype=float), "tab:blue"),
-            ("GSFLAI",   np.asarray(prod_block.get("gsflai_index", []), dtype=float),   "tab:green"),
-            ("ISFAI",    np.asarray(prod_block.get("isfai_index", []), dtype=float),    "tab:red"),
+            ("Day/night", np.asarray(prod_block.get("day_night_index", []), dtype=float), PLOT_STYLE["index_day"]),
+            ("GSFLAI",   np.asarray(prod_block.get("gsflai_index", []), dtype=float),   PLOT_STYLE["index_gsflai"]),
+            ("ISFAI",    np.asarray(prod_block.get("isfai_index", []), dtype=float),    PLOT_STYLE["index_isfai"]),
         ]
 
         # базовая ось
@@ -235,8 +298,8 @@ class Plotter:
                 plot_times = times
                 plot_values = values
 
-            line, = axis.plot(plot_times, plot_values, label=label, color=color, linewidth=1.6)
-            axis.set_ylabel(label, color=color)
+            line, = axis.plot(plot_times, plot_values, label=label, color=color, linewidth=1.8, solid_capstyle="round")
+            axis.set_ylabel(label, color=color, fontsize=8)
             axis.tick_params(axis="y", colors=color)
             axis.spines["left" if axis is ax else "right"].set_color(color)
 
@@ -268,39 +331,56 @@ class Plotter:
         if flare:
             self._plot_flare_markers(ax, flare)
 
-        ax.set_title(f"Indices — {self._format_product_name(product_name)}")
-        ax.set_xlabel("Time UTC")
-        ax.grid(True, alpha=0.3)
+        ax.set_title(f"Activity indices  ·  {self._format_product_name(product_name)}", loc="left", color=PLOT_STYLE["ink"])
+        ax.set_xlabel("Time (UTC)")
+        ax.grid(True, color=PLOT_STYLE["grid"], linewidth=0.65)
+        ax.set_axisbelow(True)
+        self._style_time_axes(ax)
 
         if lines:
-            ax.legend(lines, labels, ncol=3, loc="upper left", frameon=True, fontsize=10)
+            ax.legend(lines, labels, ncol=3, loc="upper left", frameon=False, fontsize=8)
 
 
     def _plot_solar(self, ax, highlight_time=None):
         # X-ray — левая ось
         # EUV   — правая ось
+        has_xray = bool(self.data.xray_values and self.data.xray_times)
+        has_euv = bool(self.data.euv_values and self.data.euv_times)
+        if not has_xray and not has_euv:
+            ax.set_axis_off()
+            ax.text(
+                0.5, 0.5, "No GOES X-ray or SOHO/SEM data available",
+                transform=ax.transAxes, ha="center", va="center",
+                color=PLOT_STYLE["muted"], fontsize=9,
+            )
+            return
+
         ax2 = ax.twinx()
 
         lines = []
         labels = []
 
-        if self.data.xray_values and self.data.xray_times:
+        if has_xray:
             x_times = self._to_naive(self.data.xray_times)
             x_vals = np.asarray(self.data.xray_values, dtype=float)
-            line1, = ax.plot(x_times, x_vals, label="X-ray", color="purple", linewidth=1.6)
-            ax.set_ylabel("X-ray", color="purple")
-            ax.tick_params(axis="y", colors="purple")
-            ax.spines["left"].set_color("purple")
+            line1, = ax.plot(x_times, x_vals, label="GOES X-ray", color=PLOT_STYLE["xray"], linewidth=2.0, solid_capstyle="round")
+            if np.any(np.isfinite(x_vals) & (x_vals > 0)):
+                ax.set_yscale("log")
+            ax.set_ylabel("X-ray flux", color=PLOT_STYLE["xray"])
+            ax.tick_params(axis="y", colors=PLOT_STYLE["xray"])
+            ax.spines["left"].set_color(PLOT_STYLE["xray"])
             lines.append(line1)
             labels.append("X-ray")
 
-        if self.data.euv_values and self.data.euv_times:
+        if has_euv:
             e_times = self._to_naive(self.data.euv_times)
             e_vals = np.asarray(self.data.euv_values, dtype=float)
-            line2, = ax2.plot(e_times, e_vals, label="EUV", color="brown", linewidth=1.6)
-            ax2.set_ylabel("EUV", color="brown")
-            ax2.tick_params(axis="y", colors="brown")
-            ax2.spines["right"].set_color("brown")
+            line2, = ax2.plot(e_times, e_vals, label="SOHO/SEM EUV", color=PLOT_STYLE["euv"], linewidth=2.0, solid_capstyle="round")
+            if np.any(np.isfinite(e_vals) & (e_vals > 0)):
+                ax2.set_yscale("log")
+            ax2.set_ylabel("EUV flux", color=PLOT_STYLE["euv"])
+            ax2.tick_params(axis="y", colors=PLOT_STYLE["euv"])
+            ax2.spines["right"].set_color(PLOT_STYLE["euv"])
             lines.append(line2)
             labels.append("EUV")
 
@@ -308,32 +388,109 @@ class Plotter:
             t0 = self._ensure_naive_time(highlight_time)
             ax.axvline(
                 t0,
-                color="red",
-                linestyle="--",
-                linewidth=1,
+                color=PLOT_STYLE["accent"],
+                linestyle=(0, (4, 3)),
+                linewidth=1.4,
                 label="_nolegend_",
             )
             ax2.axvline(
                 t0,
-                color="red",
-                linestyle="--",
-                linewidth=1,
+                color=PLOT_STYLE["accent"],
+                linestyle=(0, (4, 3)),
+                linewidth=1.4,
                 label="_nolegend_",
             )
 
-        # ax.set_ylabel("X-ray / EUV flux")
-        ax.set_title("Solar Activity")
-        ax.grid(True, alpha=0.3)
+        ax.set_title("Solar irradiance", loc="left", color=PLOT_STYLE["ink"])
+        ax.grid(True, color=PLOT_STYLE["grid"], linewidth=0.65)
+        ax.set_axisbelow(True)
+        self._style_time_axes(ax)
+        self._style_time_axes(ax2)
 
         if lines:
-            ax.legend(lines, labels, ncol=2, loc="upper left", frameon=True, fontsize=10)
+            ax.legend(lines, labels, ncol=2, loc="upper left", frameon=False, fontsize=8)
+
+    def _plot_flux_panel(self, ax, times, values, title, ylabel, color, highlight_time=None, flare=None):
+        if times is None or values is None or len(times) == 0 or len(values) == 0:
+            ax.set_axis_off()
+            ax.text(
+                0.5, 0.5, f"{title}: no source data available",
+                transform=ax.transAxes, ha="center", va="center",
+                color=PLOT_STYLE["muted"], fontsize=9,
+            )
+            return
+
+        plot_times = self._to_naive(times)
+        plot_values = np.asarray(values, dtype=float)
+        count = min(len(plot_times), len(plot_values))
+        plot_times = plot_times[:count]
+        plot_values = plot_values[:count]
+        valid = np.isfinite(plot_values)
+        if not np.any(valid):
+            ax.set_axis_off()
+            ax.text(
+                0.5, 0.5, f"{title}: no valid measurements",
+                transform=ax.transAxes, ha="center", va="center",
+                color=PLOT_STYLE["muted"], fontsize=9,
+            )
+            return
+
+        positive = valid & (plot_values > 0)
+        if np.count_nonzero(positive) >= 2 and np.count_nonzero(positive) == np.count_nonzero(valid):
+            ax.set_yscale("log")
+        else:
+            plot_values = np.where(valid, plot_values, np.nan)
+
+        ax.plot(plot_times, plot_values, color=color, linewidth=2.0, solid_capstyle="round")
+        ax.set_title(title, loc="left", color=PLOT_STYLE["ink"])
+        ax.set_ylabel(ylabel, color=color)
+        ax.tick_params(axis="y", colors=color)
+        ax.spines["left"].set_color(color)
+        ax.set_xlabel("Time (UTC)")
+        ax.grid(True, color=PLOT_STYLE["grid"], linewidth=0.65)
+        ax.set_axisbelow(True)
+        self._style_time_axes(ax)
+
+        if flare is not None:
+            self._plot_flare_markers(ax, flare)
+        elif highlight_time is not None:
+            ax.axvline(
+                self._ensure_naive_time(highlight_time),
+                color=PLOT_STYLE["accent"],
+                linestyle=(0, (4, 3)),
+                linewidth=1.4,
+            )
 
 
 
 
     def _format_time_axis(self, ax):
         ax.xaxis.set_major_locator(AutoDateLocator(maxticks=10))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=timezone.utc))
+        ax.tick_params(axis="x", labelrotation=0)
+
+    @staticmethod
+    def _style_time_axes(ax):
+        ax.spines["top"].set_visible(False)
+        ax.spines["bottom"].set_color(PLOT_STYLE["grid"])
+        ax.tick_params(length=3, width=0.7)
+
+    @staticmethod
+    def _panel_label(ax, label):
+        ax.text(
+            0.015, 0.97, label,
+            transform=ax.transAxes,
+            ha="left", va="top",
+            fontsize=10, fontweight="bold",
+            color="white",
+            bbox={"boxstyle": "round,pad=0.28", "facecolor": PLOT_STYLE["ink"], "edgecolor": "none", "alpha": 0.92},
+            zorder=20,
+        )
+
+    @staticmethod
+    def _flare_class(flare):
+        flare_id = str(getattr(flare, "flare_id", ""))
+        return flare_id.rsplit("_", 1)[-1] if "_" in flare_id else "Solar flare"
 
     def _to_naive(self, times):
         """Конвертирует массив времени в tz-naive (UTC)"""
@@ -375,8 +532,8 @@ class Plotter:
             ax.axvspan(
                 self._ensure_naive_time(flare.start_time),
                 self._ensure_naive_time(flare.end_time),
-                color="#e49f31",
-                alpha=0.28,
+                color=PLOT_STYLE["accent"],
+                alpha=0.12,
                 zorder=0,
             )
         if not flare.peak_time:
@@ -384,8 +541,8 @@ class Plotter:
         peak_time = self._ensure_naive_time(flare.peak_time)
         ax.axvline(
             peak_time,
-            color="#ff1900",
-            linestyle="--",
+            color=PLOT_STYLE["accent"],
+            linestyle=(0, (4, 3)),
             linewidth=1.4,
             label="_nolegend_",
         )
@@ -395,11 +552,11 @@ class Plotter:
             xycoords=("data", "axes fraction"),
             xytext=(6, -4),
             textcoords="offset points",
-            fontsize=10,
-            color="#000000",
+            fontsize=8,
+            color=PLOT_STYLE["ink"],
             ha="left",
             va="top",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85),
         )
 
     def _plot_subsolar_point(self, ax, map_time):
@@ -551,14 +708,18 @@ class CombinedPlotter(Plotter):
         for i, map_time in enumerate(self.data.timestamps):
             flare = self._select_nearest_flare(map_time)
 
-            fig = plt.figure(figsize=(18, 16), constrained_layout=False)
+            fig = plt.figure(figsize=(16, 14), facecolor=PLOT_STYLE["figure"], constrained_layout=False)
             gs = fig.add_gridspec(
                 7,
                 2,
                 height_ratios=[6.2, 6.2, 2.1, 2.1, 2.1, 2.1, 2.6],
                 width_ratios=[1, 1],
-                wspace=0.25,
-                hspace=0.5,
+                wspace=0.22,
+                hspace=0.42,
+                left=0.10,
+                right=0.93,
+                top=0.91,
+                bottom=0.06,
             )
 
             map_axes = [
@@ -578,26 +739,28 @@ class CombinedPlotter(Plotter):
                     vmin=vmin,
                     vmax=vmax,
                 )
+                self._panel_label(map_axes[idx], chr(ord("A") + idx))
                 self._plot_indices(
                     index_axes[idx],
                     highlight_time=map_time,
                     product_name=product_name,
                     flare=flare,
                 )
+                self._panel_label(index_axes[idx], chr(ord("E") + idx))
                 self._format_time_axis(index_axes[idx])
 
             self._plot_solar(solar_axis, highlight_time=map_time)
+            self._panel_label(solar_axis, "I")
             self._format_time_axis(solar_axis)
             title = ""
             if flare:
-                    title += f"Flare {flare.start_time:%H:%M}–{flare.end_time:%H:%M}\n"
+                title += f"Solar flare  ·  {flare.start_time:%Y-%m-%d}  ·  {self._flare_class(flare)}\n"
             title += f"{map_time:%Y-%m-%d %H:%M UTC}"
-            fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
-            fig.subplots_adjust(top=0.92, bottom=0.06)
+            fig.suptitle(title, fontsize=16, fontweight="bold", color=PLOT_STYLE["ink"], y=0.975)
 
             output_path = self._build_combined_output_path(map_time, flare)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(output_path, dpi=200, bbox_inches="tight")
+            fig.savefig(output_path, dpi=220, facecolor=fig.get_facecolor())
             plt.close(fig)
 
     @staticmethod
