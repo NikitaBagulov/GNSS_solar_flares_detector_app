@@ -81,11 +81,13 @@ def test_dispatcher_recovers_and_checks_queue_before_discovery():
     assert calls == ["recover", "claim", "discover"]
 
 
-def test_plot_selection_includes_x_class_before_2019_and_all_classes_from_2019():
-    assert should_plot_flare("flare", date(2018, 12, 31), "X1.0")
-    assert not should_plot_flare("flare", date(2018, 12, 31), "M1.0")
-    assert should_plot_flare("flare", date(2019, 1, 1), "C1.0")
-    assert should_plot_flare("flare", date(2020, 1, 1), None)
+def test_plot_selection_only_includes_x_class_from_2020():
+    assert not should_plot_flare("flare", date(2019, 12, 31), "X1.0")
+    assert should_plot_flare("flare", date(2020, 1, 1), "X1.0")
+    assert should_plot_flare("flare", date(2025, 1, 1), "x10.0")
+    assert not should_plot_flare("flare", date(2020, 1, 1), "M1.0")
+    assert not should_plot_flare("flare", date(2020, 1, 1), None)
+    assert not should_plot_flare("flare", None, "X1.0")
 
 
 def test_index_job_enqueues_plot_only_when_selection_rule_matches(monkeypatch, tmp_path):

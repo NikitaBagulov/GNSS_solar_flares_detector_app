@@ -19,14 +19,17 @@ from pipeline.run_config import RunConfig
 from results_layout import event_results_dir, publish_file, source_file_name
 
 
-PLOT_ALL_FLARES_FROM = date(2019, 1, 1)
+PLOT_X_FLARES_FROM = date(2020, 1, 1)
 
 
 def should_plot_flare(flare_key: str, flare_date: date | None, flare_class: str | None) -> bool:
-    """Plot X-class events from any year and all events from the 2019 solar cycle onward."""
-    if flare_date is not None and flare_date >= PLOT_ALL_FLARES_FROM:
-        return True
-    return bool(flare_class and flare_class.strip().upper().startswith("X"))
+    """Plot X-class events from 2020 onward."""
+    return bool(
+        flare_date is not None
+        and flare_date >= PLOT_X_FLARES_FROM
+        and flare_class
+        and flare_class.strip().upper().startswith("X")
+    )
 
 
 @dataclass(frozen=True)
