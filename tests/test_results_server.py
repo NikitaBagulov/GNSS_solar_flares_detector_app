@@ -116,6 +116,8 @@ def test_render_dashboard_exposes_clear_catalog_filters_and_progress(tmp_path):
     assert 'id="resetFilters"' in html
     assert 'id="resultsCount"' in html
     assert 'id="noResults"' in html
+    assert 'id="myPlotsForm"' in html
+    assert 'id="myPlotsResults"' in html
     assert "Maps 4/4" in html
     assert "Indices 4/4" in html
     assert "GOES available" in html
@@ -148,7 +150,12 @@ def test_render_event_page_groups_preview_status_and_files(tmp_path):
     assert "Event details" in html
     assert "Processing status" in html
     assert "Source measurements" in html
-    assert "Maps and indices" in html
+    assert "Create a plot" in html
+    assert 'id="plotPanels"' in html
+    assert "Generate and open" in html
+    assert 'id="plotEmail" type="email" required' in html
+    assert 'href="maps/"' in html
+    assert 'href="indices/"' in html
     assert "Combined plots" in html
     assert "Browse files" in html
     assert 'id="languageSelect"' in html

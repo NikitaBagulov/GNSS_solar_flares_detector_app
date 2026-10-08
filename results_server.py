@@ -4,12 +4,15 @@ import argparse
 import html
 import json
 import os
+import re
 from datetime import datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
+
+from plot_requests import TTL_SECONDS, cleanup_cache, event_series, normalize_email, plots_for_email, render_plot, store_plot
 
 
 FILE_TYPE_LABELS = {
@@ -119,6 +122,26 @@ UI_TRANSLATIONS = {
     "No matching graphs": "Подходящих графиков нет",
     "file list": "список файлов",
     "Language": "Язык",
+    "Create a plot": "Создать график",
+    "Build plot": "Построить график",
+    "Add panel": "Добавить панель",
+    "Selected plots": "Выбранные графики",
+    "Layout": "Расположение",
+    "Vertical": "Друг под другом",
+    "Two columns": "Два столбца",
+    "Plot title": "Название графика",
+    "Email identifier": "Почта для поиска графиков",
+    "My plots": "Мои графики",
+    "Enter your email to find plots created with it during the last three days. No messages are sent.": "Укажите почту, чтобы найти созданные с ней графики за последние три дня. Письма не отправляются.",
+    "Find my plots": "Найти мои графики",
+    "Enter your email address to save and find this plot. No messages are sent.": "Укажите почту, чтобы сохранить и найти график. Письма не отправляются.",
+    "Generate and open": "Построить и открыть",
+    "Remove": "Удалить",
+    "Color": "Цвет",
+    "Data series": "Ряд данных",
+    "Plots are generated on request and available for three days.": "Графики строятся по запросу и доступны три дня.",
+    "No data series available for this event.": "Для этого события нет данных для графиков.",
+    "Generating plot…": "Построение графика…",
 }
 
 LANGUAGE_SCRIPT = r"""
@@ -353,7 +376,6 @@ def scan_event(root: Path, path: Path) -> dict:
     complete_checks = [
         sum(maps.values()) == len(PRODUCTS),
         sum(indices.values()) == len(PRODUCTS),
-        count_files(graphs_dir, "*.png") > 0,
         source_status.get("goes_xray", False),
         source_status.get("soho_sem", False),
     ]
@@ -801,6 +823,11 @@ def render_dashboard(root: Path) -> bytes:
       <div class="summary-card"><span class="summary-icon attention-icon">!</span><div><strong>{summary['incomplete']}</strong><span>Need attention</span></div></div>
       <div class="catalog-storage"><span>Catalog storage</span><strong>{html.escape(summary['size'])}</strong></div>
     </section>
+    <section class="catalog-panel my-plots" aria-label="My plots">
+      <div class="catalog-heading"><div><h2>My plots</h2><span class="muted">Enter your email to find plots created with it during the last three days. No messages are sent.</span></div></div>
+      <form id="myPlotsForm" class="my-plots-form"><label>Email identifier <input id="myPlotsEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label><button class="button primary-button" type="submit">Find my plots</button></form>
+      <p id="myPlotsStatus" class="muted" role="status" aria-live="polite"></p><div id="myPlotsResults" class="my-plots-results"></div>
+    </section>
     <section class="catalog-panel" aria-label="Solar flare events">
       <div class="catalog-heading">
         <div><h2>All events</h2><span class="muted">Select an event to inspect its files and results.</span></div>
@@ -821,6 +848,36 @@ def render_dashboard(root: Path) -> bytes:
       </div>
     </section>
     <script>
+      document.getElementById('myPlotsForm').addEventListener('submit', async event => {{
+        event.preventDefault();
+        const results = document.getElementById('myPlotsResults');
+        const status = document.getElementById('myPlotsStatus');
+        const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
+        results.replaceChildren();
+        status.textContent = text('Searching…', 'Поиск…');
+        try {{
+          const response = await fetch('/api/plots/search', {{method: 'POST', headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{email: document.getElementById('myPlotsEmail').value}})}});
+          const payload = await response.json();
+          if (!response.ok) throw Error(payload.error);
+          status.textContent = payload.plots.length
+            ? text(`${{payload.plots.length}} plots found`, `Найдено графиков: ${{payload.plots.length}}`)
+            : text('No saved plots for this email.', 'Для этой почты сохранённых графиков нет.');
+          for (const plot of payload.plots) {{
+            const row = document.createElement('div'); row.className = 'my-plot-row';
+            const link = document.createElement('a'); link.href = plot.url; link.target = '_blank'; link.rel = 'noopener';
+            link.textContent = plot.title || plot.event;
+            const description = document.createElement('span'); description.textContent = `${{plot.event}} · ${{plot.created_at}}`;
+            const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button';
+            remove.textContent = text('Delete plot', 'Удалить график');
+            remove.onclick = async () => {{
+              const deleted = await fetch(plot.delete_url, {{method: 'DELETE'}});
+              if (deleted.ok) {{ row.remove(); status.textContent = text('Plot deleted.', 'График удалён.'); }}
+            }};
+            row.append(link, description, remove); results.append(row);
+          }}
+        }} catch (error) {{ status.textContent = error.message; }}
+      }});
       const q = document.getElementById('q');
       const classFilter = document.getElementById('classFilter');
       const statusFilter = document.getElementById('statusFilter');
@@ -873,6 +930,15 @@ def render_dashboard(root: Path) -> bytes:
       .api-links a { color: var(--muted); font-size: 12px; text-decoration: none; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
       .api-links a:hover { color: var(--accent); border-color: var(--accent); }
       .catalog-summary { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(140px, .8fr); gap: 12px; margin: 24px 0 18px; }
+      .my-plots { margin-bottom: 18px; }
+      .my-plots-form { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin: 10px 20px 16px; }
+      .my-plots-form label { display: grid; gap: 5px; flex: 1 1 250px; max-width: 440px; }
+      .my-plots-form input { min-height: 40px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+      #myPlotsStatus { margin: 0 20px 12px; }
+      #myPlotsStatus:empty { display: none; }
+      .my-plots-results { margin: 0 20px 16px; }
+      .my-plot-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+      .my-plot-row span { color: var(--muted); font-size: 12px; flex: 1; }
       .summary-card, .catalog-storage { min-height: 86px; display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
       .summary-card > div, .catalog-storage { display: flex; flex-direction: column; }
       .summary-card strong, .catalog-storage strong { font-size: 22px; line-height: 1.15; }
@@ -920,6 +986,9 @@ def render_dashboard(root: Path) -> bytes:
 
 def render_event_page(root: Path, path: Path) -> bytes:
     event = scan_event(root, path)
+    available_series = event_series(path)
+    series_json = json.dumps(available_series, ensure_ascii=False).replace("<", "\\u003c")
+    event_path_json = json.dumps(event["path"], ensure_ascii=False).replace("<", "\\u003c")
     product_rows = []
     for product in PRODUCTS:
         product_rows.append(
@@ -974,20 +1043,93 @@ def render_event_page(root: Path, path: Path) -> bytes:
         {''.join(source_rows)}
       </aside>
     </div>
+    <section class="panel plot-editor" id="plotEditor">
+      <div class="section-heading"><div><h2>Create a plot</h2><p class="muted">Plots are generated on request and available for three days.</p></div></div>
+      <div id="plotControls" {'hidden' if not available_series else ''}>
+        <div class="editor-fields">
+          <label>Plot title <input id="plotTitle" maxlength="100" placeholder="Plot title"></label>
+          <label>Layout <select id="plotLayout"><option value="vertical">Vertical</option><option value="grid">Two columns</option></select></label>
+          <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
+        </div>
+        <p class="muted">Enter your email address to save and find this plot. No messages are sent.</p>
+        <div class="editor-panels"><strong>Selected plots</strong><div id="plotPanels"></div><button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
+        <div class="editor-footer"><button type="button" class="button primary-button" id="generatePlot">Generate and open</button><span id="plotMessage" role="status" aria-live="polite"></span></div>
+      </div>
+      {'<p>No data series available for this event.</p>' if not available_series else ''}
+    </section>
     <section class="panel processing-panel">
       <div class="section-heading"><div><h2>Processing status</h2><p class="muted">Availability of each calculated product.</p></div></div>
       <div class="table-wrap"><table><thead><tr><th>Product</th><th>Map</th><th>Index</th></tr></thead><tbody>{''.join(product_rows)}</tbody></table></div>
       <nav class="result-actions" aria-label="Open results">
         <span>Open results</span>
-        <a class="button primary-button" href="maps/">Maps and indices</a>
-        <a class="button" href="graphs/">Graphs</a>
-        <a class="button" href="graphs/combined/">Combined plots</a>
+        {'<a class="button primary-button" href="maps/">Maps</a>' if (path / 'maps').is_dir() else ''}
+        {'<a class="button" href="indices/">Indices</a>' if (path / 'indices').is_dir() else ''}
+        {'<a class="button" href="graphs/">Graphs</a>' if (path / 'graphs').is_dir() else ''}
+        {'<a class="button" href="graphs/combined/">Combined plots</a>' if (path / 'graphs' / 'combined').is_dir() else ''}
       </nav>
     </section>
     <details class="files-disclosure">
       <summary>Browse files <span class="muted">({len(entries)} items)</span></summary>
       <div class="table-wrap event-files-table">{files_table}</div>
     </details>
+    <script>
+    (() => {{
+      const series = {series_json};
+      const eventPath = {event_path_json};
+      if (!Object.keys(series).length) return;
+      const panels = document.getElementById('plotPanels');
+      const message = document.getElementById('plotMessage');
+      const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
+      function addPanel() {{
+        if (panels.children.length >= 6) return;
+        const row = document.createElement('div');
+        row.className = 'editor-row';
+        const select = document.createElement('select');
+        select.setAttribute('aria-label', 'Data series');
+        for (const [key, label] of Object.entries(series)) {{
+          const option = document.createElement('option'); option.value = key; option.textContent = label; select.append(option);
+        }}
+        const color = document.createElement('input'); color.type = 'color'; color.value = '#2878a5'; color.setAttribute('aria-label', 'Color');
+        const epoch = document.createElement('input'); epoch.type = 'datetime-local'; epoch.title = 'Map time (UTC)'; epoch.setAttribute('aria-label', 'Map time (UTC)');
+        const updateEpoch = () => {{ epoch.hidden = !select.value.startsWith('map:'); }};
+        select.addEventListener('change', updateEpoch); updateEpoch();
+        const up = document.createElement('button'); up.type = 'button'; up.className = 'button'; up.textContent = '↑'; up.title = 'Move up';
+        up.onclick = () => {{ if (row.previousElementSibling) panels.insertBefore(row, row.previousElementSibling); }};
+        const down = document.createElement('button'); down.type = 'button'; down.className = 'button'; down.textContent = '↓'; down.title = 'Move down';
+        down.onclick = () => {{ if (row.nextElementSibling) panels.insertBefore(row.nextElementSibling, row); }};
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button'; remove.textContent = '×'; remove.title = 'Remove'; remove.onclick = () => row.remove();
+        row.append(select, epoch, color, up, down, remove); panels.append(row);
+      }}
+      document.getElementById('addPlotPanel').onclick = addPanel;
+      addPanel();
+      document.getElementById('generatePlot').onclick = async () => {{
+        const button = document.getElementById('generatePlot');
+        const chosen = Array.from(panels.children).map(row => ({{series: row.querySelector('select').value, color: row.querySelector('input[type=color]').value, epoch: row.querySelector('input[type=datetime-local]').value || null}}));
+        if (!chosen.length) {{ message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }}
+        const email = document.getElementById('plotEmail');
+        if (!email.reportValidity()) return;
+        button.disabled = true;
+        message.textContent = text('Generating plot…', 'Построение графика…');
+        try {{
+          const response = await fetch('/api/plots', {{method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{
+            event: eventPath, panels: chosen, layout: document.getElementById('plotLayout').value,
+            title: document.getElementById('plotTitle').value, email: email.value
+          }})}});
+          const result = await response.json();
+          if (!response.ok) throw Error(result.error || 'Failed to create plot');
+          const link = document.createElement('a'); link.href = result.url; link.target = '_blank'; link.rel = 'noopener';
+          link.textContent = text('Open generated plot', 'Открыть готовый график');
+          message.replaceChildren(link);
+          const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button';
+          remove.textContent = text('Delete plot', 'Удалить график');
+          remove.onclick = async () => {{ const deleted = await fetch(result.delete_url, {{method: 'DELETE'}}); if (deleted.ok) message.textContent = text('Plot deleted.', 'График удалён.'); }};
+          message.append(' · ', remove);
+          message.append(' · ', text('Find it later by email in the catalog.', 'Позже найдите его по почте в каталоге.'));
+          window.open(result.url, '_blank', 'noopener');
+        }} catch (error) {{ message.textContent = error.message; }} finally {{ button.disabled = false; }}
+      }};
+    }})();
+    </script>
     """
     extra_head = """
     <style>
@@ -1023,6 +1165,22 @@ def render_event_page(root: Path, path: Path) -> bytes:
       .event-details-panel h3 { margin: 22px 0 4px; font-size: 14px; }
       .source-status:last-child { border-bottom: 0; }
       .processing-panel { margin-top: 12px; }
+      .plot-editor { margin-top: 12px; }
+      .editor-fields { display: grid; grid-template-columns: 1fr 180px minmax(180px, 1fr); gap: 12px; }
+      .editor-fields label { display: grid; gap: 5px; color: var(--muted); font-weight: 600; }
+      .editor-fields input, .editor-fields select, .editor-row select { min-height: 38px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; color: var(--text); background: white; }
+      .editor-panels { margin-top: 15px; }
+      .editor-row { display: flex; gap: 7px; align-items: center; margin: 8px 0; }
+      .editor-row select { flex: 1; min-width: 0; }
+      .editor-row input[type=datetime-local] { min-height: 38px; border: 1px solid var(--line); border-radius: 7px; }
+      .editor-row input[hidden] { display: none; }
+      @media (max-width: 600px) { .editor-row { flex-wrap: wrap; } .editor-row select { flex-basis: 100%; } }
+      .editor-row input[type=color] { width: 40px; height: 38px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; }
+      .editor-row .button { min-height: 38px; cursor: pointer; }
+      .editor-footer { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+      .editor-footer button { cursor: pointer; }
+      .editor-footer button:disabled { opacity: .5; cursor: wait; }
+      @media (max-width: 700px) { .editor-fields { grid-template-columns: 1fr; } }
       .processing-panel .table-wrap { box-shadow: none; border-radius: 7px; }
       .processing-panel table { min-width: 480px; }
       .processing-panel th { text-transform: none; background: #fafbfc; }
@@ -1215,6 +1373,21 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if ".plot-cache" in unquote(parsed.path).split("/"):
+            self.send_error(404)
+            return
+        if parsed.path.startswith("/generated/"):
+            name = parsed.path.removeprefix("/generated/")
+            if not re.fullmatch(r"[0-9a-f]{32}\.png", name):
+                self.send_error(404)
+                return
+            cache = self._root_dir() / ".plot-cache"
+            cleanup_cache(cache)
+            image = cache / name
+            if not image.is_file():
+                self.send_error(404)
+                return
+            return self._send_bytes(image.read_bytes(), "image/png")
         if parsed.path.startswith("/api/"):
             return self.handle_api(parsed.path, parse_qs(parsed.query))
 
@@ -1236,6 +1409,57 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
 
         return super().do_GET()
 
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        name = parsed.path.removeprefix("/api/plots/")
+        if not parsed.path.startswith("/api/plots/") or not re.fullmatch(r"[0-9a-f]{32}\.png", name):
+            self.send_error(404)
+            return
+        try:
+            image = self._root_dir() / ".plot-cache" / name
+            image.unlink()
+            image.with_suffix(".json").unlink(missing_ok=True)
+        except FileNotFoundError:
+            self.send_error(404)
+            return
+        self._send_json({"deleted": True})
+
+    def do_POST(self):
+        endpoint = urlparse(self.path).path
+        if endpoint not in ("/api/plots", "/api/plots/search"):
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 8192:
+                raise ValueError("Invalid request size")
+            request = json.loads(self.rfile.read(length))
+            if endpoint == "/api/plots/search":
+                if not isinstance(request, dict):
+                    raise ValueError("Enter a valid email address")
+                email = normalize_email(request.get("email"))
+                return self._send_json({"plots": plots_for_email(self._root_dir() / ".plot-cache", email)})
+            if not isinstance(request, dict) or not isinstance(request.get("event"), str):
+                raise ValueError("Select an event")
+            events = scan_events(self._root_dir())
+            if request["event"] not in {event["path"] for event in events}:
+                raise ValueError("Unknown event")
+            event_path = (self._root_dir() / request["event"]).resolve()
+            normalized = render_plot(event_path, request)
+            cache = self._root_dir() / ".plot-cache"
+            cleanup_cache(cache)
+            name = store_plot(cache, normalized, normalize_email(request.get("email")), request["event"], request.get("title", ""))
+            url = f"/generated/{name}"
+            result = {"url": url, "expires_in_seconds": TTL_SECONDS, "delete_url": f"/api/plots/{name}"}
+            return self._send_json(result)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            payload = json.dumps({"error": str(exc)}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
     def handle_api(self, path: str, query: dict[str, list[str]]):
         root = self._root_dir()
         events = scan_events(root)
@@ -1255,7 +1479,7 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
 
     def list_directory(self, path):
         try:
-            entries = [Path(path) / name for name in os.listdir(path)]
+            entries = [Path(path) / name for name in os.listdir(path) if name != ".plot-cache"]
         except OSError:
             self.send_error(404, "No permission to list directory")
             return None

@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
         "--steps",
         nargs="+",
         choices=["discovery", "preprocessing", "index", "plotting"],
-        default=["discovery", "preprocessing", "index", "plotting"],
+        default=["discovery", "preprocessing", "index"],
         help="Шаги pipeline для выполнения",
     )
     parser.add_argument(
