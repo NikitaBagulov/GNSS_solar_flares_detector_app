@@ -54,9 +54,12 @@ Save it as `/etc/sudoers.d/gnss-deploy` and validate it with:
 sudo visudo -cf /etc/sudoers.d/gnss-deploy
 ```
 
-The service units run as `user` and use the fixed production path. The runner
-must be installed as a systemd service with labels `self-hosted`, `linux`, and
-`x64`; systemd will restart it if it exits.
+The service units run as `user` and use the fixed production path. Run the
+self-hosted runner systemd service as the same `user` (set `User=user` in its
+unit). It must have labels `self-hosted`, `linux`, and `x64`; systemd will
+restart it if it exits. The deployment script performs the fetch and checkout;
+the workflow must not checkout the target commit first, or deployment rollback
+will no longer know which commit to restore.
 
 Install a GitHub Actions self-hosted runner on the server and add the labels
 `self-hosted`, `linux`, and `x64`. The deploy workflow runs locally on that
@@ -64,6 +67,28 @@ machine, so no SSH secrets are required and the private address is reachable.
 
 The deploy workflow uses the fixed server path
 `/home/user/app/GNSS_solar_flares_detector_app`.
+
+If `git fetch` fails with `insufficient permission for adding an object to
+repository database .git/objects`, inspect the effective runner user and Git
+ownership **on the server**:
+
+```bash
+id -un
+stat -c '%U:%G %A %n' /home/user/app/GNSS_solar_flares_detector_app/.git /home/user/app/GNSS_solar_flares_detector_app/.git/objects
+```
+
+With the runner stopped, if `.git` contains files created by root or a
+different account, restore ownership of Git metadata (including existing
+objects) once:
+
+```bash
+sudo chown -R user:user /home/user/app/GNSS_solar_flares_detector_app/.git
+```
+
+Ensure the runner systemd unit runs as `user`, restart that unit, and rerun the
+failed deployment job. Do not run deployment Git commands with `sudo`: doing so
+will create root-owned objects again. Keep `data/` and `results/` ownership
+appropriate for the production services; the repair above touches only `.git`.
 
 The deployment script updates tracked files only and preserves `data/`, `results/`
 and server-side untracked artifacts. It records the previous `main` commit and

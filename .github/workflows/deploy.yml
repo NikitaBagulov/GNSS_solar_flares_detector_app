@@ -18,9 +18,11 @@ jobs:
     environment: production
     steps:
       - name: Deploy on server runner
+        working-directory: /home/user/app/GNSS_solar_flares_detector_app
         run: |
-          cd "/home/user/app/GNSS_solar_flares_detector_app"
-          git fetch --prune origin main
-          git cat-file -e "${{ github.sha }}^{commit}"
-          git checkout --force -B main "${{ github.sha }}"
+          if [[ "$(id -un)" != user || ! -w .git || ! -w .git/objects ]]; then
+            echo "Deploy runner must run as user and own the writable repository .git directory." >&2
+            echo "See deploy/README.md: repair the server runner identity and .git ownership, then rerun the job." >&2
+            exit 1
+          fi
           ./deploy/deploy.sh "${{ github.sha }}"
