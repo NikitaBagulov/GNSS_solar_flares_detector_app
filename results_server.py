@@ -26,6 +26,150 @@ FILE_TYPE_LABELS = {
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 SOURCE_FILES = ("goes_xray.csv", "soho_sem.csv")
 GRAPH_PRODUCTS = (*PRODUCTS, "combined")
+UI_TRANSLATIONS = {
+    "Event catalog": "Каталог вспышек",
+    "Browse events and see at a glance which data products are ready.": "Просматривайте вспышки и сразу проверяйте готовность результатов.",
+    "Events JSON": "События JSON",
+    "Summary JSON": "Сводка JSON",
+    "Total events": "Всего событий",
+    "Fully processed": "Обработано полностью",
+    "Need attention": "Требуют внимания",
+    "Catalog storage": "Размер каталога",
+    "All events": "Все события",
+    "Select an event to inspect its files and results.": "Откройте событие, чтобы посмотреть файлы и результаты.",
+    "Search by date, event name, or class": "Поиск по дате, имени события или классу",
+    "All classes": "Все классы",
+    "Any status": "Любой статус",
+    "Needs attention": "Требует внимания",
+    "Newest first": "Сначала новые",
+    "Oldest first": "Сначала старые",
+    "Event name": "По имени события",
+    "Largest first": "Сначала крупные",
+    "Clear filters": "Сбросить фильтры",
+    "Event / date": "Событие / дата",
+    "Class": "Класс",
+    "Processing progress": "Готовность обработки",
+    "Source data": "Исходные данные",
+    "Last updated": "Обновлено",
+    "No events match these filters. Try a different search or clear the filters.": "События не найдены. Измените условия поиска или сбросьте фильтры.",
+    "Date unavailable": "Дата не указана",
+    "available": "есть",
+    "missing": "нет",
+    "Results": "Результаты",
+    "GNSS SOLAR FLARE DETECTOR": "GNSS — ДЕТЕКТОР СОЛНЕЧНЫХ ВСПЫШЕК",
+    "Event overview": "Обзор события",
+    "Latest available event plot.": "Последний доступный график события.",
+    "Availability of each calculated product.": "Наличие каждого рассчитанного продукта.",
+    "Back to catalog": "Вернуться в каталог",
+    "Event status": "Состояние события",
+    "Products": "Продукты",
+    "Combined": "Общие",
+    "GOES X-ray": "Рентгеновские данные GOES",
+    "SOHO SEM": "Данные SOHO SEM",
+    "Processing status": "Состояние обработки",
+    "Product": "Продукт",
+    "Map": "Карта",
+    "Index": "Индекс",
+    "Ready": "Готово",
+    "Missing": "Отсутствует",
+    "Source measurements": "Исходные измерения",
+    "Open results": "Перейти к результатам",
+    "Maps and indices": "Карты и индексы",
+    "Maps": "Карты",
+    "Indices": "Индексы",
+    "Graphs": "Графики",
+    "Combined plots": "Общие графики",
+    "Event files": "Файлы события",
+    "Browse files": "Просмотреть файлы",
+    "Preview": "Предпросмотр",
+    "Event details": "Данные события",
+    "Solar flare class": "Класс вспышки",
+    "Event date": "Дата события",
+    "Data size": "Объём данных",
+    "No preview graph is available yet.": "График для предпросмотра пока не создан.",
+    "yes": "да",
+    "no": "нет",
+    "present": "есть",
+    "Maps ready": "Карты готовы",
+    "Indices ready": "Индексы готовы",
+    "graphs": "графиков",
+    "maps": "карт",
+    "indices": "индексов",
+    "size": "объём",
+    "Date": "Дата",
+    "Files": "Файлы",
+    "Name": "Имя",
+    "Type": "Тип",
+    "Modified": "Изменён",
+    "Size": "Размер",
+    "Folder": "Папка",
+    "File": "Файл",
+    "Parent": "Вверх",
+    "folders": "папок",
+    "files": "файлов",
+    "file size": "размер файлов",
+    "No files in this folder.": "В этой папке нет файлов.",
+    "Prev": "Назад",
+    "Next": "Далее",
+    "Open image": "Открыть изображение",
+    "Search time or filename": "Поиск по времени или имени файла",
+    "All products": "Все продукты",
+    "products": "продуктов",
+    "No graphs": "Нет графиков",
+    "No matching graphs": "Подходящих графиков нет",
+    "file list": "список файлов",
+    "Language": "Язык",
+}
+
+LANGUAGE_SCRIPT = r"""
+(() => {
+  const picker = document.getElementById('languageSelect');
+  if (!picker) return;
+  const translations = JSON.parse(document.getElementById('uiTranslations').textContent);
+  const reverse = Object.fromEntries(Object.entries(translations).map(([en, ru]) => [ru, en]));
+  function setLanguage(language) {
+    const dictionary = language === 'ru' ? translations : reverse;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    for (const node of textNodes) {
+      const original = node.nodeValue;
+      const trimmed = original.trim();
+      let replacement = dictionary[trimmed];
+      let match = trimmed.match(/^(Maps|Indices|Graphs|Карты|Индексы|Графики) (\d+(?:\/\d+)?)$/);
+      if (language === 'ru' && match) replacement = `${({Maps: 'Карты', Indices: 'Индексы', Graphs: 'Графики', Карты: 'Карты', Индексы: 'Индексы', Графики: 'Графики'})[match[1]]} ${match[2]}`;
+      if (language === 'en' && match) replacement = `${({Maps: 'Maps', Indices: 'Indices', Graphs: 'Graphs', Карты: 'Maps', Индексы: 'Indices', Графики: 'Graphs'})[match[1]]} ${match[2]}`;
+      match = trimmed.match(/^Class ([A-Z?])$/);
+      if (language === 'ru' && match) replacement = `Класс ${match[1]}`;
+      match = trimmed.match(/^Класс ([A-Z?])$/);
+      if (language === 'en' && match) replacement = `Class ${match[1]}`;
+      match = trimmed.match(/^(\d+) of (\d+) events$/);
+      if (language === 'ru' && match) replacement = `${match[1]} из ${match[2]} событий`;
+      match = trimmed.match(/^(\d+) из (\d+) событий$/);
+      if (language === 'en' && match) replacement = `${match[1]} of ${match[2]} events`;
+      match = trimmed.match(/^\((\d+) items\)$/);
+      if (language === 'ru' && match) replacement = `(объектов: ${match[1]})`;
+      match = trimmed.match(/^\(объектов: (\d+)\)$/);
+      if (language === 'en' && match) replacement = `(${match[1]} items)`;
+      if (replacement) node.nodeValue = original.replace(trimmed, replacement);
+    }
+    for (const element of document.querySelectorAll('[placeholder], [title], [aria-label]')) {
+      for (const attribute of ['placeholder', 'title', 'aria-label']) {
+        const value = element.getAttribute(attribute);
+        if (value && dictionary[value]) element.setAttribute(attribute, dictionary[value]);
+      }
+    }
+    document.documentElement.lang = language;
+    document.getElementById('languageLabel').textContent = language === 'ru' ? 'Язык' : 'Language';
+    picker.value = language;
+    try { localStorage.setItem('gnss-results-language', language); } catch (_) {}
+  }
+  picker.addEventListener('change', () => setLanguage(picker.value));
+  let saved = 'en';
+  try { saved = localStorage.getItem('gnss-results-language') || 'en'; } catch (_) {}
+  setLanguage(saved === 'ru' ? 'ru' : 'en');
+})();
+"""
 
 
 def relative_url(root: Path, path: Path) -> str:
@@ -283,6 +427,7 @@ def breadcrumb_items(url_path: str):
 
 
 def render_directory_html(url_path: str, entries: list[Path]) -> bytes:
+    translations_json = json.dumps(UI_TRANSLATIONS, ensure_ascii=False).replace("<", "\\u003c")
     title_path = unquote(url_path).strip("/") or "results"
     directories = [entry for entry in entries if entry.is_dir()]
     files = [entry for entry in entries if entry.is_file()]
@@ -356,6 +501,10 @@ def render_directory_html(url_path: str, entries: list[Path]) -> bytes:
       color: var(--text);
       font: 14px/1.5 "Segoe UI", Arial, sans-serif;
     }}
+    .app-topbar {{ width: min(1180px, calc(100vw - 32px)); min-height: 52px; display: flex; justify-content: space-between; align-items: center; margin: 0 auto; border-bottom: 1px solid var(--line); }}
+    .app-brand {{ color: var(--text); font-size: 13px; font-weight: 700; text-decoration: none; }}
+    .language-control {{ display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }}
+    .language-control select {{ min-height: 32px; padding: 4px 28px 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }}
     main {{
       width: min(1180px, calc(100vw - 32px));
       margin: 0 auto;
@@ -468,6 +617,12 @@ def render_directory_html(url_path: str, entries: list[Path]) -> bytes:
   </style>
 </head>
 <body>
+  <div class="app-topbar">
+    <a class="app-brand" href="/">GNSS · Solar Flare</a>
+    <label class="language-control" for="languageSelect"><span id="languageLabel">Language</span>
+      <select id="languageSelect" aria-label="Language"><option value="en">English</option><option value="ru">Русский</option></select>
+    </label>
+  </div>
   <main>
     <header>
       <div>
@@ -496,6 +651,8 @@ def render_directory_html(url_path: str, entries: list[Path]) -> bytes:
       </table>
     </div>
   </main>
+  <script type="application/json" id="uiTranslations">{translations_json}</script>
+  <script>{LANGUAGE_SCRIPT}</script>
 </body>
 </html>
 """
@@ -503,6 +660,7 @@ def render_directory_html(url_path: str, entries: list[Path]) -> bytes:
 
 
 def page_shell(title: str, body: str, extra_head: str = "") -> bytes:
+    translations_json = json.dumps(UI_TRANSLATIONS, ensure_ascii=False).replace("<", "\\u003c")
     html_doc = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -532,6 +690,10 @@ def page_shell(title: str, body: str, extra_head: str = "") -> bytes:
       color: var(--text);
       font: 14px/1.5 "Segoe UI", Arial, sans-serif;
     }}
+    .app-topbar {{ width: min(1320px, calc(100vw - 32px)); min-height: 52px; display: flex; justify-content: space-between; align-items: center; margin: 0 auto; border-bottom: 1px solid var(--line); }}
+    .app-brand {{ color: var(--text); font-size: 13px; font-weight: 700; text-decoration: none; }}
+    .language-control {{ display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }}
+    .language-control select {{ min-height: 32px; padding: 4px 28px 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }}
     main {{ width: min(1320px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 44px; }}
     header {{ display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; margin-bottom: 18px; }}
     h1 {{ margin: 0 0 6px; font-size: 28px; line-height: 1.2; letter-spacing: 0; }}
@@ -569,6 +731,7 @@ def page_shell(title: str, body: str, extra_head: str = "") -> bytes:
     .button:hover {{ border-color: var(--accent); color: var(--accent); }}
     @media (max-width: 840px) {{
       main {{ width: min(100vw - 20px, 1320px); padding-top: 18px; }}
+      .app-topbar {{ width: min(100vw - 20px, 1320px); }}
       header {{ display: block; }}
       h1 {{ font-size: 22px; }}
       .stats {{ justify-content: flex-start; margin-top: 14px; }}
@@ -577,7 +740,17 @@ def page_shell(title: str, body: str, extra_head: str = "") -> bytes:
   </style>
   {extra_head}
 </head>
-<body><main>{body}</main></body>
+<body>
+  <div class="app-topbar">
+    <a class="app-brand" href="/">GNSS · Solar Flare</a>
+    <label class="language-control" for="languageSelect"><span id="languageLabel">Language</span>
+      <select id="languageSelect" aria-label="Language"><option value="en">English</option><option value="ru">Русский</option></select>
+    </label>
+  </div>
+  <main>{body}</main>
+  <script type="application/json" id="uiTranslations">{translations_json}</script>
+  <script>{LANGUAGE_SCRIPT}</script>
+</body>
 </html>
 """
     return html_doc.encode("utf-8", "surrogateescape")
@@ -678,7 +851,9 @@ def render_dashboard(root: Path) -> bytes:
         tbody.replaceChildren(...rows);
         noResults.hidden = rows.length !== 0;
         tbody.append(noResults);
-        resultsCount.textContent = `${{rows.length}} of ${{originalRows.length}} events`;
+        resultsCount.textContent = document.documentElement.lang === 'ru'
+          ? `${{rows.length}} из ${{originalRows.length}} событий`
+          : `${{rows.length}} of ${{originalRows.length}} events`;
       }}
       [q, classFilter, statusFilter, sortBy].forEach(el => el.addEventListener('input', applyFilters));
       document.getElementById('resetFilters').addEventListener('click', () => {{
@@ -745,66 +920,126 @@ def render_dashboard(root: Path) -> bytes:
 
 def render_event_page(root: Path, path: Path) -> bytes:
     event = scan_event(root, path)
-    breadcrumbs = " / ".join(
-        f'<a href="{href}">{html.escape(label)}</a>'
-        for label, href in breadcrumb_items("/" + path.relative_to(root).as_posix() + "/")
-    )
     product_rows = []
     for product in PRODUCTS:
         product_rows.append(
             f"""<tr>
               <td>{html.escape(product)}</td>
-              <td><span class="badge {'ok' if event['maps'][product] else 'bad'}">{'yes' if event['maps'][product] else 'no'}</span></td>
-              <td><span class="badge {'ok' if event['indices'][product] else 'bad'}">{'yes' if event['indices'][product] else 'no'}</span></td>
+              <td><span class="badge {'ok' if event['maps'][product] else 'bad'}">{'Ready' if event['maps'][product] else 'Missing'}</span></td>
+              <td><span class="badge {'ok' if event['indices'][product] else 'bad'}">{'Ready' if event['indices'][product] else 'Missing'}</span></td>
             </tr>"""
         )
     preview = event["preview_url"]
     preview_html = (
-        f'<a href="{html.escape(preview)}"><img class="thumb" src="{html.escape(preview)}" alt=""></a>'
+        f'<a href="{html.escape(preview)}"><img class="event-preview-image" src="{html.escape(preview)}" alt="Preview graph for {html.escape(event["name"])}"></a>'
         if preview
-        else '<div class="thumb"></div>'
+        else '<div class="event-preview-empty">No preview graph is available yet.</div>'
     )
+    source_rows = []
+    for key, label in (("goes_xray", "GOES X-ray"), ("soho_sem", "SOHO SEM")):
+        available = event["sources"].get(key, False)
+        source_rows.append(
+            f'<div class="source-status"><span>{label}</span><span class="badge {"ok" if available else "bad"}">{"Ready" if available else "Missing"}</span></div>'
+        )
+    entries = [path / name for name in os.listdir(path)]
+    directory_html = render_directory_html("/" + path.relative_to(root).as_posix() + "/", entries).decode("utf-8")
+    files_table = directory_html.split('<div class="table-wrap">', 1)[1].split("</div>", 1)[0]
+    complete_label = "Fully processed" if event["complete"] else "Needs attention"
     body = f"""
-    <header>
-      <div>
+    <header class="event-hero">
+      <div class="event-heading">
+        <a class="back-link" href="/">← <span>Back to catalog</span></a>
+        <div class="event-labels"><span class="class-tag class-{html.escape(event['class'].lower())}">{html.escape(event['class'])}</span><span class="badge {'ok' if event['complete'] else 'warn'}">{complete_label}</span></div>
         <h1>{html.escape(event['name'])}</h1>
-        <div class="breadcrumbs">{breadcrumbs}</div>
-      </div>
-      <div class="stats">
-        <div class="stat"><strong>{event['maps_ready']}/{event['maps_total']}</strong><span>maps</span></div>
-        <div class="stat"><strong>{event['indices_ready']}/{event['indices_total']}</strong><span>indices</span></div>
-        <div class="stat"><strong>{event['graphs_count']}</strong><span>graphs</span></div>
-        <div class="stat"><strong>{html.escape(event['size'])}</strong><span>size</span></div>
+        <p class="page-intro"><span>Event date</span>: {html.escape(event['date'] or 'Date unavailable')}</p>
       </div>
     </header>
-    <div class="grid">
-      <section class="panel">
-        <h2>Event Status</h2>
-        <div class="kv"><span>Date</span><strong>{html.escape(event['date'])}</strong></div>
-        <div class="kv"><span>Class</span><strong>{html.escape(event['class'])}</strong></div>
-        <div class="kv"><span>SOHO SEM</span><span class="badge {'ok' if event['sources'].get('soho_sem') else 'bad'}">{'present' if event['sources'].get('soho_sem') else 'missing'}</span></div>
-        <div class="kv"><span>GOES X-ray</span><span class="badge {'ok' if event['sources'].get('goes_xray') else 'bad'}">{'present' if event['sources'].get('goes_xray') else 'missing'}</span></div>
-        <div class="actions">
-          <a class="button" href="maps/">maps</a>
-          <a class="button" href="indices/">indices</a>
-          <a class="button" href="graphs/">graphs</a>
-          <a class="button" href="graphs/combined/">combined</a>
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Preview</h2>
+    <section class="event-metrics" aria-label="Event overview">
+      <div class="event-metric"><span class="metric-icon">▦</span><div><strong>{event['maps_ready']}/{event['maps_total']}</strong><span>Maps ready</span></div></div>
+      <div class="event-metric"><span class="metric-icon">∑</span><div><strong>{event['indices_ready']}/{event['indices_total']}</strong><span>Indices ready</span></div></div>
+      <div class="event-metric"><span class="metric-icon">◉</span><div><strong>{event['graphs_count']}</strong><span>graphs</span></div></div>
+      <div class="event-metric"><span class="metric-icon">↗</span><div><strong>{html.escape(event['size'])}</strong><span>size</span></div></div>
+    </section>
+    <div class="event-main-grid">
+      <section class="panel event-preview-panel">
+        <div class="section-heading"><div><h2>Preview</h2><p class="muted">Latest available event plot.</p></div>{f'<a class="button" href="graphs/">Open results</a>' if event['graphs_count'] else ''}</div>
         {preview_html}
       </section>
+      <aside class="panel event-details-panel">
+        <h2>Event details</h2>
+        <div class="detail-line"><span>Event date</span><strong>{html.escape(event['date'] or 'Date unavailable')}</strong></div>
+        <div class="detail-line"><span>Solar flare class</span><strong>{html.escape(event['class'])}</strong></div>
+        <div class="detail-line"><span>Data size</span><strong>{html.escape(event['size'])}</strong></div>
+        <h3>Source measurements</h3>
+        {''.join(source_rows)}
+      </aside>
     </div>
-    <h2>Products</h2>
-    <div class="table-wrap">
-      <table><thead><tr><th>Product</th><th>Map</th><th>Index</th></tr></thead><tbody>{''.join(product_rows)}</tbody></table>
-    </div>
-    <h2>Files</h2>
+    <section class="panel processing-panel">
+      <div class="section-heading"><div><h2>Processing status</h2><p class="muted">Availability of each calculated product.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Product</th><th>Map</th><th>Index</th></tr></thead><tbody>{''.join(product_rows)}</tbody></table></div>
+      <nav class="result-actions" aria-label="Open results">
+        <span>Open results</span>
+        <a class="button primary-button" href="maps/">Maps and indices</a>
+        <a class="button" href="graphs/">Graphs</a>
+        <a class="button" href="graphs/combined/">Combined plots</a>
+      </nav>
+    </section>
+    <details class="files-disclosure">
+      <summary>Browse files <span class="muted">({len(entries)} items)</span></summary>
+      <div class="table-wrap event-files-table">{files_table}</div>
+    </details>
     """
-    entries = [path / name for name in os.listdir(path)]
-    body += render_directory_html("/" + path.relative_to(root).as_posix() + "/", entries).decode("utf-8").split("<main>", 1)[1].split("</main>", 1)[0]
-    return page_shell(f"Event - {event['name']}", body)
+    extra_head = """
+    <style>
+      main { width: min(1380px, calc(100vw - 48px)); padding-top: 28px; }
+      .event-hero { align-items: flex-start; margin-bottom: 14px; }
+      .event-heading { display: grid; gap: 9px; }
+      .back-link { width: fit-content; color: var(--accent); font-weight: 600; text-decoration: none; }
+      .back-link:hover { text-decoration: underline; }
+      .event-labels { display: flex; align-items: center; gap: 8px; }
+      .event-heading h1 { margin: 0; font-size: clamp(25px, 3vw, 34px); overflow-wrap: anywhere; }
+      .event-heading .page-intro { margin: 0; }
+      .class-tag { display: inline-grid; min-width: 34px; min-height: 28px; place-items: center; border-radius: 7px; background: #eef2f7; color: #475569; font-weight: 800; }
+      .class-x { background: #fee4e2; color: #b42318; }
+      .class-m { background: #fff0d9; color: #a15c00; }
+      .class-c { background: #e9f2ff; color: #175cd3; }
+      .event-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }
+      .event-metric { display: flex; align-items: center; gap: 11px; min-height: 78px; padding: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+      .metric-icon { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #e8eef5; color: var(--accent); font-size: 18px; font-weight: 700; }
+      .event-metric div { display: grid; gap: 2px; }
+      .event-metric strong { font-size: 18px; line-height: 1.1; }
+      .event-metric div span { color: var(--muted); font-size: 12px; }
+      .event-main-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .8fr); gap: 12px; align-items: stretch; }
+      .panel { padding: 18px; border-radius: 10px; }
+      .event-main-grid h2, .processing-panel h2 { margin: 0; font-size: 17px; }
+      .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+      .section-heading p { margin: 3px 0 0; font-size: 12px; }
+      .event-preview-image, .event-preview-empty { display: grid; width: 100%; height: min(48vw, 410px); min-height: 220px; place-items: center; object-fit: contain; background: #f7f9fb; border: 1px solid var(--line); border-radius: 7px; }
+      .event-preview-empty { color: var(--muted); text-align: center; padding: 20px; }
+      .event-details-panel h2 { margin-bottom: 8px; }
+      .detail-line, .source-status { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .detail-line span, .source-status > span:first-child { color: var(--muted); }
+      .detail-line strong { text-align: right; overflow-wrap: anywhere; }
+      .event-details-panel h3 { margin: 22px 0 4px; font-size: 14px; }
+      .source-status:last-child { border-bottom: 0; }
+      .processing-panel { margin-top: 12px; }
+      .processing-panel .table-wrap { box-shadow: none; border-radius: 7px; }
+      .processing-panel table { min-width: 480px; }
+      .processing-panel th { text-transform: none; background: #fafbfc; }
+      .result-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+      .result-actions > span { margin-right: 4px; color: var(--muted); font-weight: 600; }
+      .primary-button { border-color: var(--accent); background: var(--accent); color: #fff; }
+      .primary-button:hover { color: #fff; filter: brightness(.95); }
+      .files-disclosure { margin-top: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+      .files-disclosure summary { padding: 15px 18px; cursor: pointer; font-weight: 700; }
+      .files-disclosure summary::marker { color: var(--accent); }
+      .event-files-table { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; box-shadow: none; }
+      .event-files-table table { min-width: 560px; }
+      @media (max-width: 820px) { .event-main-grid { grid-template-columns: 1fr; } .event-preview-image, .event-preview-empty { height: 52vw; } }
+      @media (max-width: 600px) { main { width: calc(100vw - 24px); padding-top: 20px; } .event-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; } .event-metric { min-height: 68px; padding: 9px; gap: 8px; } .event-metric strong { font-size: 16px; } .event-metric div span { font-size: 11px; } .panel { padding: 14px; } .event-hero { display: block; } .result-actions { align-items: flex-start; } .result-actions > span { width: 100%; } }
+    </style>
+    """
+    return page_shell(f"{event['name']} · GNSS Solar Flare", body, extra_head=extra_head)
 
 
 def render_graph_gallery(root: Path, path: Path, url_path: str) -> bytes:

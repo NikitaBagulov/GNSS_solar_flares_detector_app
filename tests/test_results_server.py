@@ -8,6 +8,7 @@ from results_server import (
     graph_time_label,
     render_directory_html,
     render_dashboard,
+    render_event_page,
     render_graph_gallery,
     scan_graph_images,
 )
@@ -54,6 +55,8 @@ def test_render_directory_html_lists_folders_before_files(tmp_path):
     assert "graphs/" in html
     assert "goes_xray.csv" in html
     assert html.index("graphs/") < html.index("goes_xray.csv")
+    assert 'id="languageSelect"' in html
+    assert "Русский" in html
 
 
 def test_graph_metadata_is_derived_from_plot_filename(tmp_path):
@@ -120,3 +123,34 @@ def test_render_dashboard_exposes_clear_catalog_filters_and_progress(tmp_path):
     assert "2025-11-11_X5.2" in html
     assert "2025-11-10_C2.0" in html
     assert "Recently Updated" not in html
+    assert 'id="languageSelect"' in html
+    assert "Каталог вспышек" in html
+
+
+def test_render_event_page_groups_preview_status_and_files(tmp_path):
+    event = tmp_path / "X" / "2025-11-11_X5.2"
+    for product in ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"):
+        maps_file = event / "maps" / f"map_{product}.h5"
+        indices_file = event / "indices" / f"indices_{product}.csv"
+        maps_file.parent.mkdir(parents=True, exist_ok=True)
+        indices_file.parent.mkdir(parents=True, exist_ok=True)
+        maps_file.write_bytes(b"map")
+        indices_file.write_text("time,value\n", encoding="utf-8")
+    graph = event / "graphs" / "combined" / "preview.png"
+    graph.parent.mkdir(parents=True)
+    graph.write_bytes(b"png")
+    (event / "goes_xray.csv").write_text("time,value\n", encoding="utf-8")
+    (event / "soho_sem.csv").write_text("time,value\n", encoding="utf-8")
+
+    html = render_event_page(tmp_path, event).decode("utf-8")
+
+    assert "Back to catalog" in html
+    assert "Event details" in html
+    assert "Processing status" in html
+    assert "Source measurements" in html
+    assert "Maps and indices" in html
+    assert "Combined plots" in html
+    assert "Browse files" in html
+    assert 'id="languageSelect"' in html
+    assert "Карты" in html
+    assert "Русский" in html
