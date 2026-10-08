@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from plot_requests import cleanup_cache, render_plot, validate_request
-from results_server import PrettyDirectoryHandler
+from plot_requests import cleanup_cache, map_epochs, render_plot, validate_request, _map_points
+from results_server import PrettyDirectoryHandler, render_plot_editor_page
 
 
 @pytest.fixture
@@ -58,6 +58,29 @@ def test_freeform_panels_render_at_canvas_aspect_ratio_and_validate_bounds(event
         validate_request(event, request)
     request["panels"][1]["rect"]["w"] = float("nan")
     with pytest.raises(ValueError, match="position"):
+        validate_request(event, request)
+
+
+def test_map_times_are_exact_dataset_keys_per_product(event):
+    path = event / "maps" / "map_roti.h5"
+    second = "2025-11-11 01:10:00.000000"
+    with h5py.File(path, "a") as file:
+        file.create_dataset(f"data/{second}", data=np.array(
+            [(52.0, 31.0, 0.9)], dtype=[("lat", "f4"), ("lon", "f4"), ("vals", "f4")]
+        ))
+    assert map_epochs(event) == {"map:roti": ["2025-11-11 01:00:00.000000", second]}
+    page = render_plot_editor_page(event.parent.parent, event).decode()
+    assert '"map:roti": ["2025-11-11 01:00:00.000000", "2025-11-11 01:10:00.000000"]' in page
+    assert 'type="datetime-local"' not in page
+    stamp, points = _map_points(path, second)
+    assert stamp == second and points["vals"][0] == pytest.approx(.9)
+    request = {"email": "user@example.org", "panels": [{"series": "map:roti", "epoch": second}]}
+    assert validate_request(event, request)["panels"][0]["epoch"] == second
+    request["panels"][0]["epoch"] = "2025-11-11 01:05:00.000000"
+    with pytest.raises(ValueError, match="available"):
+        validate_request(event, request)
+    request["panels"][0]["epoch"] = "2025-11-11T01:10:00"
+    with pytest.raises(ValueError, match="available"):
         validate_request(event, request)
 
 

@@ -177,6 +177,10 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert "setPointerCapture" in page
     assert "layout: 'free'" in page
     assert 'id="plotEmail" type="email" required' in page
+    assert 'id="panelEpoch"' in page
+    assert 'type="datetime-local"' not in page
+    assert "canvas-ylabel" in page and "canvas-xlabel" in page and "canvas-scale" in page
+    assert 'href="/X/2025-11-11_X5.2/"' in page
     assert "Русский" in page
 
     import shutil

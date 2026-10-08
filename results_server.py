@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from plot_requests import TTL_SECONDS, cleanup_cache, event_series, normalize_email, plots_for_email, render_plot, store_plot
+from plot_requests import TTL_SECONDS, cleanup_cache, event_series, map_epochs, normalize_email, plots_for_email, render_plot, store_plot
 from plot_editor import editor_content
 
 
@@ -128,11 +128,13 @@ UI_TRANSLATIONS = {
     "Plot studio": "Редактор графиков",
     "Back to event": "Вернуться к событию",
     "Layout preview": "Предпросмотр расположения",
-    "Preview of panel positions; data is drawn when you generate the plot.": "Предпросмотр расположения; данные отрисуются после построения графика.",
+    "Each panel shows its title, axes, labels and color scale inside its border. Data is drawn when you generate the plot.": "Внутри каждой панели видны заголовок, оси, подписи и цветовая шкала. Данные отрисуются после построения графика.",
     "Selected panel": "Выбранная панель",
     "Width (%)": "Ширина (%)",
     "Height (%)": "Высота (%)",
-    "Map time (UTC)": "Время карты (UTC)",
+    "Map time from file (UTC)": "Время карты из файла (UTC)",
+    "Map colors and scale follow the original plotting: ROTI · viridis 0–1 TECu/min; dTEC · RdBu_r −1…1 TECu.": "Цвета и шкала карт как в исходном plotting: ROTI · viridis 0–1 TECu/мин; dTEC · RdBu_r −1…1 TECu.",
+    "Line color": "Цвет линии",
     "Remove selected panel": "Удалить панель",
     "Generate plot": "Построить график",
     "Open full-size plot": "Открыть график в полном размере",
@@ -1133,7 +1135,9 @@ def render_event_page(root: Path, path: Path) -> bytes:
 
 def render_plot_editor_page(root: Path, path: Path) -> bytes:
     event = scan_event(root, path)
-    body, styles = editor_content(event, event_series(path))
+    epochs = map_epochs(path)
+    series = {key: label for key, label in event_series(path).items() if not key.startswith("map:") or key in epochs}
+    body, styles = editor_content(event, series, epochs)
     return page_shell(f"Plot studio · {event['name']}", body, extra_head=styles)
 
 

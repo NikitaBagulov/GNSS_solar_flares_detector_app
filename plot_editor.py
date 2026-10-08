@@ -6,17 +6,18 @@ import re
 from urllib.parse import quote
 
 
-def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
+def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[str]]) -> tuple[str, str]:
     """Return HTML body and styles for the dedicated plot editor page."""
     data = json.dumps(series, ensure_ascii=False).replace("<", "\\u003c")
+    times = json.dumps(epochs, ensure_ascii=False).replace("<", "\\u003c")
     event_path = json.dumps(event["path"], ensure_ascii=False).replace("<", "\\u003c")
     name = html.escape(event["name"])
     body = r"""
-    <header class="studio-heading"><div><a href="/__EVENT_URL__" class="studio-back">← Back to event</a>
+    <header class="studio-heading"><div><a href="__EVENT_URL__" class="studio-back">← Back to event</a>
       <h1>Plot studio</h1><p>__EVENT_NAME__ · Drag panels by their headers and resize from the lower-right corner.</p></div></header>
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
-        <div class="studio-toolbar"><strong>Layout preview</strong><span>Preview of panel positions; data is drawn when you generate the plot.</span>
+         <div class="studio-toolbar"><strong>Layout preview</strong><span>Each panel shows its title, axes, labels and color scale inside its border. Data is drawn when you generate the plot.</span>
           <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
           <strong id="canvasTitle" class="canvas-title">__EVENT_NAME__</strong>
@@ -30,8 +31,9 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
         <div id="panelSettings" class="panel-settings">
           <h3>Selected panel</h3>
           <label>Data series <select id="panelSeries"></select></label>
-          <label>Color <input id="panelColor" type="color" value="#2878a5"></label>
-          <label id="epochField">Map time (UTC) <input id="panelEpoch" type="datetime-local"></label>
+           <label id="colorField">Line color <input id="panelColor" type="color" value="#2878a5"></label>
+           <label id="epochField">Map time from file (UTC) <select id="panelEpoch"></select></label>
+           <p id="mapPalette" class="studio-note" hidden>Map colors and scale follow the original plotting: ROTI · viridis 0–1 TECu/min; dTEC · RdBu_r −1…1 TECu.</p>
           <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
             <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
           <button type="button" class="button" id="removePanel">Remove selected panel</button>
@@ -45,6 +47,7 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
     <script>
     (() => {
       const series = __SERIES_JSON__;
+      const epochs = __EPOCHS_JSON__;
       const eventPath = __EVENT_JSON__;
       const canvas = document.getElementById('plotStage');
       const message = document.getElementById('plotMessage');
@@ -60,6 +63,8 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
       });
       const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+      const defaultColor = key => ({goes: '#d1495b', soho: '#2878a5',
+        day_night_index: '#2878a5', gsflai_index: '#2a9d8f', isfai_index: '#e76f51'})[key.split(':').at(-1)] || '#2878a5';
       for (const [key, label] of Object.entries(series)) {
         const option = document.createElement('option'); option.value = key; option.textContent = label; select.append(option);
       }
@@ -67,8 +72,20 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
         const panel = panels.find(item => item.id === selected);
         document.getElementById('panelSettings').hidden = !panel;
         if (!panel) return;
-        select.value = panel.series; color.value = panel.color; epoch.value = panel.epoch || '';
-        document.getElementById('epochField').hidden = !panel.series.startsWith('map:');
+        select.value = panel.series; color.value = panel.color;
+        const map = panel.series.startsWith('map:');
+        document.getElementById('epochField').hidden = !map;
+        document.getElementById('colorField').hidden = map;
+        document.getElementById('mapPalette').hidden = !map;
+        epoch.replaceChildren();
+        if (map) {
+          const available = epochs[panel.series] || [];
+          for (const time of available) {
+            const option = document.createElement('option'); option.value = time; option.textContent = time + ' UTC'; epoch.append(option);
+          }
+          if (!available.includes(panel.epoch)) panel.epoch = available[Math.floor(available.length / 2)] || null;
+          epoch.value = panel.epoch || '';
+        }
         width.value = Math.round(panel.rect.w * 100); height.value = Math.round(panel.rect.h * 100);
         canvas.querySelectorAll('.canvas-panel').forEach(card => card.classList.toggle('active', card.dataset.id === selected));
       }
@@ -82,20 +99,35 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
           const card = document.createElement('div'); card.className = 'canvas-panel'; card.dataset.id = panel.id;
           card.tabIndex = 0; card.setAttribute('aria-label', `${series[panel.series]}, drag to move, arrows to nudge`);
           const bar = document.createElement('div'); bar.className = 'canvas-panel-bar';
-          const caption = document.createElement('strong'); caption.textContent = series[panel.series];
+          const caption = document.createElement('strong'); caption.textContent = series[panel.series] +
+            (panel.series.startsWith('map:') && panel.epoch ? ' · ' + panel.epoch + ' UTC' : '');
           const grip = document.createElement('span'); grip.textContent = '⠿'; grip.setAttribute('aria-hidden', 'true');
           bar.append(grip, caption);
           const chart = document.createElement('div'); chart.className = 'canvas-chart';
+          const xLabel = document.createElement('span'); xLabel.className = 'canvas-xlabel';
+          const yLabel = document.createElement('span'); yLabel.className = 'canvas-ylabel';
+          const ticks = document.createElement('span'); ticks.className = 'canvas-ticks';
           if (panel.series.startsWith('map:')) {
+            chart.classList.add('canvas-map');
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><circle cx="40" cy="35" r="7"/><circle cx="77" cy="46" r="5"/><circle cx="112" cy="20" r="6"/><circle cx="155" cy="40" r="8"/></svg>';
+            xLabel.textContent = 'Longitude'; yLabel.textContent = 'Latitude'; ticks.textContent = '−180     0      180';
+            const scale = document.createElement('span'); scale.className = 'canvas-scale';
+            scale.textContent = panel.series === 'map:roti' ? '0 → 1 TECu/min' : '−1 → 1 TECu';
+            scale.style.borderImage = panel.series === 'map:roti' ?
+              'linear-gradient(#fde725, #21918c, #440154) 1' : 'linear-gradient(#b2182b, #f7f7f7, #2166ac) 1';
+            card.append(scale);
           } else {
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,64 28,52 43,60 60,35 83,50 105,17 125,37 145,22 165,48 200,18"/></svg>';
+            const column = panel.series.split(':')[1];
+            yLabel.textContent = panel.series === 'goes' ? 'Flux (W m⁻²)' : panel.series === 'soho' ?
+              'Flux (photons cm⁻² s⁻¹)' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
+            xLabel.textContent = 'Time (UTC)'; ticks.textContent = '00:00   12:00   23:59';
           }
           chart.style.color = panel.color;
           const handle = document.createElement('div'); handle.className = 'resize-handle';
           handle.title = text('Drag to resize', 'Потяните для изменения размера');
           handle.setAttribute('aria-label', 'Resize panel');
-          card.append(bar, chart, handle); position(card, panel.rect);
+          card.append(bar, chart, ticks, xLabel, yLabel, handle); position(card, panel.rect);
           card.addEventListener('pointerdown', () => { selected = panel.id; syncSettings(); });
           card.addEventListener('keydown', event => {
             const moves = {ArrowLeft: [-.01, 0], ArrowRight: [.01, 0], ArrowUp: [0, -.01], ArrowDown: [0, .01]};
@@ -138,7 +170,10 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
         if (panels.length >= 6 || !Object.keys(series).length) return;
         const index = panels.length;
         const rect = {x: index % 2 ? .52 : .04, y: .04 + Math.floor(index / 2) * .32, w: .44, h: .27};
-        const panel = {id: String(Date.now()) + Math.random(), series: Object.keys(series)[0], color: '#2878a5', epoch: '', rect};
+        const first = Object.keys(series)[0];
+        const available = epochs[first] || [];
+        const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first),
+          epoch: available[Math.floor(available.length / 2)] || null, rect};
         panels.push(panel); selected = panel.id; render();
       }
       document.getElementById('addPlotPanel').onclick = addPanel;
@@ -147,9 +182,11 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
         if (index < 0) return;
         panels.splice(index, 1); selected = panels.at(-1)?.id || null; render();
       };
-      select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return; panel.series = select.value; render(); };
+      select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
+        panel.series = select.value; panel.color = defaultColor(panel.series); const available = epochs[panel.series] || [];
+        panel.epoch = available[Math.floor(available.length / 2)] || null; render(); };
       color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return; panel.color = color.value; render(); };
-      epoch.onchange = () => { const panel = panels.find(item => item.id === selected); if (panel) panel.epoch = epoch.value; };
+      epoch.onchange = () => { const panel = panels.find(item => item.id === selected); if (panel) { panel.epoch = epoch.value; render(); } };
       function changeSize(axis, input) {
         const panel = panels.find(item => item.id === selected);
         if (!panel || !input.value) return;
@@ -180,9 +217,9 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
     })();
     </script>
     """
-    replacements = {"SERIES_JSON": data, "EVENT_JSON": event_path, "EVENT_NAME": name,
+    replacements = {"SERIES_JSON": data, "EPOCHS_JSON": times, "EVENT_JSON": event_path, "EVENT_NAME": name,
                     "EVENT_URL": "/" + quote(event["path"], safe="/") + "/"}
-    body = re.sub(r"__(SERIES_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL)__",
+    body = re.sub(r"__(SERIES_JSON|EPOCHS_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL)__",
                   lambda match: replacements[match.group(1)], body)
     css = """
     <style>
@@ -202,15 +239,27 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
       .plot-stage { position: absolute; left: 5.5%; top: 12.5%; width: 89%; height: 82%;
         background-image: linear-gradient(#eef2f7 1px, transparent 1px), linear-gradient(90deg, #eef2f7 1px, transparent 1px);
         background-size: 5% 5%; }
-      .canvas-panel { position: absolute; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: white;
-        border: 2px solid #acb9c8; border-radius: 7px; box-shadow: 0 3px 12px #1e293b1c; overflow: hidden; }
+       .canvas-panel { position: absolute; min-width: 0; min-height: 0; background: white;
+         border: 1px solid #dce4ee; box-shadow: 0 3px 12px #1e293b1c; overflow: hidden; color: #63738a; }
       .canvas-panel.active { border-color: var(--accent); box-shadow: 0 0 0 3px #2878a533; z-index: 2; }
-      .canvas-panel-bar { display: flex; align-items: center; gap: 6px; padding: 6px 9px; background: #eff5fa; cursor: grab; touch-action: none; user-select: none; }
+       .canvas-panel-bar { position: absolute; left: 4%; top: 3%; width: 92%; height: 15%; display: flex; align-items: center;
+         gap: 6px; cursor: grab; touch-action: none; user-select: none; color: #17243a; }
       .canvas-panel-bar:active { cursor: grabbing; }
       .canvas-panel-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-      .canvas-chart { flex: 1; min-height: 0; padding: 8px; }
-      .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; }
-      .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+       .canvas-chart { position: absolute; left: 19%; top: 23%; width: 69%; height: 53%;
+         border-left: 1px solid #dce4ee; border-bottom: 1px solid #dce4ee;
+         background: repeating-linear-gradient(to bottom, transparent 0 24%, #dce4ee 25% calc(25% + 1px)); }
+       .canvas-chart.canvas-map { width: 61%; background: #edf2f7; }
+       .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; opacity: .7; }
+       .canvas-map svg { color: #2a9d8f; }
+       .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+       .canvas-xlabel { position: absolute; top: 83%; left: 19%; width: 69%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
+       .canvas-ylabel { position: absolute; top: 42%; left: 1%; width: 17%; text-align: center; overflow-wrap: anywhere;
+         font-size: clamp(6px, .75vw, 10px); }
+       .canvas-ticks { position: absolute; top: 76%; left: 19%; width: 69%; text-align: center; white-space: pre; overflow: hidden;
+         font-size: clamp(6px, .7vw, 9px); }
+       .canvas-scale { position: absolute; top: 27%; left: 84%; width: 14%; height: 47%; display: flex; align-items: center;
+         border-left: 6px solid #2a9d8f; font-size: clamp(6px, .6vw, 8px); overflow-wrap: anywhere; }
       .resize-handle { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
         background: linear-gradient(135deg, transparent 49%, var(--accent) 50%, var(--accent) 57%, transparent 58%); }
       .studio-sidebar { padding: 18px; display: grid; gap: 12px; }
@@ -221,7 +270,7 @@ def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
       .studio-sidebar input[type=color] { padding: 3px; }
       .studio-note { color: var(--muted); font-size: 12px; margin: 0; }
       .panel-settings { gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
-      .panel-settings[hidden], #epochField[hidden], #renderedPlot[hidden] { display: none; }
+       .panel-settings[hidden], #epochField[hidden], #colorField[hidden], #mapPalette[hidden], #renderedPlot[hidden] { display: none; }
       .size-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       .studio-generate { background: var(--accent); color: white; cursor: pointer; }
       .studio-generate:disabled { opacity: .55; cursor: wait; }
