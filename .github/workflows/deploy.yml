@@ -25,4 +25,10 @@ jobs:
             echo "See deploy/README.md: repair the server runner identity and .git ownership, then rerun the job." >&2
             exit 1
           fi
+          blocked_dir="$(find .git/objects -type d ! -writable -print -quit)"
+          if [[ -n "$blocked_dir" ]]; then
+            echo "Git object directory is not writable by $(id -un): $blocked_dir" >&2
+            echo "Restore .git ownership as described in deploy/README.md, then rerun the job." >&2
+            exit 1
+          fi
           ./deploy/deploy.sh "${{ github.sha }}"

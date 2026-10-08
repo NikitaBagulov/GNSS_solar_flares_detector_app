@@ -75,15 +75,22 @@ ownership **on the server**:
 ```bash
 id -un
 stat -c '%U:%G %A %n' /home/user/app/GNSS_solar_flares_detector_app/.git /home/user/app/GNSS_solar_flares_detector_app/.git/objects
+find /home/user/app/GNSS_solar_flares_detector_app/.git/objects -type d ! -writable -print
 ```
 
-With the runner stopped, if `.git` contains files created by root or a
-different account, restore ownership of Git metadata (including existing
-objects) once:
+The top-level `.git/objects` can be writable while nested hash or `pack`
+directories are not. With the runner stopped, if `.git` contains files created
+by root or a different account, restore ownership of Git metadata (including
+existing objects) once:
 
 ```bash
 sudo chown -R user:user /home/user/app/GNSS_solar_flares_detector_app/.git
 ```
+
+If the affected directories are owned by `user` but lack write permission,
+inspect their modes and ACLs before repairing those directories. If all
+directories are writable, also check free space and inodes with `df -h` and
+`df -i` on the repository filesystem.
 
 Ensure the runner systemd unit runs as `user`, restart that unit, and rerun the
 failed deployment job. Do not run deployment Git commands with `sudo`: doing so

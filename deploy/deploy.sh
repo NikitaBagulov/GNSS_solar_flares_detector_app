@@ -40,8 +40,6 @@ rollback() {
   exit "$status"
 }
 
-trap rollback ERR
-
 cd "$app_dir"
 mkdir -p "$backup_dir"
 previous_commit="$(git rev-parse main 2>/dev/null || git rev-parse HEAD)"
@@ -51,8 +49,12 @@ if [[ -f data/state.json ]]; then
   cp data/state.json "$backup_dir/state-$(date -u +%Y%m%dT%H%M%SZ).json"
 fi
 
-git fetch --prune origin main
+if ! git fetch --prune origin main; then
+  printf 'Git fetch failed. Check runner user and ownership of nested .git/objects directories; see deploy/README.md.\n' >&2
+  exit 1
+fi
 git cat-file -e "$commit^{commit}"
+trap rollback ERR
 git checkout --force -B main "$commit"
 
 python3 -m venv "$venv_dir" 2>/dev/null || true
