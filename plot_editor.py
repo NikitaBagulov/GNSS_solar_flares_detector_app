@@ -1,0 +1,234 @@
+"""Standalone visual layout editor for on-demand event plots."""
+
+import html
+import json
+import re
+from urllib.parse import quote
+
+
+def editor_content(event: dict, series: dict[str, str]) -> tuple[str, str]:
+    """Return HTML body and styles for the dedicated plot editor page."""
+    data = json.dumps(series, ensure_ascii=False).replace("<", "\\u003c")
+    event_path = json.dumps(event["path"], ensure_ascii=False).replace("<", "\\u003c")
+    name = html.escape(event["name"])
+    body = r"""
+    <header class="studio-heading"><div><a href="/__EVENT_URL__" class="studio-back">← Back to event</a>
+      <h1>Plot studio</h1><p>__EVENT_NAME__ · Drag panels by their headers and resize from the lower-right corner.</p></div></header>
+    <div class="studio-layout">
+      <section class="studio-workspace" aria-label="Layout preview">
+        <div class="studio-toolbar"><strong>Layout preview</strong><span>Preview of panel positions; data is drawn when you generate the plot.</span>
+          <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
+        <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
+          <strong id="canvasTitle" class="canvas-title">__EVENT_NAME__</strong>
+          <div id="plotStage" class="plot-stage" aria-label="Drag and resize plot panels"></div></div></div>
+      </section>
+      <aside class="studio-sidebar">
+        <h2>Plot settings</h2>
+        <label>Plot title <input id="plotTitle" maxlength="100" placeholder="Plot title"></label>
+        <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
+        <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
+        <div id="panelSettings" class="panel-settings">
+          <h3>Selected panel</h3>
+          <label>Data series <select id="panelSeries"></select></label>
+          <label>Color <input id="panelColor" type="color" value="#2878a5"></label>
+          <label id="epochField">Map time (UTC) <input id="panelEpoch" type="datetime-local"></label>
+          <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
+            <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
+          <button type="button" class="button" id="removePanel">Remove selected panel</button>
+        </div>
+        <button type="button" class="button studio-generate" id="generatePlot">Generate plot</button>
+        <div id="plotMessage" role="status" aria-live="polite"></div>
+        <div id="renderedPlot" hidden><a id="renderedLink" target="_blank" rel="noopener">Open full-size plot</a>
+          <img id="renderedImage" alt="Generated plot"></div>
+      </aside>
+    </div>
+    <script>
+    (() => {
+      const series = __SERIES_JSON__;
+      const eventPath = __EVENT_JSON__;
+      const canvas = document.getElementById('plotStage');
+      const message = document.getElementById('plotMessage');
+      const select = document.getElementById('panelSeries');
+      const color = document.getElementById('panelColor');
+      const epoch = document.getElementById('panelEpoch');
+      const width = document.getElementById('panelWidth');
+      const height = document.getElementById('panelHeight');
+      const panels = [];
+      let selected = null;
+      document.getElementById('plotTitle').addEventListener('input', event => {
+        document.getElementById('canvasTitle').textContent = event.target.value || eventPath.split('/').at(-1);
+      });
+      const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
+      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+      for (const [key, label] of Object.entries(series)) {
+        const option = document.createElement('option'); option.value = key; option.textContent = label; select.append(option);
+      }
+      function syncSettings() {
+        const panel = panels.find(item => item.id === selected);
+        document.getElementById('panelSettings').hidden = !panel;
+        if (!panel) return;
+        select.value = panel.series; color.value = panel.color; epoch.value = panel.epoch || '';
+        document.getElementById('epochField').hidden = !panel.series.startsWith('map:');
+        width.value = Math.round(panel.rect.w * 100); height.value = Math.round(panel.rect.h * 100);
+        canvas.querySelectorAll('.canvas-panel').forEach(card => card.classList.toggle('active', card.dataset.id === selected));
+      }
+      function position(card, rect) {
+        card.style.left = `${rect.x * 100}%`; card.style.top = `${rect.y * 100}%`;
+        card.style.width = `${rect.w * 100}%`; card.style.height = `${rect.h * 100}%`;
+      }
+      function render() {
+        canvas.replaceChildren();
+        for (const panel of panels) {
+          const card = document.createElement('div'); card.className = 'canvas-panel'; card.dataset.id = panel.id;
+          card.tabIndex = 0; card.setAttribute('aria-label', `${series[panel.series]}, drag to move, arrows to nudge`);
+          const bar = document.createElement('div'); bar.className = 'canvas-panel-bar';
+          const caption = document.createElement('strong'); caption.textContent = series[panel.series];
+          const grip = document.createElement('span'); grip.textContent = '⠿'; grip.setAttribute('aria-hidden', 'true');
+          bar.append(grip, caption);
+          const chart = document.createElement('div'); chart.className = 'canvas-chart';
+          if (panel.series.startsWith('map:')) {
+            chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><circle cx="40" cy="35" r="7"/><circle cx="77" cy="46" r="5"/><circle cx="112" cy="20" r="6"/><circle cx="155" cy="40" r="8"/></svg>';
+          } else {
+            chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,64 28,52 43,60 60,35 83,50 105,17 125,37 145,22 165,48 200,18"/></svg>';
+          }
+          chart.style.color = panel.color;
+          const handle = document.createElement('div'); handle.className = 'resize-handle';
+          handle.title = text('Drag to resize', 'Потяните для изменения размера');
+          handle.setAttribute('aria-label', 'Resize panel');
+          card.append(bar, chart, handle); position(card, panel.rect);
+          card.addEventListener('pointerdown', () => { selected = panel.id; syncSettings(); });
+          card.addEventListener('keydown', event => {
+            const moves = {ArrowLeft: [-.01, 0], ArrowRight: [.01, 0], ArrowUp: [0, -.01], ArrowDown: [0, .01]};
+            if (!moves[event.key]) return;
+            event.preventDefault(); const [dx, dy] = moves[event.key];
+            panel.rect.x = clamp(panel.rect.x + dx, 0, 1 - panel.rect.w);
+            panel.rect.y = clamp(panel.rect.y + dy, 0, 1 - panel.rect.h); position(card, panel.rect);
+          });
+          function drag(event, resize) {
+            event.preventDefault(); selected = panel.id; syncSettings();
+            const startX = event.clientX, startY = event.clientY, initial = {...panel.rect};
+            const target = event.currentTarget;
+            target.setPointerCapture(event.pointerId);
+            const move = next => {
+              const dx = (next.clientX - startX) / canvas.clientWidth;
+              const dy = (next.clientY - startY) / canvas.clientHeight;
+              if (resize) {
+                panel.rect.w = clamp(initial.w + dx, .16, 1 - initial.x);
+                panel.rect.h = clamp(initial.h + dy, .16, 1 - initial.y);
+              } else {
+                panel.rect.x = clamp(initial.x + dx, 0, 1 - initial.w);
+                panel.rect.y = clamp(initial.y + dy, 0, 1 - initial.h);
+              }
+              position(card, panel.rect);
+              width.value = Math.round(panel.rect.w * 100); height.value = Math.round(panel.rect.h * 100);
+            };
+            const end = () => { target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', end); target.removeEventListener('pointercancel', end); };
+            target.addEventListener('pointermove', move);
+            target.addEventListener('pointerup', end);
+            target.addEventListener('pointercancel', end);
+          }
+          bar.addEventListener('pointerdown', event => drag(event, false));
+          handle.addEventListener('pointerdown', event => { event.stopPropagation(); drag(event, true); });
+          canvas.append(card);
+        }
+        syncSettings();
+        document.getElementById('addPlotPanel').disabled = panels.length >= 6;
+      }
+      function addPanel() {
+        if (panels.length >= 6 || !Object.keys(series).length) return;
+        const index = panels.length;
+        const rect = {x: index % 2 ? .52 : .04, y: .04 + Math.floor(index / 2) * .32, w: .44, h: .27};
+        const panel = {id: String(Date.now()) + Math.random(), series: Object.keys(series)[0], color: '#2878a5', epoch: '', rect};
+        panels.push(panel); selected = panel.id; render();
+      }
+      document.getElementById('addPlotPanel').onclick = addPanel;
+      document.getElementById('removePanel').onclick = () => {
+        const index = panels.findIndex(item => item.id === selected);
+        if (index < 0) return;
+        panels.splice(index, 1); selected = panels.at(-1)?.id || null; render();
+      };
+      select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return; panel.series = select.value; render(); };
+      color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return; panel.color = color.value; render(); };
+      epoch.onchange = () => { const panel = panels.find(item => item.id === selected); if (panel) panel.epoch = epoch.value; };
+      function changeSize(axis, input) {
+        const panel = panels.find(item => item.id === selected);
+        if (!panel || !input.value) return;
+        panel.rect[axis] = clamp(Number(input.value) / 100, .16, 1 - panel.rect[axis === 'w' ? 'x' : 'y']);
+        render();
+      }
+      width.onchange = () => changeSize('w', width);
+      height.onchange = () => changeSize('h', height);
+      addPanel();
+      document.getElementById('generatePlot').onclick = async () => {
+        if (!panels.length) { message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }
+        const email = document.getElementById('plotEmail'); if (!email.reportValidity()) return;
+        const button = document.getElementById('generatePlot'); button.disabled = true;
+        message.textContent = text('Generating plot…', 'Построение графика…');
+        try {
+          const response = await fetch('/api/plots', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({event: eventPath, layout: 'free', title: document.getElementById('plotTitle').value,
+              email: email.value, panels: panels.map(panel => ({series: panel.series, color: panel.color,
+                epoch: panel.epoch || null, rect: panel.rect}))})});
+          const result = await response.json();
+          if (!response.ok) throw Error(result.error || 'Failed to create plot');
+          document.getElementById('renderedImage').src = result.url;
+          document.getElementById('renderedLink').href = result.url;
+          document.getElementById('renderedPlot').hidden = false;
+          message.textContent = text('Saved. Find it later by email in the catalog.', 'Сохранено. Позже найдите график по почте в каталоге.');
+        } catch (error) { message.textContent = error.message; } finally { button.disabled = false; }
+      };
+    })();
+    </script>
+    """
+    replacements = {"SERIES_JSON": data, "EVENT_JSON": event_path, "EVENT_NAME": name,
+                    "EVENT_URL": "/" + quote(event["path"], safe="/") + "/"}
+    body = re.sub(r"__(SERIES_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL)__",
+                  lambda match: replacements[match.group(1)], body)
+    css = """
+    <style>
+      main { width: min(1720px, calc(100vw - 36px)); padding-top: 22px; }
+      .studio-heading { margin-bottom: 18px; }
+      .studio-heading h1 { margin: 12px 0 4px; }
+      .studio-heading p, .studio-back { color: var(--muted); }
+      .studio-layout { display: grid; grid-template-columns: minmax(0, 1fr) 295px; gap: 16px; align-items: start; }
+      .studio-workspace, .studio-sidebar { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+      .studio-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px; }
+      .studio-toolbar span { flex: 1; color: var(--muted); font-size: 12px; }
+      .studio-scroll { overflow-x: auto; padding: 14px; background: #edf2f7; border-radius: 0 0 12px 12px; }
+      .plot-canvas { position: relative; width: 100%; min-width: 620px; aspect-ratio: 12 / 8.5; overflow: hidden; background: #fff;
+        border: 1px solid #cbd5e1; box-shadow: 0 5px 22px #1422351c; }
+      .canvas-title { position: absolute; top: 1%; left: 5%; width: 90%; text-align: center; overflow: hidden;
+        white-space: nowrap; text-overflow: ellipsis; font-size: clamp(12px, 1.4vw, 19px); }
+      .plot-stage { position: absolute; left: 5.5%; top: 12.5%; width: 89%; height: 82%;
+        background-image: linear-gradient(#eef2f7 1px, transparent 1px), linear-gradient(90deg, #eef2f7 1px, transparent 1px);
+        background-size: 5% 5%; }
+      .canvas-panel { position: absolute; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: white;
+        border: 2px solid #acb9c8; border-radius: 7px; box-shadow: 0 3px 12px #1e293b1c; overflow: hidden; }
+      .canvas-panel.active { border-color: var(--accent); box-shadow: 0 0 0 3px #2878a533; z-index: 2; }
+      .canvas-panel-bar { display: flex; align-items: center; gap: 6px; padding: 6px 9px; background: #eff5fa; cursor: grab; touch-action: none; user-select: none; }
+      .canvas-panel-bar:active { cursor: grabbing; }
+      .canvas-panel-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .canvas-chart { flex: 1; min-height: 0; padding: 8px; }
+      .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; }
+      .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+      .resize-handle { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
+        background: linear-gradient(135deg, transparent 49%, var(--accent) 50%, var(--accent) 57%, transparent 58%); }
+      .studio-sidebar { padding: 18px; display: grid; gap: 12px; }
+      .studio-sidebar h2, .studio-sidebar h3 { margin: 0; font-size: 17px; }
+      .studio-sidebar h3 { font-size: 14px; }
+      .studio-sidebar label, .panel-settings { display: grid; gap: 5px; }
+      .studio-sidebar input, .studio-sidebar select { width: 100%; min-height: 38px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; }
+      .studio-sidebar input[type=color] { padding: 3px; }
+      .studio-note { color: var(--muted); font-size: 12px; margin: 0; }
+      .panel-settings { gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
+      .panel-settings[hidden], #epochField[hidden], #renderedPlot[hidden] { display: none; }
+      .size-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .studio-generate { background: var(--accent); color: white; cursor: pointer; }
+      .studio-generate:disabled { opacity: .55; cursor: wait; }
+      #plotMessage { overflow-wrap: anywhere; }
+      #renderedPlot img { display: block; width: 100%; margin-top: 8px; border: 1px solid var(--line); }
+      @media (max-width: 950px) { .studio-layout { grid-template-columns: 1fr; } .studio-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .studio-sidebar h2, .panel-settings, .studio-note, #plotMessage, #renderedPlot { grid-column: 1 / -1; } }
+      @media (max-width: 560px) { .studio-sidebar { grid-template-columns: 1fr; } .studio-sidebar > * { grid-column: 1 / -1; } }
+    </style>
+    """
+    return body, css

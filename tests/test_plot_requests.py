@@ -1,4 +1,5 @@
 import json
+import io
 import threading
 from functools import partial
 from http.server import ThreadingHTTPServer
@@ -8,6 +9,7 @@ from urllib.request import Request, urlopen
 import h5py
 import numpy as np
 import pytest
+from PIL import Image
 
 from plot_requests import cleanup_cache, render_plot, validate_request
 from results_server import PrettyDirectoryHandler
@@ -44,6 +46,21 @@ def test_plot_renders_selected_panels_and_validates_inputs(event):
         validate_request(event, {"panels": [{"series": "goes"}]})
 
 
+def test_freeform_panels_render_at_canvas_aspect_ratio_and_validate_bounds(event):
+    request = {"layout": "free", "email": "person@example.org", "panels": [
+        {"series": "goes", "color": "#2255aa", "rect": {"x": .04, "y": .04, "w": .66, "h": .3}},
+        {"series": "map:roti", "rect": {"x": .3, "y": .46, "w": .62, "h": .48}},
+    ]}
+    with Image.open(io.BytesIO(render_plot(event, request))) as image:
+        assert abs(image.width / image.height - 12 / 8.5) < .01
+    request["panels"][1]["rect"]["w"] = .8
+    with pytest.raises(ValueError, match="canvas"):
+        validate_request(event, request)
+    request["panels"][1]["rect"]["w"] = float("nan")
+    with pytest.raises(ValueError, match="position"):
+        validate_request(event, request)
+
+
 def test_plot_http_create_fetch_delete_and_expiry(event, tmp_path):
     handler = partial(PrettyDirectoryHandler, directory=str(tmp_path))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -58,6 +75,8 @@ def test_plot_http_create_fetch_delete_and_expiry(event, tmp_path):
         with urlopen(base + result["url"]) as response:
             assert response.headers["Content-Type"] == "image/png"
             assert response.read(8) == b"\x89PNG\r\n\x1a\n"
+        with urlopen(base + "/editor/X/2025-11-11_X5.2") as response:
+            assert b'id="plotCanvas"' in response.read()
         def search(email):
             request = Request(base + "/api/plots/search", data=json.dumps({"email": email}).encode())
             with urlopen(request) as response:
@@ -87,6 +106,14 @@ def test_plot_http_create_fetch_delete_and_expiry(event, tmp_path):
         with urlopen(Request(base + second["delete_url"], method="DELETE")):
             pass
         assert search("person@example.org") == []
+        free_payload = json.dumps({"event": "X/2025-11-11_X5.2", "email": "person@example.org",
+                                   "layout": "free", "panels": [{"series": "goes",
+                                   "rect": {"x": .05, "y": .1, "w": .75, "h": .6}}]}).encode()
+        with urlopen(Request(base + "/api/plots", data=free_payload)) as response:
+            free_result = json.load(response)
+        with urlopen(base + free_result["url"]) as response:
+            assert response.headers["Content-Type"] == "image/png"
+        assert search("person@example.org")[0]["url"] == free_result["url"]
     finally:
         server.shutdown()
         server.server_close()

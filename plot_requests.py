@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import re
 import threading
 import time
@@ -82,8 +83,18 @@ def validate_request(event: Path, request: dict) -> dict:
                 datetime.fromisoformat(epoch)
             except ValueError as exc:
                 raise ValueError("Invalid map time") from exc
+        if request.get("layout") == "free":
+            rect = panel.get("rect")
+            if not isinstance(rect, dict) or any(
+                not isinstance(rect.get(axis), (int, float)) or isinstance(rect.get(axis), bool)
+                or not math.isfinite(rect[axis]) for axis in ("x", "y", "w", "h")
+            ):
+                raise ValueError("Invalid panel position")
+            x, y, w, h = (rect[axis] for axis in ("x", "y", "w", "h"))
+            if x < 0 or y < 0 or w < .16 or h < .16 or x + w > 1.000001 or y + h > 1.000001:
+                raise ValueError("Panel must fit inside the canvas")
     layout = request.get("layout", "vertical")
-    if layout not in ("vertical", "grid"):
+    if layout not in ("vertical", "grid", "free"):
         raise ValueError("Invalid plot layout")
     title = request.get("title", "")
     if not isinstance(title, str) or len(title) > 100:
@@ -139,15 +150,25 @@ def render_plot(event: Path, request: dict) -> bytes:
     from matplotlib.colors import LinearSegmentedColormap
 
     panels = request["panels"]
+    free = request["layout"] == "free"
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
     rows = (len(panels) + columns - 1) // columns
     with PLOT_LOCK:
-        fig, axes = plt.subplots(rows, columns, figsize=(7 * columns, 3.6 * rows), squeeze=False, constrained_layout=True)
+        fig = plt.figure(figsize=(12, 8.5)) if free else None
+        if not free:
+            fig, axes = plt.subplots(rows, columns, figsize=(7 * columns, 3.6 * rows), squeeze=False, constrained_layout=True)
         try:
             fig.patch.set_facecolor("#f6f7f9")
             for index, panel in enumerate(panels):
                 key = panel["series"]
-                ax = axes[index // columns][index % columns]
+                if free:
+                    rect = panel["rect"]
+                    ax = fig.add_axes((.055 + rect["x"] * .89, .055 + (1 - rect["y"] - rect["h"]) * .82,
+                                       rect["w"] * .89, rect["h"] * .82))
+                    ax.set_facecolor("white")
+                    ax.tick_params(labelsize=8)
+                else:
+                    ax = axes[index // columns][index % columns]
                 color = panel.get("color", "#2878a5")
                 if key.startswith("map:"):
                     product = key[4:]
@@ -175,9 +196,10 @@ def render_plot(event: Path, request: dict) -> bytes:
                     ax.set_xlabel("UTC")
                     ax.tick_params(axis="x", labelrotation=20)
                 ax.grid(alpha=.2)
-            for index in range(len(panels), rows * columns):
-                axes[index // columns][index % columns].set_visible(False)
-            fig.suptitle(request["title"] or event.name, fontsize=15)
+            if not free:
+                for index in range(len(panels), rows * columns):
+                    axes[index // columns][index % columns].set_visible(False)
+            fig.suptitle(request["title"] or event.name, fontsize=15, y=.98)
             output = io.BytesIO()
             fig.savefig(output, format="png", dpi=135)
             return output.getvalue()

@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from plot_requests import TTL_SECONDS, cleanup_cache, event_series, normalize_email, plots_for_email, render_plot, store_plot
+from plot_editor import editor_content
 
 
 FILE_TYPE_LABELS = {
@@ -123,6 +124,20 @@ UI_TRANSLATIONS = {
     "file list": "список файлов",
     "Language": "Язык",
     "Create a plot": "Создать график",
+    "Open plot studio": "Открыть редактор графиков",
+    "Plot studio": "Редактор графиков",
+    "Back to event": "Вернуться к событию",
+    "Layout preview": "Предпросмотр расположения",
+    "Preview of panel positions; data is drawn when you generate the plot.": "Предпросмотр расположения; данные отрисуются после построения графика.",
+    "Selected panel": "Выбранная панель",
+    "Width (%)": "Ширина (%)",
+    "Height (%)": "Высота (%)",
+    "Map time (UTC)": "Время карты (UTC)",
+    "Remove selected panel": "Удалить панель",
+    "Generate plot": "Построить график",
+    "Open full-size plot": "Открыть график в полном размере",
+    "Use the same email in the catalog to find your plots. No messages are sent.": "Введите ту же почту в каталоге, чтобы найти графики. Письма не отправляются.",
+    "Drag panels by their headers and resize from the lower-right corner.": "Перетаскивайте панели за заголовки и меняйте размер за правый нижний угол.",
     "Build plot": "Построить график",
     "Add panel": "Добавить панель",
     "Selected plots": "Выбранные графики",
@@ -987,8 +1002,6 @@ def render_dashboard(root: Path) -> bytes:
 def render_event_page(root: Path, path: Path) -> bytes:
     event = scan_event(root, path)
     available_series = event_series(path)
-    series_json = json.dumps(available_series, ensure_ascii=False).replace("<", "\\u003c")
-    event_path_json = json.dumps(event["path"], ensure_ascii=False).replace("<", "\\u003c")
     product_rows = []
     for product in PRODUCTS:
         product_rows.append(
@@ -1044,17 +1057,8 @@ def render_event_page(root: Path, path: Path) -> bytes:
       </aside>
     </div>
     <section class="panel plot-editor" id="plotEditor">
-      <div class="section-heading"><div><h2>Create a plot</h2><p class="muted">Plots are generated on request and available for three days.</p></div></div>
-      <div id="plotControls" {'hidden' if not available_series else ''}>
-        <div class="editor-fields">
-          <label>Plot title <input id="plotTitle" maxlength="100" placeholder="Plot title"></label>
-          <label>Layout <select id="plotLayout"><option value="vertical">Vertical</option><option value="grid">Two columns</option></select></label>
-          <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
-        </div>
-        <p class="muted">Enter your email address to save and find this plot. No messages are sent.</p>
-        <div class="editor-panels"><strong>Selected plots</strong><div id="plotPanels"></div><button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
-        <div class="editor-footer"><button type="button" class="button primary-button" id="generatePlot">Generate and open</button><span id="plotMessage" role="status" aria-live="polite"></span></div>
-      </div>
+      <div class="section-heading"><div><h2>Create a plot</h2><p class="muted">Plots are generated on request and available for three days.</p></div>
+        {f'<a class="button primary-button" href="/editor/{quote(event["path"], safe="/")}" target="_blank" rel="noopener">Open plot studio</a>' if available_series else ''}</div>
       {'<p>No data series available for this event.</p>' if not available_series else ''}
     </section>
     <section class="panel processing-panel">
@@ -1072,64 +1076,6 @@ def render_event_page(root: Path, path: Path) -> bytes:
       <summary>Browse files <span class="muted">({len(entries)} items)</span></summary>
       <div class="table-wrap event-files-table">{files_table}</div>
     </details>
-    <script>
-    (() => {{
-      const series = {series_json};
-      const eventPath = {event_path_json};
-      if (!Object.keys(series).length) return;
-      const panels = document.getElementById('plotPanels');
-      const message = document.getElementById('plotMessage');
-      const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
-      function addPanel() {{
-        if (panels.children.length >= 6) return;
-        const row = document.createElement('div');
-        row.className = 'editor-row';
-        const select = document.createElement('select');
-        select.setAttribute('aria-label', 'Data series');
-        for (const [key, label] of Object.entries(series)) {{
-          const option = document.createElement('option'); option.value = key; option.textContent = label; select.append(option);
-        }}
-        const color = document.createElement('input'); color.type = 'color'; color.value = '#2878a5'; color.setAttribute('aria-label', 'Color');
-        const epoch = document.createElement('input'); epoch.type = 'datetime-local'; epoch.title = 'Map time (UTC)'; epoch.setAttribute('aria-label', 'Map time (UTC)');
-        const updateEpoch = () => {{ epoch.hidden = !select.value.startsWith('map:'); }};
-        select.addEventListener('change', updateEpoch); updateEpoch();
-        const up = document.createElement('button'); up.type = 'button'; up.className = 'button'; up.textContent = '↑'; up.title = 'Move up';
-        up.onclick = () => {{ if (row.previousElementSibling) panels.insertBefore(row, row.previousElementSibling); }};
-        const down = document.createElement('button'); down.type = 'button'; down.className = 'button'; down.textContent = '↓'; down.title = 'Move down';
-        down.onclick = () => {{ if (row.nextElementSibling) panels.insertBefore(row.nextElementSibling, row); }};
-        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button'; remove.textContent = '×'; remove.title = 'Remove'; remove.onclick = () => row.remove();
-        row.append(select, epoch, color, up, down, remove); panels.append(row);
-      }}
-      document.getElementById('addPlotPanel').onclick = addPanel;
-      addPanel();
-      document.getElementById('generatePlot').onclick = async () => {{
-        const button = document.getElementById('generatePlot');
-        const chosen = Array.from(panels.children).map(row => ({{series: row.querySelector('select').value, color: row.querySelector('input[type=color]').value, epoch: row.querySelector('input[type=datetime-local]').value || null}}));
-        if (!chosen.length) {{ message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }}
-        const email = document.getElementById('plotEmail');
-        if (!email.reportValidity()) return;
-        button.disabled = true;
-        message.textContent = text('Generating plot…', 'Построение графика…');
-        try {{
-          const response = await fetch('/api/plots', {{method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{
-            event: eventPath, panels: chosen, layout: document.getElementById('plotLayout').value,
-            title: document.getElementById('plotTitle').value, email: email.value
-          }})}});
-          const result = await response.json();
-          if (!response.ok) throw Error(result.error || 'Failed to create plot');
-          const link = document.createElement('a'); link.href = result.url; link.target = '_blank'; link.rel = 'noopener';
-          link.textContent = text('Open generated plot', 'Открыть готовый график');
-          message.replaceChildren(link);
-          const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button';
-          remove.textContent = text('Delete plot', 'Удалить график');
-          remove.onclick = async () => {{ const deleted = await fetch(result.delete_url, {{method: 'DELETE'}}); if (deleted.ok) message.textContent = text('Plot deleted.', 'График удалён.'); }};
-          message.append(' · ', remove);
-          message.append(' · ', text('Find it later by email in the catalog.', 'Позже найдите его по почте в каталоге.'));
-          window.open(result.url, '_blank', 'noopener');
-        }} catch (error) {{ message.textContent = error.message; }} finally {{ button.disabled = false; }}
-      }};
-    }})();
-    </script>
     """
     extra_head = """
     <style>
@@ -1166,21 +1112,6 @@ def render_event_page(root: Path, path: Path) -> bytes:
       .source-status:last-child { border-bottom: 0; }
       .processing-panel { margin-top: 12px; }
       .plot-editor { margin-top: 12px; }
-      .editor-fields { display: grid; grid-template-columns: 1fr 180px minmax(180px, 1fr); gap: 12px; }
-      .editor-fields label { display: grid; gap: 5px; color: var(--muted); font-weight: 600; }
-      .editor-fields input, .editor-fields select, .editor-row select { min-height: 38px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; font: inherit; color: var(--text); background: white; }
-      .editor-panels { margin-top: 15px; }
-      .editor-row { display: flex; gap: 7px; align-items: center; margin: 8px 0; }
-      .editor-row select { flex: 1; min-width: 0; }
-      .editor-row input[type=datetime-local] { min-height: 38px; border: 1px solid var(--line); border-radius: 7px; }
-      .editor-row input[hidden] { display: none; }
-      @media (max-width: 600px) { .editor-row { flex-wrap: wrap; } .editor-row select { flex-basis: 100%; } }
-      .editor-row input[type=color] { width: 40px; height: 38px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; }
-      .editor-row .button { min-height: 38px; cursor: pointer; }
-      .editor-footer { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
-      .editor-footer button { cursor: pointer; }
-      .editor-footer button:disabled { opacity: .5; cursor: wait; }
-      @media (max-width: 700px) { .editor-fields { grid-template-columns: 1fr; } }
       .processing-panel .table-wrap { box-shadow: none; border-radius: 7px; }
       .processing-panel table { min-width: 480px; }
       .processing-panel th { text-transform: none; background: #fafbfc; }
@@ -1198,6 +1129,12 @@ def render_event_page(root: Path, path: Path) -> bytes:
     </style>
     """
     return page_shell(f"{event['name']} · GNSS Solar Flare", body, extra_head=extra_head)
+
+
+def render_plot_editor_page(root: Path, path: Path) -> bytes:
+    event = scan_event(root, path)
+    body, styles = editor_content(event, event_series(path))
+    return page_shell(f"Plot studio · {event['name']}", body, extra_head=styles)
 
 
 def render_graph_gallery(root: Path, path: Path, url_path: str) -> bytes:
@@ -1394,6 +1331,13 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
         root = self._root_dir()
         if parsed.path in {"", "/"}:
             return self._send_bytes(render_dashboard(root))
+
+        if parsed.path.startswith("/editor/"):
+            rel = unquote(parsed.path.removeprefix("/editor/")).strip("/")
+            if rel not in {event["path"] for event in scan_events(root)}:
+                self.send_error(404)
+                return
+            return self._send_bytes(render_plot_editor_page(root, root / rel))
 
         candidate = self._safe_path_from_url(parsed.path)
         if (

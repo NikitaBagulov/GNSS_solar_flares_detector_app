@@ -9,6 +9,7 @@ from results_server import (
     render_directory_html,
     render_dashboard,
     render_event_page,
+    render_plot_editor_page,
     render_graph_gallery,
     scan_graph_images,
 )
@@ -151,9 +152,9 @@ def test_render_event_page_groups_preview_status_and_files(tmp_path):
     assert "Processing status" in html
     assert "Source measurements" in html
     assert "Create a plot" in html
-    assert 'id="plotPanels"' in html
-    assert "Generate and open" in html
-    assert 'id="plotEmail" type="email" required' in html
+    assert 'href="/editor/X/2025-11-11_X5.2"' in html
+    assert 'target="_blank"' in html
+    assert 'id="plotPanels"' not in html
     assert 'href="maps/"' in html
     assert 'href="indices/"' in html
     assert "Combined plots" in html
@@ -161,3 +162,28 @@ def test_render_event_page_groups_preview_status_and_files(tmp_path):
     assert 'id="languageSelect"' in html
     assert "Карты" in html
     assert "Русский" in html
+
+
+def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
+    event = tmp_path / "X" / "2025-11-11_X5.2"
+    event.mkdir(parents=True)
+    (event / "goes_xray.csv").write_text("time,xrsb\n2025-11-11T01:00:00Z,0.2\n", encoding="utf-8")
+    page = render_plot_editor_page(tmp_path, event).decode("utf-8")
+    assert 'id="plotCanvas"' in page
+    assert 'id="plotStage"' in page
+    assert 'id="canvasTitle"' in page
+    assert 'id="panelWidth"' in page
+    assert 'id="panelHeight"' in page
+    assert "setPointerCapture" in page
+    assert "layout: 'free'" in page
+    assert 'id="plotEmail" type="email" required' in page
+    assert "Русский" in page
+
+    import shutil
+    import subprocess
+    if shutil.which("node"):
+        scripts = page.split("<script>")
+        for segment in scripts[1:]:
+            script = segment.split("</script>", 1)[0]
+            check = subprocess.run(["node", "--check"], input=script, text=True, capture_output=True)
+            assert check.returncode == 0, check.stderr
