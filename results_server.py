@@ -586,99 +586,161 @@ def page_shell(title: str, body: str, extra_head: str = "") -> bytes:
 def render_dashboard(root: Path) -> bytes:
     events = scan_events(root)
     summary = build_summary(events)
-    recent = sorted(events, key=lambda event: event["modified"], reverse=True)[:12]
+    class_order = {"X": 0, "M": 1, "C": 2, "B": 3, "A": 4}
+    classes = sorted({event["class"] for event in events}, key=lambda value: (class_order.get(value, 5), value))
+    class_options = "".join(
+        f'<option value="{html.escape(klass)}">Class {html.escape(klass)}</option>'
+        for klass in classes
+    )
     rows = []
     for event in events:
         rows.append(
-            f"""<tr data-name="{html.escape(event['name'].lower())}" data-class="{html.escape(event['class'])}" data-complete="{str(event['complete']).lower()}" data-size="{event['size_bytes']}">
-              <td><a class="name-link" href="{html.escape(event['url'])}">{html.escape(event['name'])}</a></td>
-              <td>{html.escape(event['date'])}</td>
-              <td><span class="badge">{html.escape(event['class'])}</span></td>
-              <td><span class="badge {'ok' if event['maps_ready'] == event['maps_total'] else 'warn'}">{event['maps_ready']}/{event['maps_total']}</span></td>
-              <td><span class="badge {'ok' if event['indices_ready'] == event['indices_total'] else 'warn'}">{event['indices_ready']}/{event['indices_total']}</span></td>
-              <td><span class="badge {'ok' if event['graphs_count'] else 'bad'}">{event['graphs_count']}</span></td>
-              <td><span class="badge {'ok' if event['sources'].get('soho_sem') else 'bad'}">SOHO</span></td>
-              <td><span class="badge {'ok' if event['sources'].get('goes_xray') else 'bad'}">GOES</span></td>
-              <td>{html.escape(event['size'])}</td>
-              <td>{html.escape(event['modified'])}</td>
+            f"""<tr data-name="{html.escape(event['name'].lower())}" data-date="{html.escape(event['date'])}" data-class="{html.escape(event['class'])}" data-complete="{str(event['complete']).lower()}" data-size="{event['size_bytes']}">
+              <td class="event-cell"><a class="name-link" href="{html.escape(event['url'])}">{html.escape(event['name'])}</a><span>{html.escape(event['date'] or 'Date unavailable')}</span></td>
+              <td><span class="class-tag class-{html.escape(event['class'].lower())}">{html.escape(event['class'])}</span></td>
+              <td><div class="progress-list">
+                <span class="badge {'ok' if event['maps_ready'] == event['maps_total'] else 'warn'}">Maps {event['maps_ready']}/{event['maps_total']}</span>
+                <span class="badge {'ok' if event['indices_ready'] == event['indices_total'] else 'warn'}">Indices {event['indices_ready']}/{event['indices_total']}</span>
+                <span class="badge {'ok' if event['graphs_count'] else 'bad'}">Graphs {event['graphs_count']}</span>
+              </div></td>
+              <td><div class="progress-list source-list">
+                <span class="source {'ok' if event['sources'].get('goes_xray') else 'missing'}" title="GOES X-ray data">GOES {'available' if event['sources'].get('goes_xray') else 'missing'}</span>
+                <span class="source {'ok' if event['sources'].get('soho_sem') else 'missing'}" title="SOHO SEM data">SOHO {'available' if event['sources'].get('soho_sem') else 'missing'}</span>
+              </div></td>
+              <td class="muted">{html.escape(event['modified'])}</td>
             </tr>"""
-        )
-
-    cards = []
-    for event in recent:
-        preview = event["preview_url"]
-        thumb = (
-            f'<img class="thumb" src="{html.escape(preview)}" alt="">'
-            if preview
-            else '<div class="thumb"></div>'
-        )
-        cards.append(
-            f"""<article class="card">
-              <a href="{html.escape(event['url'])}">{thumb}</a>
-              <div class="card-body">
-                <a class="name-link" href="{html.escape(event['url'])}">{html.escape(event['name'])}</a>
-                <div class="muted">{html.escape(event['modified'])} · {html.escape(event['size'])}</div>
-              </div>
-            </article>"""
         )
 
     body = f"""
     <header>
       <div>
-        <h1>GNSS Solar Flare Results</h1>
-        <div class="breadcrumbs"><a href="/">Results</a> / <a href="/api/summary">API summary</a> / <a href="/api/events">API events</a></div>
+        <div class="eyebrow">GNSS SOLAR FLARE DETECTOR</div>
+        <h1>Event catalog</h1>
+        <p class="page-intro">Browse events and see at a glance which data products are ready.</p>
       </div>
-      <div class="stats">
-        <div class="stat"><strong>{summary['events']}</strong><span>events</span></div>
-        <div class="stat"><strong>{summary['complete']}</strong><span>complete</span></div>
-        <div class="stat"><strong>{summary['incomplete']}</strong><span>incomplete</span></div>
-        <div class="stat"><strong>{summary['missing_soho_sem']}</strong><span>missing SOHO</span></div>
-        <div class="stat"><strong>{html.escape(summary['size'])}</strong><span>total size</span></div>
-      </div>
+      <nav class="api-links" aria-label="Data endpoints">
+        <a href="/api/events">Events JSON</a><a href="/api/summary">Summary JSON</a>
+      </nav>
     </header>
-    <div class="toolbar">
-      <input id="q" placeholder="Search date, class, name">
-      <select id="classFilter"><option value="">All classes</option><option value="X">X</option><option value="M">M</option><option value="C">C</option></select>
-      <select id="statusFilter"><option value="">All statuses</option><option value="complete">Complete</option><option value="incomplete">Incomplete</option></select>
-      <select id="sortBy"><option value="date">Sort by date</option><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
-    </div>
-    <div class="table-wrap">
-      <table id="eventsTable">
-        <thead><tr><th>Name</th><th>Date</th><th>Class</th><th>Maps</th><th>Indices</th><th>Graphs</th><th>SOHO</th><th>GOES</th><th>Size</th><th>Modified</th></tr></thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-    </div>
-    <h2>Recently Updated</h2>
-    <div class="cards">{''.join(cards)}</div>
+    <section class="catalog-summary" aria-label="Catalog overview">
+      <div class="summary-card"><span class="summary-icon">▦</span><div><strong>{summary['events']}</strong><span>Total events</span></div></div>
+      <div class="summary-card"><span class="summary-icon ready-icon">✓</span><div><strong>{summary['complete']}</strong><span>Fully processed</span></div></div>
+      <div class="summary-card"><span class="summary-icon attention-icon">!</span><div><strong>{summary['incomplete']}</strong><span>Need attention</span></div></div>
+      <div class="catalog-storage"><span>Catalog storage</span><strong>{html.escape(summary['size'])}</strong></div>
+    </section>
+    <section class="catalog-panel" aria-label="Solar flare events">
+      <div class="catalog-heading">
+        <div><h2>All events</h2><span class="muted">Select an event to inspect its files and results.</span></div>
+        <span id="resultsCount" class="result-count" aria-live="polite">{summary['events']} events</span>
+      </div>
+      <div class="toolbar" role="search">
+        <label class="search-field"><span class="sr-only">Search events</span><span aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Search by date, event name, or class" autocomplete="off"></label>
+        <label><span class="sr-only">Filter by class</span><select id="classFilter"><option value="">All classes</option>{class_options}</select></label>
+        <label><span class="sr-only">Filter by processing status</span><select id="statusFilter"><option value="">Any status</option><option value="complete">Fully processed</option><option value="incomplete">Needs attention</option></select></label>
+        <label><span class="sr-only">Sort events</span><select id="sortBy"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Event name</option><option value="size">Largest first</option></select></label>
+        <button class="reset-button" id="resetFilters" type="button">Clear filters</button>
+      </div>
+      <div class="table-wrap">
+        <table id="eventsTable">
+          <thead><tr><th>Event / date</th><th>Class</th><th>Processing progress</th><th>Source data</th><th>Last updated</th></tr></thead>
+          <tbody>{''.join(rows)}<tr id="noResults" hidden><td colspan="5" class="empty-state">No events match these filters. Try a different search or clear the filters.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
     <script>
       const q = document.getElementById('q');
       const classFilter = document.getElementById('classFilter');
       const statusFilter = document.getElementById('statusFilter');
       const sortBy = document.getElementById('sortBy');
       const tbody = document.querySelector('#eventsTable tbody');
-      const originalRows = Array.from(tbody.querySelectorAll('tr'));
+      const originalRows = Array.from(tbody.querySelectorAll('tr[data-name]'));
+      const noResults = document.getElementById('noResults');
+      const resultsCount = document.getElementById('resultsCount');
       function applyFilters() {{
         const query = q.value.toLowerCase();
         const klass = classFilter.value;
         const status = statusFilter.value;
-        let rows = originalRows.filter(row => {{
-          const text = row.innerText.toLowerCase();
+        let rows = originalRows.filter(row => row !== noResults && (() => {{
+          const text = (row.dataset.name + ' ' + row.dataset.date + ' ' + row.dataset.class).toLowerCase();
           const okQuery = !query || text.includes(query);
           const okClass = !klass || row.dataset.class === klass;
           const okStatus = !status || (status === 'complete') === (row.dataset.complete === 'true');
           return okQuery && okClass && okStatus;
-        }});
+        }})());
         rows.sort((a, b) => {{
           if (sortBy.value === 'size') return Number(b.dataset.size) - Number(a.dataset.size);
           if (sortBy.value === 'name') return a.dataset.name.localeCompare(b.dataset.name);
-          return a.children[1].innerText.localeCompare(b.children[1].innerText);
+          if (!a.dataset.date && b.dataset.date) return 1;
+          if (a.dataset.date && !b.dataset.date) return -1;
+          const order = a.dataset.date.localeCompare(b.dataset.date);
+          return sortBy.value === 'oldest' ? order : -order;
         }});
         tbody.replaceChildren(...rows);
+        noResults.hidden = rows.length !== 0;
+        tbody.append(noResults);
+        resultsCount.textContent = `${{rows.length}} of ${{originalRows.length}} events`;
       }}
       [q, classFilter, statusFilter, sortBy].forEach(el => el.addEventListener('input', applyFilters));
+      document.getElementById('resetFilters').addEventListener('click', () => {{
+        q.value = ''; classFilter.value = ''; statusFilter.value = ''; sortBy.value = 'newest'; applyFilters(); q.focus();
+      }});
+      applyFilters();
     </script>
     """
-    return page_shell("GNSS Results", body)
+    extra_head = """
+    <style>
+      main { width: min(1380px, calc(100vw - 48px)); padding-top: 38px; }
+      header { align-items: center; }
+      .eyebrow { color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: .12em; margin-bottom: 8px; }
+      h1 { font-size: clamp(28px, 3vw, 38px); letter-spacing: -.03em; margin-bottom: 5px; }
+      .page-intro { margin: 0; color: var(--muted); font-size: 15px; }
+      .api-links { display: flex; gap: 8px; }
+      .api-links a { color: var(--muted); font-size: 12px; text-decoration: none; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+      .api-links a:hover { color: var(--accent); border-color: var(--accent); }
+      .catalog-summary { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(140px, .8fr); gap: 12px; margin: 24px 0 18px; }
+      .summary-card, .catalog-storage { min-height: 86px; display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+      .summary-card > div, .catalog-storage { display: flex; flex-direction: column; }
+      .summary-card strong, .catalog-storage strong { font-size: 22px; line-height: 1.15; }
+      .summary-card div span, .catalog-storage span { color: var(--muted); font-size: 12px; }
+      .summary-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #e8eef5; color: #475569; font-weight: 800; }
+      .ready-icon { background: #dff3ef; color: var(--good); }
+      .attention-icon { background: #fff3d6; color: var(--warn); }
+      .catalog-storage { justify-content: center; gap: 3px; }
+      .catalog-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+      .catalog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 20px 8px; }
+      .catalog-heading h2 { margin: 0 0 3px; font-size: 18px; }
+      .result-count { color: var(--muted); font-size: 13px; white-space: nowrap; }
+      .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 150px 190px 150px auto; gap: 9px; margin: 12px 20px 16px; }
+      .toolbar input, .toolbar select { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+      .search-field { position: relative; }
+      .search-field > span:not(.sr-only) { position: absolute; left: 11px; top: 5px; color: var(--muted); font-size: 21px; }
+      .search-field input { padding-left: 34px; }
+      .reset-button { min-height: 40px; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; white-space: nowrap; }
+      .reset-button:hover { text-decoration: underline; }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+      .table-wrap { border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+      table { min-width: 820px; }
+      th, td { padding: 13px 18px; vertical-align: middle; }
+      th { text-transform: none; letter-spacing: .01em; background: #fafbfc; }
+      tbody tr:hover { background: #f7faf9; }
+      .event-cell { min-width: 230px; }
+      .event-cell .name-link { display: block; }
+      .event-cell > span { color: var(--muted); font-size: 12px; }
+      .class-tag { display: inline-grid; min-width: 34px; min-height: 28px; place-items: center; border-radius: 7px; background: #eef2f7; color: #475569; font-weight: 800; }
+      .class-x { background: #fee4e2; color: #b42318; }
+      .class-m { background: #fff0d9; color: #a15c00; }
+      .class-c { background: #e9f2ff; color: #175cd3; }
+      .progress-list { display: flex; flex-wrap: wrap; gap: 5px; }
+      .progress-list .badge { min-width: 0; font-size: 11px; }
+      .source { padding: 3px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+      .source.ok { background: #dff3ef; color: var(--good); }
+      .source.missing { background: #fee4e2; color: var(--bad); }
+      .empty-state { padding: 36px 20px; text-align: center; color: var(--muted); white-space: normal; }
+      @media (max-width: 900px) { .catalog-summary { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .search-field { grid-column: 1 / -1; } }
+      @media (max-width: 560px) { main { width: calc(100vw - 24px); padding-top: 22px; } .catalog-summary { gap: 8px; } .summary-card, .catalog-storage { min-height: 72px; padding: 11px; } .catalog-heading { align-items: flex-start; padding: 16px 14px 6px; } .toolbar { margin: 10px 14px 14px; gap: 7px; } .api-links { margin-top: 14px; } header { margin-bottom: 12px; } }
+    </style>
+    """
+    return page_shell("Event catalog · GNSS Solar Flare Detector", body, extra_head=extra_head)
 
 
 def render_event_page(root: Path, path: Path) -> bytes:

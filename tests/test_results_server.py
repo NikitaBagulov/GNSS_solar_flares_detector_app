@@ -7,6 +7,7 @@ from results_server import (
     graph_product,
     graph_time_label,
     render_directory_html,
+    render_dashboard,
     render_graph_gallery,
     scan_graph_images,
 )
@@ -83,3 +84,39 @@ def test_render_graph_gallery_includes_interactive_controls(tmp_path):
     assert 'id="productFilter"' in html
     assert "/X/event/graphs/dtec_2_10/map_dtec_2_10_01-30-00_UTC.png" in html
     assert "?view=list" in html
+
+
+def test_render_dashboard_exposes_clear_catalog_filters_and_progress(tmp_path):
+    complete = tmp_path / "X" / "2025-11-11_X5.2"
+    for product in ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60"):
+        (complete / "maps" / f"map_{product}.h5").parent.mkdir(parents=True, exist_ok=True)
+        (complete / "maps" / f"map_{product}.h5").write_bytes(b"map")
+        (complete / "indices" / f"indices_{product}.csv").parent.mkdir(parents=True, exist_ok=True)
+        (complete / "indices" / f"indices_{product}.csv").write_text("time,value\n", encoding="utf-8")
+    graph = complete / "graphs" / "combined" / "preview.png"
+    graph.parent.mkdir(parents=True)
+    graph.write_bytes(b"png")
+    (complete / "goes_xray.csv").write_text("time,value\n", encoding="utf-8")
+    (complete / "soho_sem.csv").write_text("time,value\n", encoding="utf-8")
+
+    incomplete = tmp_path / "C" / "2025-11-10_C2.0"
+    (incomplete / "maps").mkdir(parents=True)
+
+    html = render_dashboard(tmp_path).decode("utf-8")
+
+    assert "Event catalog" in html
+    assert "Browse events and see at a glance which data products are ready." in html
+    assert 'id="q"' in html
+    assert 'id="classFilter"' in html
+    assert 'id="statusFilter"' in html
+    assert 'id="sortBy"' in html
+    assert 'id="resetFilters"' in html
+    assert 'id="resultsCount"' in html
+    assert 'id="noResults"' in html
+    assert "Maps 4/4" in html
+    assert "Indices 4/4" in html
+    assert "GOES available" in html
+    assert "SOHO missing" in html
+    assert "2025-11-11_X5.2" in html
+    assert "2025-11-10_C2.0" in html
+    assert "Recently Updated" not in html
