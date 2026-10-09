@@ -206,7 +206,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     box_w, box_h = rect["w"] * .89, rect["h"] * .82
                     fig.patches.append(Rectangle((left, bottom), box_w, box_h, transform=fig.transFigure,
                                                        facecolor=PLOT_STYLE["panel"], edgecolor=PLOT_STYLE["grid"],
-                                                       linewidth=.8, zorder=0))
+                                                       linewidth=.8, zorder=-1))
                     map_panel = key.startswith("map:")
                     ax = fig.add_axes((left + box_w * .19, bottom + box_h * .24,
                                        box_w * (.61 if map_panel else .69), box_h * .53),
@@ -262,7 +262,8 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ylabel = "Flux (W m⁻²)" if key == "goes" else "Flux (photons cm⁻² s⁻¹)"
                     else:
                         ylabel = {"day_night_index": "Day/night", "gsflai_index": "GSFLAI", "isfai_index": "ISFAI"}[column]
-                    ax.plot(dates, values, color=color, linewidth=2, solid_capstyle="round")
+                    ax.plot(dates, values, color=color, linewidth=2, solid_capstyle="round",
+                            marker="o" if len(dates) == 1 else None)
                     if not free:
                         ax.set_title(SERIES[key], loc="left", color=PLOT_STYLE["ink"])
                     ax.set_ylabel(ylabel, color=color)

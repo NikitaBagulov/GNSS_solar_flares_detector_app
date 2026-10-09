@@ -48,11 +48,17 @@ def test_plot_renders_selected_panels_and_validates_inputs(event):
 
 def test_freeform_panels_render_at_canvas_aspect_ratio_and_validate_bounds(event):
     request = {"layout": "free", "email": "person@example.org", "panels": [
-        {"series": "goes", "color": "#2255aa", "rect": {"x": .04, "y": .04, "w": .66, "h": .3}},
+        {"series": "goes", "color": "#d1495b", "rect": {"x": .04, "y": .04, "w": .66, "h": .3}},
         {"series": "map:roti", "rect": {"x": .3, "y": .46, "w": .62, "h": .48}},
     ]}
     with Image.open(io.BytesIO(render_plot(event, request))) as image:
         assert abs(image.width / image.height - 12 / 8.5) < .01
+        pixels = np.asarray(image.convert("RGB"))
+        # A PNG containing only axes and panel backgrounds used to pass this test.
+        assert np.count_nonzero((pixels[:, :, 0] > pixels[:, :, 1] * 1.3) &
+                                (pixels[:, :, 0] > pixels[:, :, 2] * 1.1)) > 20
+        assert np.count_nonzero((pixels[:, :, 1] > pixels[:, :, 0] * 1.2) &
+                                (pixels[:, :, 1] > pixels[:, :, 2] * 1.1)) > 20
     request["panels"][1]["rect"]["w"] = .8
     with pytest.raises(ValueError, match="canvas"):
         validate_request(event, request)
