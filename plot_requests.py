@@ -272,7 +272,7 @@ def render_plot(event: Path, request: dict) -> bytes:
     from matplotlib.dates import AutoDateLocator
     from matplotlib.lines import Line2D
     import cartopy.crs as ccrs
-    from Plotter import Plotter, PLOT_STYLE, DEFAULT_PARAMS
+    from Plotter import Plotter, CombinedPlotter, PLOT_STYLE, DEFAULT_PARAMS
     from flare_metadata import flare_metadata, scientific_caption
 
     panels = request["panels"]
@@ -377,8 +377,9 @@ def render_plot(event: Path, request: dict) -> bytes:
                     stamp, points = _map_points(event / "maps" / f"map_{product}.h5", request["epoch"])
                     painter = object.__new__(Plotter)
                     painter.data = SimpleNamespace(product_values=[{product: points}], timestamps=[datetime.fromisoformat(stamp)])
+                    vmin, vmax = CombinedPlotter._get_product_color_range(product)
                     painter._plot_map(ax, 0, product_name=product, map_time=datetime.fromisoformat(stamp),
-                                        vmin=0 if product == "roti" else -1, vmax=1.5 if product == "roti" else 1)
+                                        vmin=vmin, vmax=vmax)
                     if simple and len(ax.collections) >= 3:
                         # The large double-stroked subsolar X and 30 pt samples from
                         # Plotter obscure the geography in a print-sized figure.

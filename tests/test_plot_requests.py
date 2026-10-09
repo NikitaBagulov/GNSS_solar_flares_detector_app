@@ -223,6 +223,34 @@ def test_colorbar_matches_rendered_map_height(event, monkeypatch):
                                                                            "w": .58, "h": .42}}]}).startswith(b"\x89PNG")
 
 
+@pytest.mark.parametrize("style", ["simple", "plotter"])
+def test_map_color_limits_are_fixed_for_roti_and_dtec(event, monkeypatch, style):
+    from matplotlib.figure import Figure
+    from Plotter import CombinedPlotter
+
+    assert CombinedPlotter._get_product_color_range("roti") == (0, .5)
+    assert CombinedPlotter._get_product_color_range("dtec_2_10") == (-.5, .5)
+    stamp = "2025-11-11 01:00:00.000000"
+    with h5py.File(event / "maps" / "map_dtec_2_10.h5", "w") as file:
+        file.create_dataset(f"data/{stamp}", data=np.array(
+            [(51., 30., -.8)], dtype=[("lat", "f4"), ("lon", "f4"), ("vals", "f4")]))
+
+    original = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        maps = [axis for axis in fig.axes if axis.child_axes]
+        assert len(maps) == 2
+        assert [(ax.collections[0].norm.vmin, ax.collections[0].norm.vmax) for ax in maps] == [
+            (0, .5), (-.5, .5)]
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    request = {"layout": "free", "style": style, "email": "user@example.org", "epoch": stamp,
+               "panels": [{"series": "map:roti", "rect": {"x": .02, "y": .02, "w": .45, "h": .60}},
+                          {"series": "map:dtec_2_10", "rect": {"x": .52, "y": .02, "w": .45, "h": .60}}]}
+    assert render_plot(event, request).startswith(b"\x89PNG")
+
+
 def test_each_plot_title_is_centered_in_free_and_vertical_layouts(event, monkeypatch):
     from matplotlib.figure import Figure
 

@@ -147,7 +147,7 @@ UI_TRANSLATIONS = {
     "Height (%)": "Высота (%)",
     "Observation time (UTC)": "Время наблюдения (UTC)",
     "One time for all maps and time-series panels, from the available HDF5 datasets.": "Одно время для всех карт и временных рядов, из доступных данных HDF5.",
-    "Map colors and scale follow the original plotting: ROTI · viridis 0–1.5 TECu/min; dTEC · RdBu_r −1…1 TECu.": "Цвета и шкала карт как в исходном plotting: ROTI · viridis 0–1.5 TECu/мин; dTEC · RdBu_r −1…1 TECu.",
+    "Fixed map scales: ROTI · viridis 0–0.5 TECu/min; dTEC · RdBu_r −0.5…0.5 TECu.": "Постоянные шкалы карт: ROTI · viridis 0–0.5 TECu/мин; dTEC · RdBu_r −0.5…0.5 TECu.",
     "Line color": "Цвет линии",
     "Remove selected panel": "Удалить панель",
     "Generate plot": "Построить график",

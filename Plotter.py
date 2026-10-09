@@ -766,8 +766,8 @@ class CombinedPlotter(Plotter):
     @staticmethod
     def _get_product_color_range(product_name):
         if product_name == "roti":
-            return 0, 1
-        return -1, 1
+            return 0, 0.5
+        return -0.5, 0.5
 
     
 

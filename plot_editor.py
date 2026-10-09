@@ -55,7 +55,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           <h3>Selected panel</h3>
           <label>Data series <select id="panelSeries"></select></label>
            <label id="colorField">Line color <input id="panelColor" type="color" value="#2878a5"></label>
-            <p id="mapPalette" class="studio-note" hidden>Map colors and scale follow the original plotting: ROTI · viridis 0–1.5 TECu/min; dTEC · RdBu_r −1…1 TECu.</p>
+             <p id="mapPalette" class="studio-note" hidden>Fixed map scales: ROTI · viridis 0–0.5 TECu/min; dTEC · RdBu_r −0.5…0.5 TECu.</p>
           <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
             <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
           <button type="button" class="button" id="removePanel">Remove selected panel</button>
@@ -266,7 +266,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><circle cx="40" cy="35" r="7"/><circle cx="77" cy="46" r="5"/><circle cx="112" cy="20" r="6"/><circle cx="155" cy="40" r="8"/></svg>';
             xLabel.textContent = 'Longitude'; yLabel.textContent = 'Latitude'; ticks.textContent = '−180     0      180';
             const scale = document.createElement('span'); scale.className = 'canvas-scale';
-             scale.textContent = panel.series === 'map:roti' ? '0 → 1.5 TECu/min' : '−1 → 1 TECu';
+              scale.textContent = panel.series === 'map:roti' ? '0 → 0.5 TECu/min' : '−0.5 → 0.5 TECu';
             scale.style.borderImage = panel.series === 'map:roti' ?
               'linear-gradient(#fde725, #21918c, #440154) 1' : 'linear-gradient(#b2182b, #f7f7f7, #2166ac) 1';
             card.append(scale);
