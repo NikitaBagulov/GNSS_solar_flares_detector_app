@@ -189,6 +189,9 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert 'id="plotStyle"' in page
     assert '<option value="simple" selected>' in page and '<option value="plotter">' in page
     assert 'style: style.value' in page
+    assert 'soho: \'#006400\'' in page
+    assert 'class="canvas-secondary"' in page and 'stroke-dasharray: 5 4' in page
+    assert '.canvas-panel-bar strong { position: absolute; left: 10%; width: 80%; text-align: center;' in page
     assert 'data-style="simple"' in page and 'data-style="plotter"' in page
     assert "Global ${panel.series.slice(4).toUpperCase()" in page and "epoch.value.slice(11, 16) + ' UTC'" in page
     assert 'id="figureTemplate"' in page and 'option value="custom"' in page

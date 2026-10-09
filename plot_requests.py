@@ -327,9 +327,9 @@ def render_plot(event: Path, request: dict) -> bytes:
                     fig.text(left + box_w * .025, bottom + box_h * .94,
                              chr(65 + index), color=palette["ink"], weight="bold", fontsize=font_size + 3,
                              va="center")
-                    fig.text(left + box_w * .105, bottom + box_h * .94,
-                             title, color=palette["ink"], weight="normal" if simple else "bold",
-                             fontsize=font_size, va="center", clip_on=True)
+                    fig.text(left + box_w * .5, bottom + box_h * .94,
+                              title, color=palette["ink"], weight="normal" if simple else "bold",
+                              fontsize=font_size, va="center", ha="center", clip_on=True)
                     if not sun_panel:
                         ax.tick_params(labelsize=max(6, font_size - 3), length=3, width=.7)
                 else:
@@ -365,6 +365,9 @@ def render_plot(event: Path, request: dict) -> bytes:
                             fig.text(left + box_w * .5, bottom + box_h * .035,
                                      f"HPC: ({location[0]:.0f}, {location[1]:.0f})″",
                                      color=palette["ink"], fontsize=max(7, font_size - 1), ha="center")
+                    else:
+                        ax.set_title("", loc="left")
+                        ax.set_title("Solar disk", loc="center", color=palette["ink"])
                     if metadata["x"] is None:
                         ax.text(.5, .02, "Flare position unavailable", transform=ax.transAxes,
                                  ha="center", va="bottom", color=palette["muted"], fontsize=8,
@@ -389,7 +392,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     if free:
                         ax.set_title("", loc="center")  # The panel title is inside the draggable box.
                     else:
-                        ax.set_title(f"{SERIES[key]} · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC", loc="left")
+                        ax.set_title(f"{SERIES[key]} · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC", loc="center")
                 else:
                     if key == "goes":
                         data_columns, path = ("xrsa", "xrsb"), event / "goes_xray" / "goes_xray.csv"
@@ -426,9 +429,10 @@ def render_plot(event: Path, request: dict) -> bytes:
                     for column_name, (dates, values) in measurements.items():
                         secondary = column_name in ("xrsa", "flux_26_34")
                         line_color = ("#2878a5" if column_name == "xrsa" else "#333333") if secondary else color
-                        if simple and len(measurements) > 1 and "color" not in panel:
-                            line_color = "#d1495b" if column_name == "xrsb" else "#333333" if column_name == "flux_01_50" else line_color
-                        line_style = "--" if key == "soho" else "-"
+                        if simple and len(measurements) > 1 and "color" not in panel and column_name == "xrsb":
+                            line_color = "#d1495b"
+                        # The two EUV bands need both color and stroke differentiation.
+                        line_style = "--" if column_name == "flux_26_34" else "-"
                         channel_label = {"xrsa": "GOES XRS-A (0.05–0.4 nm)",
                                          "xrsb": "GOES XRS-B (0.1–0.8 nm)",
                                          "flux_26_34": "SOHO/SEM 26–34 nm",
@@ -449,7 +453,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     if observation_time and observation_time != peak_time:
                         ax.axvline(observation_time, color="#9a6400", linewidth=1.4, linestyle=":", alpha=.95)
                     if not free:
-                        ax.set_title(SERIES[key], loc="left", color=palette["ink"])
+                        ax.set_title(SERIES[key], loc="center", color=palette["ink"])
                     # Put physical units in the heading for compact free panels: vertical labels
                     # were extending into the neighboring panel in publication-sized figures.
                     wide = free and rect["w"] >= .75

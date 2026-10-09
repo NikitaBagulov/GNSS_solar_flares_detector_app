@@ -206,7 +206,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       }
         const defaultColor = key => (style.value === 'simple' ?
           {goes: (channels.goes || []).includes('xrsa') ? '#d1495b' : '#111111',
-           soho: (channels.soho || []).includes('flux_26_34') ? '#333333' : '#006400',
+            soho: '#006400',
            day_night_index: '#333333', gsflai_index: '#006400', isfai_index: '#333333'} :
          {goes: '#d1495b', soho: '#2878a5', day_night_index: '#2878a5', gsflai_index: '#2a9d8f', isfai_index: '#e76f51'}
        )[key.split(':').at(-1)] || (style.value === 'simple' ? '#333333' : '#2878a5');
@@ -275,9 +275,11 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
              if (panel.series === 'goes' && (channels.goes || []).includes('xrsa')) {
                const line = document.createElement('span'); line.className = 'canvas-second-line';
                line.textContent = 'XRS-A (0.05–0.4 nm) · XRS-B (0.1–0.8 nm)'; chart.append(line);
-             } else if (panel.series === 'soho' && (channels.soho || []).includes('flux_26_34')) {
-               const line = document.createElement('span'); line.className = 'canvas-second-line';
-               line.textContent = 'SEM 26–34 nm · 0.1–50 nm'; chart.append(line);
+              } else if (panel.series === 'soho' && (channels.soho || []).includes('flux_26_34')) {
+                chart.querySelector('svg').insertAdjacentHTML('beforeend',
+                  '<polyline class="canvas-secondary" points="0,54 28,53 43,48 60,53 83,51 105,44 125,50 145,43 165,45 200,42"/>');
+                const line = document.createElement('span'); line.className = 'canvas-second-line';
+                line.textContent = '26–34 nm — — · 0.1–50 nm ━'; chart.append(line);
              }
             const column = panel.series.split(':')[1];
               units.textContent = panel.series === 'goes' || panel.series === 'soho' ?
@@ -457,7 +459,9 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .canvas-panel-bar { position: absolute; left: 4%; top: 3%; width: 92%; height: 15%; display: flex; align-items: center;
          gap: 6px; cursor: grab; touch-action: none; user-select: none; color: #17243a; }
       .canvas-panel-bar:active { cursor: grabbing; }
-      .canvas-panel-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+       .canvas-panel-bar strong { position: absolute; left: 10%; width: 80%; text-align: center;
+         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+       .canvas-panel-bar > span { position: relative; z-index: 1; }
           .canvas-chart { position: absolute; left: 15%; top: 17%; width: 79%; height: 64%;
          border-left: 1px solid #dce4ee; border-bottom: 1px solid #dce4ee;
          background: repeating-linear-gradient(to bottom, transparent 0 24%, #dce4ee 25% calc(25% + 1px)); }
@@ -468,7 +472,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .canvas-map svg { color: #2a9d8f; }
        .canvas-chart.canvas-sun { left: 15%; top: 21%; width: 70%; height: 59%; border: 0; background: #101b2b; }
        .canvas-sun svg { opacity: 1; }
-         .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+          .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+          .canvas-chart polyline.canvas-secondary { stroke: #333333; stroke-dasharray: 5 4; }
          .canvas-second-line { position: absolute; right: 1%; bottom: 1%; color: #333; background: #ffffffe0;
            font-size: 8px; padding: 1px 3px; }
         .canvas-marker { position: absolute; top: 0; bottom: 0; z-index: 1; border-left: 1px dashed #7b8494; }

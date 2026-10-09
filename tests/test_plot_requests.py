@@ -188,7 +188,8 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
             "GOES XRS-A (0.05–0.4 nm)", "GOES XRS-B (0.1–0.8 nm)"]
         assert [line.get_label() for line in soho.lines[:2]] == [
             "SOHO/SEM 26–34 nm", "SOHO/SEM 0.1–50 nm"]
-        assert all(line.get_linestyle() == "--" for line in soho.lines[:2])
+        assert [line.get_linestyle() for line in soho.lines[:2]] == ["--", "-"]
+        assert [line.get_color() for line in soho.lines[:2]] == ["#333333", "#006400"]
         assert len(goes.lines) == len(soho.lines) == 3  # Shared peak/selected epoch.
         assert fig.legends == []
         inspected.append(True)
@@ -220,6 +221,34 @@ def test_colorbar_matches_rendered_map_height(event, monkeypatch):
     assert render_plot(event, {"layout": "free", "style": "simple", "email": "user@example.org",
                                "panels": [{"series": "map:roti", "rect": {"x": .02, "y": .02,
                                                                            "w": .58, "h": .42}}]}).startswith(b"\x89PNG")
+
+
+def test_each_plot_title_is_centered_in_free_and_vertical_layouts(event, monkeypatch):
+    from matplotlib.figure import Figure
+
+    original = Figure.savefig
+    layout = "free"
+    rects = [{"x": .02, "y": .02, "w": .45, "h": .40},
+             {"x": .52, "y": .02, "w": .45, "h": .40},
+             {"x": .02, "y": .52, "w": .96, "h": .40}]
+
+    def inspect(fig, *args, **kwargs):
+        if layout == "free":
+            for title, rect in zip(("GOES X-ray flux", "Solar disk", "Global ROTI map"), rects):
+                label = next(text for text in fig.texts if text.get_text().startswith(title))
+                assert label.get_position()[0] == pytest.approx(.055 + .89 * (rect["x"] + rect["w"] / 2))
+                assert label.get_ha() == "center"
+        else:
+            assert [ax.get_title(loc="center") for ax in fig.axes] == [
+                "GOES X-ray flux", "Solar disk", "ROTI map · 2025-11-11 01:00 UTC"]
+            assert all(not ax.get_title(loc="left") for ax in fig.axes)
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    panels = [{"series": key, "rect": rect} for key, rect in zip(("goes", "sun", "map:roti"), rects)]
+    for layout in ("free", "vertical"):
+        assert render_plot(event, {"layout": layout, "style": "simple", "email": "user@example.org",
+                                   "panels": panels}).startswith(b"\x89PNG")
 
 
 def test_plotter_style_marks_flare_and_map_time_and_uses_compact_flux_axes(event, monkeypatch):
