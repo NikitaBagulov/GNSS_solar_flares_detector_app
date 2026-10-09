@@ -348,8 +348,13 @@ def test_one_observation_time_is_used_by_every_map_and_time_series(event, monkey
 
 def test_observation_time_marks_time_series_even_without_map_panels(event, monkeypatch):
     from matplotlib.figure import Figure
+    import flare_metadata as catalog
 
     selected = "2025-11-11 01:00:00.000000"
+    monkeypatch.setattr(catalog, "flare_metadata", lambda _: {
+        "class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T00:55:00+00:00",
+        "peak": "2025-11-11T01:05:00+00:00", "end": "2025-11-11T01:10:00+00:00",
+        "x": None, "y": None})
     (event / "soho_sem.csv").write_text(
         "time,flux_01_50\n2025-11-11T01:00:00Z,100\n2025-11-11T01:01:00Z,120\n", encoding="utf-8")
     request = {"email": "person@example.org", "layout": "free", "epoch": selected, "panels": [
