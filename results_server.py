@@ -128,7 +128,7 @@ UI_TRANSLATIONS = {
     "Plot studio": "Редактор графиков",
     "Back to event": "Вернуться к событию",
     "Layout preview": "Предпросмотр расположения",
-    "Scientific labels and spacing are shown here; the data and event markers appear in the generated plot.": "На рабочей области видны научные подписи и отступы; данные и метки события появятся на готовом графике.",
+    "Panel layout, event markers and map times are previewed here; actual data appears after generation.": "Здесь показаны расположение панелей, метки события и время карты; данные появятся после построения.",
     "Selected panel": "Выбранная панель",
     "Plot style": "Стиль графика",
     "Simple · white, fine grid": "Простой · белый фон, тонкая сетка",

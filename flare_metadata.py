@@ -75,9 +75,22 @@ def flare_metadata(event: Path) -> dict:
     return result
 
 
-def scientific_caption(metadata: dict) -> tuple[str, str]:
-    title = f"Solar flare {metadata['class']} · {metadata['date']}" if metadata["class"] else "Solar flare observations"
+def scientific_caption(metadata: dict, series=()) -> tuple[str, str]:
+    """Describe the measured phenomenon rather than the event's directory name."""
+    flare = f"the {metadata['class']} solar flare" if metadata["class"] else "a solar flare"
+    if any(key.startswith("map:") or ":" in key for key in series):
+        title = f"Ionospheric response to {flare}"
+    elif any(key in ("goes", "soho") for key in series):
+        title = f"Solar irradiance during {flare}"
+    else:
+        title = f"Solar observations of {flare}"
     details = []
+    if metadata["date"]:
+        try:
+            date = datetime.strptime(metadata["date"], "%Y-%m-%d")
+            details.append(f"{date.day} {date:%B %Y}")
+        except ValueError:
+            details.append(metadata["date"])
     for label, field in (("Start", "start"), ("Peak", "peak"), ("End", "end")):
         if metadata[field]:
             details.append(f"{label} {metadata[field][11:16]} UTC")

@@ -173,7 +173,8 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert 'id="plotStage"' in page
     assert 'id="canvasTitle"' in page
     assert 'id="canvasSubtitle"' in page
-    assert "Solar flare X5.2 · 2025-11-11" in page
+    assert "Solar irradiance during the X5.2 solar flare" in page
+    assert 'id="canvasLegend"' in page and 'Map epoch' in page
     assert '"sun": "Solar disk"' in page
     assert "function canPlace(current, rect)" in page
     assert 'id="panelWidth"' in page

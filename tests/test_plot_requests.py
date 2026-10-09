@@ -136,7 +136,12 @@ def test_publication_labels_and_focused_flare_window(event, monkeypatch):
         assert goes_axes
         ax = goes_axes[0]
         assert max(ax.lines[0].get_ydata()) < .01  # The 12:00 spike was cropped before autoscaling.
-        assert len(ax.lines) == 4  # X-ray flux plus onset, peak and end markers.
+        assert len(ax.lines) == 5  # X-ray flux, onset, peak, end and selected map epoch.
+        assert ax.lines[-1].get_linestyle() == ":"
+        assert [text.get_text() for text in fig.legends[0].get_texts()] == [
+            "Onset", "X-ray peak", "End", "Map epoch 01:00 UTC"]
+        assert "Ionospheric response to the X5.2 solar flare" in titles
+        assert any("Map epoch 01:00 UTC" in text for text in titles)
         observed.append(True)
         return original_savefig(fig, *args, **kwargs)
 
@@ -145,6 +150,35 @@ def test_publication_labels_and_focused_flare_window(event, monkeypatch):
         {"series": "map:roti", "rect": {"x": .03, "y": .03, "w": .53, "h": .44}},
         {"series": "sun", "rect": {"x": .58, "y": .03, "w": .39, "h": .44}},
         {"series": "goes", "rect": {"x": .03, "y": .53, "w": .94, "h": .41}},
+    ]}
+    assert render_plot(event, request).startswith(b"\x89PNG")
+    assert observed
+
+
+def test_plotter_style_marks_flare_and_map_time_and_uses_compact_flux_axes(event, monkeypatch):
+    from matplotlib.figure import Figure
+    import flare_metadata as catalog
+
+    metadata = {"class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T01:00:00+00:00",
+                "peak": "2025-11-11T01:05:00+00:00", "end": "2025-11-11T01:10:00+00:00",
+                "x": None, "y": None}
+    monkeypatch.setattr(catalog, "flare_metadata", lambda _: metadata)
+    saved = Figure.savefig
+    observed = []
+
+    def inspect(fig, *args, **kwargs):
+        ax = next(axis for axis in fig.axes if axis.lines and axis.lines[0].get_color() == "#d1495b")
+        assert len(ax.lines) == 5
+        assert ax.lines[-1].get_color() == "#9a6400"
+        assert ax.get_position().x0 < .055 + .04 * .89 + .16 * (.9 * .89)
+        assert "Map epoch 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
+        observed.append(True)
+        return saved(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    request = {"layout": "free", "style": "plotter", "email": "user@example.org", "panels": [
+        {"series": "goes", "rect": {"x": .04, "y": .04, "w": .9, "h": .38}},
+        {"series": "map:roti", "rect": {"x": .04, "y": .52, "w": .9, "h": .38}},
     ]}
     assert render_plot(event, request).startswith(b"\x89PNG")
     assert observed

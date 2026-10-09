@@ -211,6 +211,7 @@ def render_plot(event: Path, request: dict) -> bytes:
     from matplotlib import pyplot as plt
     from matplotlib import dates as mdates
     from matplotlib.dates import AutoDateLocator
+    from matplotlib.lines import Line2D
     from matplotlib.patches import Rectangle
     import cartopy.crs as ccrs
     from Plotter import Plotter, PLOT_STYLE, DEFAULT_PARAMS
@@ -225,7 +226,20 @@ def render_plot(event: Path, request: dict) -> bytes:
                "ytick.color": palette["ink"], "axes.titleweight": "normal",
                "savefig.facecolor": palette["figure"]} if simple else DEFAULT_PARAMS)
     metadata = flare_metadata(event)
-    heading, subtitle = scientific_caption(metadata)
+    heading, subtitle = scientific_caption(metadata, [panel["series"] for panel in panels])
+    epochs = map_epochs(event) if any(panel["series"].startswith("map:") for panel in panels) else {}
+    map_times = []
+    for panel in panels:
+        key = panel["series"]
+        if key.startswith("map:"):
+            choices = epochs.get(key, [])
+            stamp = panel.get("epoch") or choices[len(choices) // 2]
+            moment = datetime.fromisoformat(stamp).replace(tzinfo=None)
+            if moment not in map_times:
+                map_times.append(moment)
+    if map_times:
+        subtitle += "  ·  Map epoch" + ("s" if len(map_times) > 1 else "") + " " + ", ".join(
+            f"{stamp:%H:%M} UTC" for stamp in map_times)
     window = _flare_window(metadata)
     free = request["layout"] == "free"
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
@@ -248,9 +262,10 @@ def render_plot(event: Path, request: dict) -> bytes:
                                                        linewidth=.8, zorder=-1))
                     map_panel = key.startswith("map:")
                     sun_panel = key == "sun"
-                    ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else .22),
-                                       bottom + box_h * (.14 if sun_panel else .20 if map_panel else .26),
-                                       box_w * (.8 if sun_panel else .73 if map_panel else .72),
+                    time_left = .19 if rect["w"] < .55 else .15
+                    ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else time_left),
+                                        bottom + box_h * (.14 if sun_panel else .20 if map_panel else .26),
+                                        box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
                                        box_h * (.69 if sun_panel else .62 if map_panel else .49)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
                     font_size = max(7, min(10, 10 * rect["w"] / .44, 10 * rect["h"] / .27))
@@ -258,7 +273,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     if map_panel:
                         stamp = panel.get("epoch")
                         if stamp is None:
-                            available_times = map_epochs(event).get(key, [])
+                            available_times = epochs.get(key, [])
                             stamp = available_times[len(available_times) // 2] if available_times else None
                         if stamp:
                             title += f" · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC"
@@ -318,7 +333,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     if free:
                         ax.set_title("", loc="center")  # The panel title is inside the draggable box.
                     else:
-                        ax.set_title(f"{Plotter._format_product_name(painter, product)} @ {stamp}", loc="left")
+                        ax.set_title(f"{SERIES[key]} · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC", loc="left")
                 else:
                     if key == "goes":
                         column, path = "xrsb", event / "goes_xray" / "goes_xray.csv"
@@ -351,13 +366,14 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ax.set_xlim(dates[0] - timedelta(minutes=10), dates[0] + timedelta(minutes=10))
                     if focused:
                         ax.set_xlim(*window)
-                        if simple:
-                            for field, line_color, linestyle in (("start", "#7b8494", "--"),
-                                                                  ("peak", "#bc3738", "-"),
-                                                                  ("end", "#7b8494", "--")):
-                                if metadata.get(field):
-                                    ax.axvline(datetime.fromisoformat(metadata[field]).replace(tzinfo=None),
-                                               color=line_color, linewidth=.85, linestyle=linestyle, alpha=.85)
+                    for field, line_color, linestyle in (("start", "#7b8494", "--"),
+                                                          ("peak", "#bd4651", "-"),
+                                                          ("end", "#7b8494", "--")):
+                        if metadata.get(field):
+                            ax.axvline(datetime.fromisoformat(metadata[field]).replace(tzinfo=None),
+                                       color=line_color, linewidth=1, linestyle=linestyle, alpha=.9)
+                    for moment in map_times:
+                        ax.axvline(moment, color="#9a6400", linewidth=1.4, linestyle=":", alpha=.95)
                     if not free:
                         ax.set_title(SERIES[key], loc="left", color=palette["ink"])
                     # Put physical units in the heading for compact free panels: vertical labels
@@ -389,6 +405,20 @@ def render_plot(event: Path, request: dict) -> bytes:
             if caption and free:
                 fig.text(.5, .955, caption, ha="center", va="top",
                          fontsize=9, color=palette["muted"])
+            if free and any(panel["series"] != "sun" and not panel["series"].startswith("map:") for panel in panels):
+                legend = []
+                for field, label, line_color, line_style in (("start", "Onset", "#7b8494", "--"),
+                                                              ("peak", "X-ray peak", "#bd4651", "-"),
+                                                              ("end", "End", "#7b8494", "--")):
+                    if metadata.get(field):
+                        legend.append(Line2D([], [], color=line_color, linestyle=line_style, label=label))
+                for moment in map_times:
+                    legend.append(Line2D([], [], color="#9a6400", linestyle=":", linewidth=1.4,
+                                         label=f"Map epoch {moment:%H:%M} UTC"))
+                if legend:
+                    fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .903),
+                               ncol=min(len(legend), 4), frameon=False, fontsize=8,
+                               labelcolor=palette["muted"])
             output = io.BytesIO()
             fig.savefig(output, format="png", dpi=180, facecolor=fig.get_facecolor())
             return output.getvalue()
