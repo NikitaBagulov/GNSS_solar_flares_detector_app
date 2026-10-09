@@ -139,9 +139,9 @@ def test_publication_labels_and_focused_flare_window(event, monkeypatch):
         assert len(ax.lines) == 5  # X-ray flux, onset, peak, end and selected map epoch.
         assert ax.lines[-1].get_linestyle() == ":"
         assert [text.get_text() for text in fig.legends[0].get_texts()] == [
-            "Onset", "X-ray peak", "End", "Map epoch 01:00 UTC"]
+            "Onset", "X-ray peak", "End", "Observation time 01:00 UTC"]
         assert "Ionospheric response to the X5.2 solar flare" in titles
-        assert any("Map epoch 01:00 UTC" in text for text in titles)
+        assert any("Observation time 01:00 UTC" in text for text in titles)
         observed.append(True)
         return original_savefig(fig, *args, **kwargs)
 
@@ -171,7 +171,7 @@ def test_plotter_style_marks_flare_and_map_time_and_uses_compact_flux_axes(event
         assert len(ax.lines) == 5
         assert ax.lines[-1].get_color() == "#9a6400"
         assert ax.get_position().x0 < .055 + .04 * .89 + .16 * (.9 * .89)
-        assert "Map epoch 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
+        assert "Observation time 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
         observed.append(True)
         return saved(fig, *args, **kwargs)
 
@@ -215,13 +215,88 @@ def test_map_times_are_exact_dataset_keys_per_product(event):
     stamp, points = _map_points(path, second)
     assert stamp == second and points["vals"][0] == pytest.approx(.9)
     request = {"email": "user@example.org", "panels": [{"series": "map:roti", "epoch": second}]}
-    assert validate_request(event, request)["panels"][0]["epoch"] == second
+    assert validate_request(event, request)["epoch"] == second
     request["panels"][0]["epoch"] = "2025-11-11 01:05:00.000000"
     with pytest.raises(ValueError, match="available"):
         validate_request(event, request)
     request["panels"][0]["epoch"] = "2025-11-11T01:10:00"
     with pytest.raises(ValueError, match="available"):
         validate_request(event, request)
+
+
+def test_one_observation_time_is_used_by_every_map_and_time_series(event, monkeypatch):
+    from datetime import datetime
+    from matplotlib.figure import Figure
+    import flare_metadata as catalog
+
+    first = "2025-11-11 01:00:00.000000"
+    second = "2025-11-11 01:10:00.000000"
+    with h5py.File(event / "maps" / "map_roti.h5", "a") as file:
+        file.create_dataset(f"data/{second}", data=np.array(
+            [(52.0, 31.0, .9)], dtype=[("lat", "f4"), ("lon", "f4"), ("vals", "f4")]))
+    with h5py.File(event / "maps" / "map_dtec_2_10.h5", "w") as file:
+        for stamp in (first, second):
+            file.create_dataset(f"data/{stamp}", data=np.array(
+                [(52.0, 31.0, .2)], dtype=[("lat", "f4"), ("lon", "f4"), ("vals", "f4")]))
+    (event / "soho_sem.csv").write_text(
+        "time,flux_01_50\n2025-11-11T01:00:00Z,100\n2025-11-11T01:10:00Z,120\n", encoding="utf-8")
+    metadata = {"class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T01:00:00+00:00",
+                "peak": "2025-11-11T01:05:00+00:00", "end": "2025-11-11T01:10:00+00:00",
+                "x": None, "y": None}
+    monkeypatch.setattr(catalog, "flare_metadata", lambda _: metadata)
+    panels = [{"series": "goes", "rect": {"x": .04, "y": .04, "w": .44, "h": .27}},
+              {"series": "soho", "rect": {"x": .52, "y": .04, "w": .44, "h": .27}},
+              {"series": "map:roti", "rect": {"x": .04, "y": .36, "w": .44, "h": .27}},
+              {"series": "map:dtec_2_10", "rect": {"x": .52, "y": .36, "w": .44, "h": .27}}]
+    request = {"epoch": second, "email": "person@example.org", "layout": "free", "panels": panels}
+    assert validate_request(event, request)["epoch"] == second
+    original = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        titles = [text.get_text() for text in fig.texts]
+        assert sum("Observation time 01:10 UTC" in title for title in titles) == 1
+        assert sum("2025-11-11 01:10 UTC" in title for title in titles) == 2
+        lines = [ax.lines[-1] for ax in fig.axes if ax.lines and ax.lines[-1].get_color() == "#9a6400"]
+        assert len(lines) == 2
+        assert all(datetime.fromisoformat(str(line.get_xdata()[0])).hour == 1 and
+                   datetime.fromisoformat(str(line.get_xdata()[0])).minute == 10 for line in lines)
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    assert render_plot(event, request).startswith(b"\x89PNG")
+    panels[1]["epoch"] = first
+    with pytest.raises(ValueError, match="same observation time"):
+        validate_request(event, request)
+    panels[1].pop("epoch")
+    with h5py.File(event / "maps" / "map_dtec_2_10.h5", "a") as file:
+        del file[f"data/{second}"]
+    with pytest.raises(ValueError, match="available"):
+        validate_request(event, request)
+    with h5py.File(event / "maps" / "map_dtec_2_10.h5", "a") as file:
+        del file[f"data/{first}"]
+    with pytest.raises(ValueError, match="no common"):
+        validate_request(event, request)
+
+
+def test_observation_time_marks_time_series_even_without_map_panels(event, monkeypatch):
+    from matplotlib.figure import Figure
+
+    selected = "2025-11-11 01:00:00.000000"
+    (event / "soho_sem.csv").write_text(
+        "time,flux_01_50\n2025-11-11T01:00:00Z,100\n2025-11-11T01:01:00Z,120\n", encoding="utf-8")
+    request = {"email": "person@example.org", "layout": "free", "epoch": selected, "panels": [
+        {"series": "goes", "rect": {"x": .04, "y": .04, "w": .9, "h": .38}},
+        {"series": "soho", "rect": {"x": .04, "y": .52, "w": .9, "h": .38}}]}
+    assert validate_request(event, request)["epoch"] == selected
+    original = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        assert sum(ax.lines[-1].get_color() == "#9a6400" for ax in fig.axes if ax.lines) == 2
+        assert "Observation time 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    assert render_plot(event, request).startswith(b"\x89PNG")
 
 
 def test_plot_http_create_fetch_delete_and_expiry(event, tmp_path):

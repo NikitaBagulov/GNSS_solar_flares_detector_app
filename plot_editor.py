@@ -23,7 +23,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       <h1>Plot studio</h1><p>__EVENT_NAME__ · Drag panels by their headers and resize from the lower-right corner.</p></div></header>
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
-            <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and map times are previewed here; actual data appears after generation.</span>
+             <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and observation time are previewed here; actual data appears after generation.</span>
           <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
             <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
@@ -35,6 +35,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          <h2>Plot settings</h2>
           <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
             <option value="plotter">Plotter · colored axes</option></select></label>
+          <label>Observation time (UTC) <select id="observationTime"></select></label>
+          <p class="studio-note" id="observationHint">One time for all maps and time-series panels, from the available HDF5 datasets.</p>
          <label>Additional caption <input id="plotTitle" maxlength="100" placeholder="Optional description"></label>
         <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
         <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
@@ -42,7 +44,6 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           <h3>Selected panel</h3>
           <label>Data series <select id="panelSeries"></select></label>
            <label id="colorField">Line color <input id="panelColor" type="color" value="#2878a5"></label>
-           <label id="epochField">Map time from file (UTC) <select id="panelEpoch"></select></label>
            <p id="mapPalette" class="studio-note" hidden>Map colors and scale follow the original plotting: ROTI · viridis 0–1 TECu/min; dTEC · RdBu_r −1…1 TECu.</p>
           <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
             <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
@@ -67,30 +68,45 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        const select = document.getElementById('panelSeries');
        const style = document.getElementById('plotStyle');
       const color = document.getElementById('panelColor');
-      const epoch = document.getElementById('panelEpoch');
+       const epoch = document.getElementById('observationTime');
       const width = document.getElementById('panelWidth');
       const height = document.getElementById('panelHeight');
       const panels = [];
       let selected = null;
        document.getElementById('plotTitle').addEventListener('input', updateCaption);
-       function mapMoments() {
-         return [...new Set(panels.filter(panel => panel.series.startsWith('map:') && panel.epoch)
-           .map(panel => panel.epoch.slice(11, 16)))];
-       }
+        function availableTimes() {
+          const maps = [...new Set(panels.filter(panel => panel.series.startsWith('map:')).map(panel => panel.series))];
+          if (!maps.length) return [...new Set(Object.values(epochs).flat())].sort();
+          return (epochs[maps[0]] || []).filter(time => maps.every(key => (epochs[key] || []).includes(time)));
+        }
+        function syncEpoch() {
+          const available = availableTimes();
+          const previous = epoch.value;
+          epoch.replaceChildren();
+          for (const time of available) {
+            const option = document.createElement('option'); option.value = time;
+            option.textContent = time + ' UTC'; epoch.append(option);
+          }
+          epoch.value = available.includes(previous) ? previous : available[Math.floor(available.length / 2)] || '';
+          epoch.disabled = !available.length;
+          document.getElementById('observationHint').textContent = available.length ?
+            text('One time for all maps and time-series panels, from the available HDF5 datasets.',
+              'Одно время для всех карт и временных рядов, из доступных данных HDF5.') :
+            text('No common observation time for these maps.', 'У выбранных карт нет общего времени наблюдения.');
+        }
        function updateCaption() {
          const ionosphere = panels.some(panel => panel.series.startsWith('map:') || panel.series.includes(':'));
          const radiation = panels.some(panel => ['goes', 'soho'].includes(panel.series));
          const flare = location.flare ? `the ${location.flare} solar flare` : 'a solar flare';
          document.getElementById('canvasTitle').textContent = ionosphere ? `Ionospheric response to ${flare}` :
            radiation ? `Solar irradiance during ${flare}` : `Solar observations of ${flare}`;
-         const moments = mapMoments();
-         const reference = moments.length ? `Map epoch${moments.length > 1 ? 's' : ''} ${moments.map(time => time + ' UTC').join(', ')}` : '';
+          const reference = epoch.value ? `Observation time ${epoch.value.slice(11, 16)} UTC` : '';
          document.getElementById('canvasSubtitle').textContent = [subtitle, reference,
            document.getElementById('plotTitle').value].filter(Boolean).join('  ·  ');
          const markers = [['start', 'Onset', '#7b8494', '--'], ['peak', 'X-ray peak', '#bd4651', '-'],
            ['end', 'End', '#7b8494', '-']].filter(([key]) => location[key]).map(([, label, color, line]) =>
              `<span style="color:${color}">${line}</span> ${label}`);
-         markers.push(...moments.map(time => `<span style="color:#9a6400">⋮</span> Map epoch ${time} UTC`));
+          if (epoch.value) markers.push(`<span style="color:#9a6400">⋮</span> Observation time ${epoch.value.slice(11, 16)} UTC`);
          document.getElementById('canvasLegend').innerHTML = panels.some(panel =>
            panel.series !== 'sun' && !panel.series.startsWith('map:')) ? markers.join('　') : '';
        }
@@ -103,7 +119,10 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          const middle = (start + end) / 2;
          const half = Math.max(30 * 60000, (end - start) / 2 + 20 * 60000);
          const label = stamp => new Date(stamp).toISOString().slice(11, 16);
-         return `${label(middle - half)}     ${label(middle)}     ${label(middle + half)}`;
+          const moment = Date.parse(epoch.value.replace(' ', 'T') + 'Z');
+          const left = Number.isFinite(moment) ? Math.min(middle - half, moment - 5 * 60000) : middle - half;
+          const right = Number.isFinite(moment) ? Math.max(middle + half, moment + 5 * 60000) : middle + half;
+          return `${label(left)}     ${label((left + right) / 2)}     ${label(right)}`;
        }
       function canPlace(current, rect) {
         return rect.x >= 0 && rect.y >= 0 && rect.w >= .16 && rect.h >= .16 &&
@@ -135,18 +154,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         if (!panel) return;
         select.value = panel.series; color.value = panel.color;
         const map = panel.series.startsWith('map:');
-        document.getElementById('epochField').hidden = !map;
          document.getElementById('colorField').hidden = map || panel.series === 'sun';
         document.getElementById('mapPalette').hidden = !map;
-        epoch.replaceChildren();
-        if (map) {
-          const available = epochs[panel.series] || [];
-          for (const time of available) {
-            const option = document.createElement('option'); option.value = time; option.textContent = time + ' UTC'; epoch.append(option);
-          }
-          if (!available.includes(panel.epoch)) panel.epoch = available[Math.floor(available.length / 2)] || null;
-          epoch.value = panel.epoch || '';
-        }
         width.value = Math.round(panel.rect.w * 100); height.value = Math.round(panel.rect.h * 100);
         canvas.querySelectorAll('.canvas-panel').forEach(card => card.classList.toggle('active', card.dataset.id === selected));
       }
@@ -156,13 +165,14 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          card.dataset.narrow = rect.w < .55;
       }
       function render() {
+        syncEpoch();
         canvas.replaceChildren();
         for (const panel of panels) {
           const card = document.createElement('div'); card.className = 'canvas-panel'; card.dataset.id = panel.id;
           card.tabIndex = 0; card.setAttribute('aria-label', `${series[panel.series]}, drag to move, arrows to nudge`);
           const bar = document.createElement('div'); bar.className = 'canvas-panel-bar';
            const caption = document.createElement('strong'); caption.textContent = series[panel.series] +
-             (panel.series.startsWith('map:') && panel.epoch ? ' · ' + panel.epoch.slice(0, 16) + ' UTC' : '');
+              (panel.series.startsWith('map:') && epoch.value ? ' · ' + epoch.value.slice(0, 16) + ' UTC' : '');
           const grip = document.createElement('span'); grip.textContent = '⠿'; grip.setAttribute('aria-hidden', 'true');
           bar.append(grip, caption);
            const chart = document.createElement('div'); chart.className = 'canvas-chart';
@@ -196,12 +206,14 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
              if (location.start && location.end) {
                const start = Date.parse(location.start), end = Date.parse(location.end);
                const middle = (start + end) / 2, half = Math.max(30 * 60000, (end - start) / 2 + 20 * 60000);
-               for (const [stamp, kind] of [[location.start, 'onset'], [location.peak, 'peak'],
-                                            [location.end, 'end'], ...panels.filter(item => item.series.startsWith('map:'))
-                                              .map(item => [item.epoch, 'map'])]) {
+                const moment = Date.parse(epoch.value.replace(' ', 'T') + 'Z');
+                const left = Number.isFinite(moment) ? Math.min(middle - half, moment - 5 * 60000) : middle - half;
+                const right = Number.isFinite(moment) ? Math.max(middle + half, moment + 5 * 60000) : middle + half;
+                for (const [stamp, kind] of [[location.start, 'onset'], [location.peak, 'peak'],
+                                             [location.end, 'end'], [epoch.value, 'map']]) {
                  const value = Date.parse(kind === 'map' ? stamp.replace(' ', 'T') + 'Z' : stamp);
                  if (!Number.isFinite(value)) continue;
-                 const x = (value - (middle - half)) / (2 * half);
+                  const x = (value - left) / (right - left);
                  if (x < 0 || x > 1) continue;
                  const line = document.createElement('span'); line.className = 'canvas-marker ' + kind;
                  line.style.left = `${x * 100}%`; chart.append(line);
@@ -262,9 +274,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          }
          if (!rect) { message.textContent = text('Free a slot before adding another panel.', 'Освободите место для новой панели.'); return; }
         const first = Object.keys(series)[0];
-        const available = epochs[first] || [];
          const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first), customColor: false,
-          epoch: available[Math.floor(available.length / 2)] || null, rect};
+           rect};
         panels.push(panel); selected = panel.id; render();
       }
       document.getElementById('addPlotPanel').onclick = addPanel;
@@ -275,11 +286,10 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       };
       select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
          panel.series = select.value; panel.color = defaultColor(panel.series); panel.customColor = false;
-         const available = epochs[panel.series] || [];
-        panel.epoch = available[Math.floor(available.length / 2)] || null; render(); };
+         render(); };
        color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
          panel.color = color.value; panel.customColor = true; render(); };
-      epoch.onchange = () => { const panel = panels.find(item => item.id === selected); if (panel) { panel.epoch = epoch.value; render(); } };
+       epoch.onchange = render;
       function changeSize(axis, input) {
         const panel = panels.find(item => item.id === selected);
         if (!panel || !input.value) return;
@@ -292,15 +302,18 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       height.onchange = () => changeSize('h', height);
       addPanel();
       document.getElementById('generatePlot').onclick = async () => {
-        if (!panels.length) { message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }
+         if (!panels.length) { message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }
+         if (Object.keys(epochs).length && !epoch.value) {
+           message.textContent = text('Selected maps have no common observation time.', 'У выбранных карт нет общего времени наблюдения.'); return;
+         }
         const email = document.getElementById('plotEmail'); if (!email.reportValidity()) return;
         const button = document.getElementById('generatePlot'); button.disabled = true;
         message.textContent = text('Generating plot…', 'Построение графика…');
         try {
           const response = await fetch('/api/plots', {method: 'POST', headers: {'Content-Type': 'application/json'},
-             body: JSON.stringify({event: eventPath, layout: 'free', style: style.value, title: document.getElementById('plotTitle').value,
-              email: email.value, panels: panels.map(panel => ({series: panel.series, color: panel.color,
-                epoch: panel.epoch || null, rect: panel.rect}))})});
+              body: JSON.stringify({event: eventPath, layout: 'free', style: style.value, epoch: epoch.value || null, title: document.getElementById('plotTitle').value,
+               email: email.value, panels: panels.map(panel => ({series: panel.series, color: panel.color,
+                 rect: panel.rect}))})});
           const result = await response.json();
           if (!response.ok) throw Error(result.error || 'Failed to create plot');
           document.getElementById('renderedImage').src = result.url;
@@ -394,7 +407,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       .studio-sidebar input[type=color] { padding: 3px; }
       .studio-note { color: var(--muted); font-size: 12px; margin: 0; }
       .panel-settings { gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
-       .panel-settings[hidden], #epochField[hidden], #colorField[hidden], #mapPalette[hidden], #renderedPlot[hidden] { display: none; }
+        .panel-settings[hidden], #colorField[hidden], #mapPalette[hidden], #renderedPlot[hidden] { display: none; }
       .size-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       .studio-generate { background: var(--accent); color: white; cursor: pointer; }
       .studio-generate:disabled { opacity: .55; cursor: wait; }

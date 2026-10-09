@@ -103,8 +103,27 @@ def validate_request(event: Path, request: dict) -> dict:
     panels = request.get("panels")
     if not isinstance(panels, list) or not 1 <= len(panels) <= 6:
         raise ValueError("Choose between 1 and 6 panels")
-    epochs = map_epochs(event) if any(isinstance(p, dict) and str(p.get("series", "")).startswith("map:")
-                                       for p in panels) else {}
+    epochs = map_epochs(event)
+    selected_maps = {p.get("series") for p in panels if isinstance(p, dict)
+                     and str(p.get("series", "")).startswith("map:")}
+    common = set.intersection(*(set(epochs.get(key, ())) for key in selected_maps)) if selected_maps else {
+        stamp for stamps in epochs.values() for stamp in stamps}
+    epoch = request.get("epoch")
+    legacy_values = [p.get("epoch") for p in panels if isinstance(p, dict) and p.get("epoch") is not None]
+    if (epoch is not None and not isinstance(epoch, str)) or any(not isinstance(value, str) for value in legacy_values):
+        raise ValueError("Select an observation time available in every selected map file")
+    legacy_epochs = set(legacy_values)
+    if len(legacy_epochs) > 1 or (epoch is not None and legacy_epochs and legacy_epochs != {epoch}):
+        raise ValueError("All panels must use the same observation time")
+    if epoch is None and legacy_epochs:
+        epoch = next(iter(legacy_epochs))
+    if selected_maps and not common:
+        raise ValueError("Selected maps have no common observation time")
+    if epoch is None and selected_maps:
+        choices = sorted(common)
+        epoch = choices[len(choices) // 2]
+    if epoch is not None and (not isinstance(epoch, str) or epoch not in common):
+        raise ValueError("Select an observation time available in every selected map file")
     rects = []
     for panel in panels:
         if not isinstance(panel, dict) or panel.get("series") not in available:
@@ -112,13 +131,10 @@ def validate_request(event: Path, request: dict) -> dict:
         color = panel.get("color", "#2878a5")
         if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise ValueError("Invalid plot color")
-        epoch = panel.get("epoch")
         if panel["series"].startswith("map:"):
             if not epochs.get(panel["series"]):
                 raise ValueError("No map epochs available")
-            if epoch is not None and epoch not in epochs[panel["series"]]:
-                raise ValueError("Select a map time available in this file")
-        elif epoch:
+        elif panel.get("epoch"):
             raise ValueError("Map time is only available for map panels")
         if request.get("layout") == "free":
             rect = panel.get("rect")
@@ -144,7 +160,7 @@ def validate_request(event: Path, request: dict) -> dict:
     if not isinstance(title, str) or len(title) > 100:
         raise ValueError("Title must be at most 100 characters")
     email = normalize_email(request.get("email"))
-    return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email}
+    return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email, "epoch": epoch}
 
 
 def _read_csv(path: Path, value_column: str):
@@ -227,20 +243,13 @@ def render_plot(event: Path, request: dict) -> bytes:
                "savefig.facecolor": palette["figure"]} if simple else DEFAULT_PARAMS)
     metadata = flare_metadata(event)
     heading, subtitle = scientific_caption(metadata, [panel["series"] for panel in panels])
-    epochs = map_epochs(event) if any(panel["series"].startswith("map:") for panel in panels) else {}
-    map_times = []
-    for panel in panels:
-        key = panel["series"]
-        if key.startswith("map:"):
-            choices = epochs.get(key, [])
-            stamp = panel.get("epoch") or choices[len(choices) // 2]
-            moment = datetime.fromisoformat(stamp).replace(tzinfo=None)
-            if moment not in map_times:
-                map_times.append(moment)
-    if map_times:
-        subtitle += "  ·  Map epoch" + ("s" if len(map_times) > 1 else "") + " " + ", ".join(
-            f"{stamp:%H:%M} UTC" for stamp in map_times)
+    observation_time = datetime.fromisoformat(request["epoch"]).replace(tzinfo=None) if request["epoch"] else None
+    if observation_time:
+        subtitle += f"  ·  Observation time {observation_time:%H:%M} UTC"
     window = _flare_window(metadata)
+    if window and observation_time:
+        window = (min(window[0], observation_time - timedelta(minutes=5)),
+                  max(window[1], observation_time + timedelta(minutes=5)))
     free = request["layout"] == "free"
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
     rows = (len(panels) + columns - 1) // columns
@@ -271,10 +280,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     font_size = max(7, min(10, 10 * rect["w"] / .44, 10 * rect["h"] / .27))
                     title = SERIES[key]
                     if map_panel:
-                        stamp = panel.get("epoch")
-                        if stamp is None:
-                            available_times = epochs.get(key, [])
-                            stamp = available_times[len(available_times) // 2] if available_times else None
+                        stamp = request["epoch"]
                         if stamp:
                             title += f" · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC"
                     fig.text(left + box_w * .045, bottom + box_h * .94,
@@ -315,7 +321,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                                 bbox={"facecolor": "white", "alpha": .85, "edgecolor": "none"})
                 elif key.startswith("map:"):
                     product = key[4:]
-                    stamp, points = _map_points(event / "maps" / f"map_{product}.h5", panel.get("epoch"))
+                    stamp, points = _map_points(event / "maps" / f"map_{product}.h5", request["epoch"])
                     painter = object.__new__(Plotter)
                     painter.data = SimpleNamespace(product_values=[{product: points}], timestamps=[datetime.fromisoformat(stamp)])
                     painter._plot_map(ax, 0, product_name=product, map_time=datetime.fromisoformat(stamp),
@@ -372,8 +378,8 @@ def render_plot(event: Path, request: dict) -> bytes:
                         if metadata.get(field):
                             ax.axvline(datetime.fromisoformat(metadata[field]).replace(tzinfo=None),
                                        color=line_color, linewidth=1, linestyle=linestyle, alpha=.9)
-                    for moment in map_times:
-                        ax.axvline(moment, color="#9a6400", linewidth=1.4, linestyle=":", alpha=.95)
+                    if observation_time:
+                        ax.axvline(observation_time, color="#9a6400", linewidth=1.4, linestyle=":", alpha=.95)
                     if not free:
                         ax.set_title(SERIES[key], loc="left", color=palette["ink"])
                     # Put physical units in the heading for compact free panels: vertical labels
@@ -412,9 +418,9 @@ def render_plot(event: Path, request: dict) -> bytes:
                                                               ("end", "End", "#7b8494", "--")):
                     if metadata.get(field):
                         legend.append(Line2D([], [], color=line_color, linestyle=line_style, label=label))
-                for moment in map_times:
+                if observation_time:
                     legend.append(Line2D([], [], color="#9a6400", linestyle=":", linewidth=1.4,
-                                         label=f"Map epoch {moment:%H:%M} UTC"))
+                                         label=f"Observation time {observation_time:%H:%M} UTC"))
                 if legend:
                     fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .903),
                                ncol=min(len(legend), 4), frameon=False, fontsize=8,
