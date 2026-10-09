@@ -197,11 +197,11 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert 'maps.every(key => (epochs[key] || []).includes(time))' in page
     assert 'epoch: epoch.value || null' in page and 'epoch: panel.epoch' not in page
     assert 'id="plotStyle"' in page
-    assert 'id="printSize"' in page and 'id="fluxMode"' in page
+    assert 'id="printSize"' not in page and 'id="fluxMode"' in page
     assert 'id="panelPlotType"' in page and 'id="fillNegative"' in page
     assert 'id="sharedY"' in page and 'id="previewPlot"' in page
     assert "'/api/plots/preview'" in page and 'id="draftImage"' in page
-    assert "print_size: printSize.value" in page and "plot_type: panel.plotType" in page
+    assert "print_size: printSize.value" not in page and "plot_type: panel.plotType" in page
     assert 'id="figureCaption"' in page
     assert '<option value="simple" selected>' in page and '<option value="plotter">' in page
     assert 'style: style.value' in page

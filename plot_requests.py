@@ -21,7 +21,7 @@ PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
 PRODUCT_UNITS = {product: "TECu/min" if product == "roti" else "TECu" for product in PRODUCTS}
 SERIES = {"goes": "GOES X-ray flux", "soho": "SOHO/SEM EUV flux", "sun": "Solar disk"}
 PLOT_STYLES = ("plotter", "simple")
-PRINT_SIZES = {"two-column": (7.2, 5.1), "one-column": (3.5, 4.95)}
+FIGURE_SIZE = (12, 8.5)
 PLOT_TYPES = ("auto", "line", "points", "bar")
 SIMPLE_COLORS = {"goes": "#111111", "soho": "#006400", "day_night_index": "#333333",
                  "gsflai_index": "#006400", "isfai_index": "#333333"}
@@ -128,8 +128,6 @@ def validate_request(event: Path, request: dict) -> dict:
     panels = request.get("panels")
     if not isinstance(panels, list) or not 1 <= len(panels) <= 6:
         raise ValueError("Choose between 1 and 6 panels")
-    if request.get("print_size") == "one-column" and request.get("layout") == "free" and len(panels) > 2:
-        raise ValueError("One-column figures support at most two panels; choose two columns for a composite figure")
     epochs = map_epochs(event)
     selected_maps = {p.get("series") for p in panels if isinstance(p, dict)
                      and str(p.get("series", "")).startswith("map:")}
@@ -183,9 +181,6 @@ def validate_request(event: Path, request: dict) -> dict:
     style = request.get("style", "plotter")
     if style not in PLOT_STYLES:
         raise ValueError("Invalid plot style")
-    print_size = request.get("print_size", "two-column")
-    if print_size not in PRINT_SIZES:
-        raise ValueError("Invalid publication size")
     flux_mode = request.get("flux_mode", "relative")
     if flux_mode not in ("relative", "physical"):
         raise ValueError("Invalid flux units")
@@ -203,7 +198,7 @@ def validate_request(event: Path, request: dict) -> dict:
         raise ValueError("Title must be at most 100 characters")
     email = normalize_email(request.get("email"))
     return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email,
-            "epoch": epoch, "print_size": print_size, "flux_mode": flux_mode,
+            "epoch": epoch, "flux_mode": flux_mode,
             "shared_y": request.get("shared_y", False)}
 
 
@@ -350,7 +345,7 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
     rows = (len(panels) + columns - 1) // columns
     with PLOT_LOCK, plt.rc_context(params):
-        fig = plt.figure(figsize=PRINT_SIZES[request["print_size"]], facecolor=palette["figure"]) if free else None
+        fig = plt.figure(figsize=FIGURE_SIZE, facecolor=palette["figure"]) if free else None
         if not free:
             fig, axes = plt.subplots(rows, columns, figsize=(7 * columns, 3.6 * rows), squeeze=False, constrained_layout=True)
         try:
@@ -369,16 +364,16 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                     time_left = .19 if rect["w"] < .55 else .14
                     ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else time_left),
                                          bottom + box_h * (.14 if sun_panel else .20 if map_panel else .19),
-                                        box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
-                                        box_h * (.69 if sun_panel else .62 if map_panel else .64)),
+                                         box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
+                                         box_h * (.69 if sun_panel else .62 if map_panel else .39 if rect["w"] < .6 and key in ("goes", "soho") else .51)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
-                    font_size = max(9, min(12, 14 * rect["w"] / .44, 14 * rect["h"] / .27))
+                    font_size = max(10, min(12, 14 * rect["w"] / .44, 14 * rect["h"] / .27))
                     title = SERIES[key]
                     if map_panel:
                         stamp = request["epoch"]
                         if stamp:
                             title = f"Global {key[4:].upper().replace('DTEC', 'dTEC')} map · {datetime.fromisoformat(stamp):%H:%M} UTC"
-                    fig.text(left + box_w * .025, bottom + box_h * .94,
+                    fig.text(left + box_w * .015, bottom + box_h * .94,
                              chr(65 + index), color=palette["ink"], weight="bold", fontsize=font_size + 3,
                              va="center")
                     fig.text(left + box_w * .5, bottom + box_h * .94,
@@ -512,7 +507,13 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                                 ax.fill_between(dates, values, 0, where=[value < 0 for value in values],
                                                 color=line_color, alpha=.18, interpolate=True)
                     if len(measurements) > 1:
-                        ax.legend(loc="lower right", framealpha=.85, fontsize=max(6, font_size - 2) if free else 8)
+                        if free:
+                            ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.04),
+                                      ncol=2 if rect["w"] >= .6 else 1, frameon=False,
+                                      fontsize=9 if rect["w"] >= .6 else 8,
+                                      handlelength=1.6, columnspacing=.8, borderaxespad=0)
+                        else:
+                            ax.legend(loc="lower right", framealpha=.85, fontsize=8)
                     if window and any(window[0] <= stamp <= window[1]
                                       for dates, _ in measurements.values() for stamp in dates):
                         ax.set_xlim(*window)
@@ -533,7 +534,19 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                     if free and not wide:
                         fig.text(left + box_w * .045, bottom + box_h * .83,
                                   ylabel, color=palette["muted"], fontsize=max(8, font_size - 2), va="center")
-                    ax.set_xlabel("Time (UTC)", fontsize=max(9, font_size - 2) if free else None)
+                    # Stacked time panels share one time label. Duplicate labels between
+                    # neighboring rows were crossing the following panel's heading.
+                    lower_time_panel = any(
+                        other["series"] != "sun" and not other["series"].startswith("map:")
+                        and other["rect"]["y"] >= rect["y"] + rect["h"] - 1e-6
+                        and other["rect"]["x"] < rect["x"] + rect["w"]
+                        and rect["x"] < other["rect"]["x"] + other["rect"]["w"]
+                        for other in panels if free and other is not panel
+                    ) if free else False
+                    if not lower_time_panel:
+                        ax.set_xlabel("Time (UTC)", fontsize=max(9, font_size - 2) if free else None)
+                    elif free:
+                        ax.tick_params(axis="x", labelbottom=False)
                     if request["shared_y"]:
                         compatible_axes.setdefault((key if key in ("goes", "soho") else
                                                     column if column == "day_night_index" else (column, PRODUCT_UNITS[product]),
@@ -560,14 +573,14 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                     axes[index // columns][index % columns].set_visible(False)
             if relative_flux_used:
                 fig.text(.5, .012, "Flux change (%): median of first 10% of displayed samples",
-                         ha="center", color=palette["muted"], fontsize=6 if request["print_size"] == "one-column" else 8)
+                         ha="center", color=palette["muted"], fontsize=9)
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
-                         fontsize=(11 if request["print_size"] == "one-column" else 15) if free else 13,
+                          fontsize=16 if free else 13,
                          fontweight="bold", color=palette["ink"], y=.985)
             if caption and free:
                 fig.text(.5, .955, caption, ha="center", va="top",
-                          fontsize=8 if request["print_size"] == "one-column" else 10, color=palette["muted"])
+                           fontsize=11, color=palette["muted"])
             if free and any(panel["series"] != "sun" and not panel["series"].startswith("map:") for panel in panels):
                 legend = []
                 if peak_time and observation_time and observation_time != peak_time:
@@ -577,7 +590,7 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                 if legend:
                     fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .903),
                                 ncol=min(len(legend), 4), frameon=False,
-                                fontsize=7 if request["print_size"] == "one-column" else 9,
+                                 fontsize=10,
                                labelcolor=palette["muted"])
             output = io.BytesIO()
             fig.savefig(output, format="png", dpi=dpi, facecolor=fig.get_facecolor())

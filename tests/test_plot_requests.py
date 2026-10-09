@@ -108,7 +108,7 @@ def test_simple_and_plotter_styles_change_render_and_validate_choice(event):
         validate_request(event, request)
 
 
-def test_print_width_chart_types_flux_units_and_shared_axes(event, monkeypatch):
+def test_fixed_canvas_chart_types_flux_units_and_shared_axes(event, monkeypatch):
     from matplotlib.figure import Figure
 
     (event / "goes_xray.csv").write_text(
@@ -118,28 +118,31 @@ def test_print_width_chart_types_flux_units_and_shared_axes(event, monkeypatch):
               {"series": "goes", "plot_type": "line", "fill_negative": True,
                "rect": {"x": .03, "y": .55, "w": .94, "h": .40}}]
     request = {"email": "test@example.org", "layout": "free", "style": "simple", "panels": panels,
-               "flux_mode": "relative", "shared_y": True, "print_size": "one-column"}
+               "flux_mode": "relative", "shared_y": True}
     original = Figure.savefig
     inspected = []
 
     def inspect(fig, *args, **kwargs):
-        assert fig.get_size_inches().tolist() == pytest.approx([3.5, 4.95])
+        assert fig.get_size_inches().tolist() == pytest.approx([12, 8.5])
         fig.canvas.draw()
         for label in fig.texts:
             bounds = label.get_window_extent(fig.canvas.get_renderer())
             assert bounds.x0 >= -1 and bounds.x1 <= fig.bbox.x1 + 1
             assert bounds.y0 >= -1 and bounds.y1 <= fig.bbox.y1 + 1
-        axes = [ax for ax in fig.axes if ax.get_xlabel() == "Time (UTC)"]
+        axes = [ax for ax in fig.axes if ax.lines or ax.patches]
         assert len(axes) == 2
         assert axes[0].patches and not axes[1].patches
         assert axes[1].collections  # Explicit negative fill, even if this event never drops below zero.
         assert axes[0].get_ylim() == pytest.approx(axes[1].get_ylim())
+        assert axes[0].get_xlabel() == ""
+        assert axes[1].get_xlabel() == "Time (UTC)"
+        assert not any(label.get_visible() for label in axes[0].get_xticklabels())
         inspected.append(True)
         return original(fig, *args, **kwargs)
 
     monkeypatch.setattr(Figure, "savefig", inspect)
     with Image.open(io.BytesIO(render_plot(event, request))) as image:
-        assert image.size == (1050, 1485)
+        assert image.size == (3600, 2550)
     assert inspected
     assert "(A) GOES X-ray flux; (B) GOES X-ray flux" in figure_caption(event, request)
     request["flux_mode"] = "physical"
@@ -149,8 +152,8 @@ def test_print_width_chart_types_flux_units_and_shared_axes(event, monkeypatch):
     with pytest.raises(ValueError, match="plot type"):
         validate_request(event, request)
     request["panels"][0]["plot_type"] = "auto"
-    request["panels"] = panels + [{"series": "sun", "rect": {"x": .01, "y": .01, "w": .20, "h": .20}}]
-    with pytest.raises(ValueError, match="at most two panels"):
+    request["panels"] = panels + [{"series": "sun", "rect": {"x": .03, "y": .45, "w": .20, "h": .16}}]
+    with pytest.raises(ValueError, match="overlap"):
         validate_request(event, request)
 
 
@@ -160,12 +163,12 @@ def test_draft_endpoint_uses_real_data_without_storing_plot(event, tmp_path):
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        payload = json.dumps({"event": "X/2025-11-11_X5.2", "layout": "free", "print_size": "one-column",
+        payload = json.dumps({"event": "X/2025-11-11_X5.2", "layout": "free",
                               "panels": [{"series": "goes", "rect": {"x": .04, "y": .05, "w": .92, "h": .88}}]}).encode()
         with urlopen(Request(f"http://127.0.0.1:{server.server_port}/api/plots/preview", data=payload)) as response:
             assert response.headers["Content-Type"] == "image/png"
             with Image.open(io.BytesIO(response.read())) as image:
-                assert image.width == 315
+                assert image.width == 1080
         assert not (tmp_path / ".plot-cache").exists()
     finally:
         server.shutdown()
@@ -241,14 +244,15 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
     inspected = []
 
     def inspect(fig, *args, **kwargs):
-        time_axes = [axis for axis in fig.axes if axis.get_xlabel() == "Time (UTC)"]
+        time_axes = [axis for axis in fig.axes if axis.get_ylabel() == "Flux change (%)"]
         assert len(time_axes) == 2
         goes, soho = time_axes
+        assert goes.get_xlabel() == "" and soho.get_xlabel() == "Time (UTC)"
         assert goes.get_yscale() == soho.get_yscale() == "linear"
         assert goes.get_ylabel() == soho.get_ylabel() == "Flux change (%)"
         assert goes.lines[0].get_ydata() == pytest.approx([0, 900])
         assert soho.lines[0].get_ydata() == pytest.approx([0, 50])
-        assert goes.get_position().height > .40 * .82 * .6
+        assert goes.get_position().height > .40 * .82 * .5
         assert [line.get_label() for line in goes.lines[:2]] == [
             "GOES XRS-A (0.05–0.4 nm)", "GOES XRS-B (0.1–0.8 nm)"]
         assert [line.get_label() for line in soho.lines[:2]] == [
@@ -257,6 +261,13 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
         assert [line.get_color() for line in soho.lines[:2]] == ["#333333", "#006400"]
         assert len(goes.lines) == len(soho.lines) == 3  # Shared peak/selected epoch.
         assert fig.legends == []
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for axis in (goes, soho):
+            legend = axis.get_legend()
+            assert legend is not None
+            assert legend.get_window_extent(renderer).y0 > axis.get_window_extent(renderer).y1
+            assert legend.get_window_extent(renderer).y1 < fig.bbox.y1
         inspected.append(True)
         return original(fig, *args, **kwargs)
 
@@ -266,6 +277,45 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
         {"series": "soho", "rect": {"x": .02, "y": .52, "w": .96, "h": .40}}]}
     assert render_plot(event, request).startswith(b"\x89PNG")
     assert inspected
+
+
+@pytest.mark.parametrize("style", ["simple", "plotter"])
+def test_overview_keeps_legends_and_panel_labels_separate(event, monkeypatch, style):
+    from matplotlib.figure import Figure
+
+    (event / "soho_sem.csv").write_text(
+        "time,flux_26_34,flux_01_50\n2025-11-11T01:00:00Z,100,200\n"
+        "2025-11-11T01:01:00Z,120,230\n", encoding="utf-8")
+    (event / "goes_xray.csv").write_text(
+        "time,xrsa,xrsb\n2025-11-11T01:00:00Z,0.00001,0.0001\n"
+        "2025-11-11T01:01:00Z,0.00002,0.0003\n", encoding="utf-8")
+    saved = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        goes, soho = [ax for ax in fig.axes if ax.get_ylabel() == "Flux change (%)"]
+        for key, axis, letter in (("GOES X-ray flux", goes, "C"),
+                                  ("SOHO/SEM EUV flux", soho, "D")):
+            title = next(text for text in fig.texts if text.get_text() == key)
+            panel_letter = next(text for text in fig.texts if text.get_text() == letter)
+            legend = axis.get_legend().get_window_extent(renderer)
+            plot = axis.get_window_extent(renderer)
+            assert plot.y1 < legend.y0 < legend.y1 < title.get_window_extent(renderer).y0
+            assert not panel_letter.get_window_extent(renderer).overlaps(
+                axis.yaxis.label.get_window_extent(renderer))
+        assert goes.get_xlabel() == ""
+        assert soho.get_xlabel() == "Time (UTC)"
+        return saved(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    request = {"layout": "free", "style": style, "email": "test@example.org", "panels": [
+        {"series": "map:roti", "rect": {"x": .02, "y": .02, "w": .58, "h": .39}},
+        {"series": "sun", "rect": {"x": .64, "y": .02, "w": .34, "h": .39}},
+        {"series": "goes", "rect": {"x": .02, "y": .44, "w": .96, "h": .25}},
+        {"series": "soho", "rect": {"x": .02, "y": .72, "w": .96, "h": .26}},
+    ]}
+    assert render_plot(event, request, dpi=90).startswith(b"\x89PNG")
 
 
 def test_colorbar_matches_rendered_map_height(event, monkeypatch):

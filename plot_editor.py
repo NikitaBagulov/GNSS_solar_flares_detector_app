@@ -68,9 +68,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
            <p class="studio-note">Style and observation time apply to the whole figure.</p>
             <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
               <option value="plotter">Plotter · colored axes</option></select></label>
-            <label>Publication width <select id="printSize"><option value="two-column">Two columns · 7.2 × 5.1 in</option>
-              <option value="one-column">One column · 3.5 × 4.95 in</option></select></label>
-            <p class="studio-note">Export at 300 dpi; inspect text at the selected print size.</p>
+             <p class="studio-note">The preview and export use the same 12 × 8.5 in layout. Inspect the real-data draft before saving.</p>
             <label>GOES / SOHO values <select id="fluxMode"><option value="relative">Change from early baseline (%)</option>
               <option value="physical">Physical flux units</option></select></label>
             <label class="studio-checkbox"><input id="sharedY" type="checkbox"> Match Y limits for compatible panels</label>
@@ -110,7 +108,6 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        const height = document.getElementById('panelHeight');
        const plotType = document.getElementById('panelPlotType');
        const fillNegative = document.getElementById('fillNegative');
-       const printSize = document.getElementById('printSize');
        const fluxMode = document.getElementById('fluxMode');
        const sharedY = document.getElementById('sharedY');
         const panels = [];
@@ -301,10 +298,6 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       }
        function render() {
          invalidateDraft();
-         if (panels.length > 2 && printSize.value === 'one-column') {
-           printSize.value = 'two-column';
-           document.getElementById('plotCanvas').dataset.printSize = 'two-column';
-         }
          syncEpoch();
         canvas.replaceChildren();
         for (const panel of panels) {
@@ -468,23 +461,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          if (initialTemplate) applyTemplate(initialTemplate); else addPanel();
        function payload() {
          return {event: eventPath, layout: 'free', style: style.value, epoch: epoch.value || null,
-           print_size: printSize.value, flux_mode: fluxMode.value, shared_y: sharedY.checked,
+            flux_mode: fluxMode.value, shared_y: sharedY.checked,
            title: document.getElementById('plotTitle').value,
            email: document.getElementById('plotEmail').value, panels: panels.map(panel => ({series: panel.series,
              color: panel.color, plot_type: panel.plotType, fill_negative: panel.fillNegative, rect: panel.rect}))};
        }
        let draftUrl = null;
        function invalidateDraft() { draftVersion++; document.getElementById('draftPlot').hidden = true; }
-       printSize.addEventListener('change', () => {
-         if (printSize.value === 'one-column' && panels.length > 2) {
-           printSize.value = 'two-column';
-           message.textContent = text('A one-column figure fits at most two panels. Remove panels first.',
-             'Рисунок в одну колонку вмещает не более двух панелей. Сначала удалите лишние.');
-         }
-         document.getElementById('plotCanvas').dataset.printSize = printSize.value;
-       });
-       fluxMode.addEventListener('change', render);
-       for (const field of [style, printSize, fluxMode, sharedY, epoch, document.getElementById('plotTitle')]) {
+        fluxMode.addEventListener('change', render);
+        for (const field of [style, fluxMode, sharedY, epoch, document.getElementById('plotTitle')]) {
          field.addEventListener('change', invalidateDraft);
        }
        document.getElementById('previewPlot').onclick = async () => {
@@ -501,8 +486,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
            draftUrl = URL.createObjectURL(blob);
            document.getElementById('draftImage').src = draftUrl;
            document.getElementById('draftPlot').hidden = false;
-           message.textContent = text('Draft is ready. Check labels at the chosen print width.',
-             'Черновик готов. Проверьте подписи при выбранной ширине печати.');
+            message.textContent = text('Draft is ready. Check panel labels and legend before saving.',
+              'Черновик готов. Проверьте подписи и легенду перед сохранением.');
          } catch (error) { message.textContent = error.message; } finally { button.disabled = false; }
        };
        document.getElementById('generatePlot').onclick = async () => {
@@ -549,8 +534,6 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .plot-canvas { position: relative; width: 100%; min-width: 620px; aspect-ratio: 12 / 8.5; overflow: hidden; background: #fff;
          border: 1px solid #cbd5e1; box-shadow: 0 5px 22px #1422351c; }
         .plot-canvas[data-style="plotter"] { background: #f4f7fb; }
-        .plot-canvas[data-print-size="one-column"] { width: min(100%, 560px); min-width: 380px;
-          aspect-ratio: 3.5 / 4.95; margin: 0 auto; }
         .plot-canvas[data-style="simple"] .canvas-title { font-weight: 700; color: #111; }
        .plot-canvas[data-style="simple"] .canvas-subtitle { color: #333; }
        .plot-canvas[data-style="simple"] .canvas-panel { border-color: #ddd; box-shadow: none; }
@@ -581,7 +564,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .canvas-panel-bar strong { position: absolute; left: 10%; width: 80%; text-align: center;
          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
        .canvas-panel-bar > span { position: relative; z-index: 1; }
-          .canvas-chart { position: absolute; left: 15%; top: 17%; width: 79%; height: 64%;
+           .canvas-chart { position: absolute; left: 15%; top: 30%; width: 79%; height: 51%;
          border-left: 1px solid #dce4ee; border-bottom: 1px solid #dce4ee;
          background: repeating-linear-gradient(to bottom, transparent 0 24%, #dce4ee 25% calc(25% + 1px)); }
         .canvas-chart.canvas-map { left: 15%; top: 18%; width: 73%; height: 62%; background: #edf2f7; }
@@ -593,13 +576,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .canvas-sun svg { opacity: 1; }
           .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
           .canvas-chart polyline.canvas-secondary { stroke: #333333; stroke-dasharray: 5 4; }
-         .canvas-second-line { position: absolute; right: 1%; bottom: 1%; color: #333; background: #ffffffe0;
-           font-size: 8px; padding: 1px 3px; }
+          .canvas-second-line { position: absolute; left: 0; bottom: 104%; width: 100%; text-align: center;
+            color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 8px; }
         .canvas-marker { position: absolute; top: 0; bottom: 0; z-index: 1; border-left: 1px dashed #7b8494; }
          .canvas-marker.peak { border-left: 1px dashed #bd4651; }
         .canvas-marker.map { border-left: 2px dotted #9a6400; }
          .canvas-xlabel { position: absolute; top: 85%; left: 15%; width: 79%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
-        .canvas-units { position: absolute; top: 13%; left: 5%; font-size: clamp(6px, .7vw, 9px); color: #63738a; }
+         .canvas-units { position: absolute; top: 30%; bottom: 19%; left: 2%; writing-mode: vertical-rl;
+           transform: rotate(180deg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+           font-size: clamp(6px, .7vw, 9px); color: #63738a; }
        .canvas-ylabel { position: absolute; top: 42%; left: 1%; width: 17%; text-align: center; overflow-wrap: anywhere;
          font-size: clamp(6px, .75vw, 10px); }
          .canvas-ticks { position: absolute; top: 74%; left: 15%; width: 79%; text-align: center; white-space: pre; overflow: hidden;
