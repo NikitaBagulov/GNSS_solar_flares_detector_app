@@ -35,12 +35,31 @@ def flare_metadata(event: Path) -> dict:
                     continue
                 for row in reader:
                     start = _utc(row.get(start_column))
-                    if start and start.date().isoformat() == date and str(row.get(class_column, "")).strip().upper() == result["class"]:
+                    if start and start.date().isoformat() == date:
                         candidates.append((filename, row, start, _utc(row.get(peak_column)), _utc(row.get(end_column))))
         except OSError:
             continue
     # Prefer the processing catalog; the HEK catalog is a fallback, not a second flare.
     hek_candidates = [item for item in candidates if item[0] == "flare_position_catalog_hek.csv"]
+    exact = [item for item in candidates if str(item[1].get(
+        "class" if item[0] == "all_flares.csv" else "fl_goescls", "")).strip().upper() == result["class"]]
+    if exact:
+        candidates = exact
+    else:
+        # Catalogs can round GOES class differently (X5.1 vs X5.2). Match a
+        # single nearby class only when its peak also falls in this event's maps.
+        from plot_requests import map_epochs
+        try:
+            stamps = [_utc(key) for keys in map_epochs(event).values() for key in keys]
+            stamps = [stamp for stamp in stamps if stamp]
+            low, high = min(stamps), max(stamps)
+            letter, magnitude = result["class"][0], float(result["class"][1:])
+            candidates = [item for item in candidates if item[3] and low <= item[3] <= high and
+                          (class_name := str(item[1].get("class" if item[0] == "all_flares.csv" else
+                                                         "fl_goescls", "")).strip().upper()).startswith(letter) and
+                          abs(float(class_name[1:]) - magnitude) <= .11]
+        except (OSError, ValueError, IndexError):
+            candidates = []
     if any(item[0] == "all_flares.csv" for item in candidates):
         candidates = [item for item in candidates if item[0] == "all_flares.csv"]
     # Multiple flares with the same class on a day cannot be identified by the folder name alone.
@@ -76,24 +95,8 @@ def flare_metadata(event: Path) -> dict:
 
 
 def scientific_caption(metadata: dict, series=()) -> tuple[str, str]:
-    """Describe the measured phenomenon rather than the event's directory name."""
-    flare = f"the {metadata['class']} solar flare" if metadata["class"] else "a solar flare"
-    if any(key.startswith("map:") or ":" in key for key in series):
-        title = f"Ionospheric response to {flare}"
-    elif any(key in ("goes", "soho") for key in series):
-        title = f"Solar irradiance during {flare}"
-    else:
-        title = f"Solar observations of {flare}"
-    details = []
-    if metadata["date"]:
-        try:
-            date = datetime.strptime(metadata["date"], "%Y-%m-%d")
-            details.append(f"{date.day} {date:%B %Y}")
-        except ValueError:
-            details.append(metadata["date"])
-    for label, field in (("Start", "start"), ("Peak", "peak"), ("End", "end")):
-        if metadata[field]:
-            details.append(f"{label} {metadata[field][11:16]} UTC")
-    if metadata["x"] is not None:
-        details.append(f"HPC ({metadata['x']:.0f}\u2033, {metadata['y']:.0f}\u2033)")
-    return title, "  ·  ".join(details)
+    """Keep the figure heading factual and leave measurements to the panels."""
+    title = " ".join(filter(None, (metadata.get("date"), metadata.get("class"), "Solar Flare")))
+    peak = _utc(metadata.get("peak"))
+    subtitle = f"Peak: {peak:%Y-%m-%d %H:%M} UTC" if peak else ""
+    return title, subtitle

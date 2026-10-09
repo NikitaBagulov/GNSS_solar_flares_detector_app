@@ -115,17 +115,20 @@ def test_publication_labels_and_focused_flare_window(event, monkeypatch):
 
     (event / "goes_xray.csv").write_text(
         "time,xrsb\n2025-11-11T01:00:00Z,0.001\n2025-11-11T12:00:00Z,0.9\n", encoding="utf-8")
+    (event / "solar_image").mkdir()
+    (event / "solar_image" / "corrupt.png").write_bytes(b"not an image")
     metadata = {"class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T01:00:00+00:00",
                 "peak": "2025-11-11T01:05:00+00:00", "end": "2025-11-11T01:10:00+00:00",
                 "x": None, "y": None}
     monkeypatch.setattr(catalog, "flare_metadata", lambda _: metadata)
-    assert _flare_window(metadata) == (datetime(2025, 11, 11, 0, 35), datetime(2025, 11, 11, 1, 35))
+    assert _flare_window(metadata) == (datetime(2025, 11, 11, 0, 50), datetime(2025, 11, 11, 1, 20))
     observed = []
     original_savefig = Figure.savefig
 
     def inspect_figure(fig, *args, **kwargs):
+        assert not fig.patches  # Editor panel outlines do not belong in the exported figure.
         titles = [text.get_text() for text in fig.texts]
-        assert any("ROTI map · 2025-11-11 01:00 UTC" == text for text in titles)
+        assert any("Global ROTI map · 01:00 UTC" == text for text in titles)
         assert titles.count("Solar disk") == 1
         assert SERIES["goes"] in titles
         sun_axes = [axis for axis in fig.axes if axis.patches and
@@ -136,12 +139,12 @@ def test_publication_labels_and_focused_flare_window(event, monkeypatch):
         assert goes_axes
         ax = goes_axes[0]
         assert max(ax.lines[0].get_ydata()) < .01  # The 12:00 spike was cropped before autoscaling.
-        assert len(ax.lines) == 5  # X-ray flux, onset, peak, end and selected map epoch.
+        assert len(ax.lines) == 3  # X-ray flux, peak and selected time.
         assert ax.lines[-1].get_linestyle() == ":"
         assert [text.get_text() for text in fig.legends[0].get_texts()] == [
-            "Onset", "X-ray peak", "End", "Observation time 01:00 UTC"]
-        assert "Ionospheric response to the X5.2 solar flare" in titles
-        assert any("Observation time 01:00 UTC" in text for text in titles)
+            "Flare peak", "Selected time 01:00 UTC"]
+        assert "2025-11-11 X5.2 Solar Flare" in titles
+        assert any("Peak: 2025-11-11 01:05 UTC" in text for text in titles)
         observed.append(True)
         return original_savefig(fig, *args, **kwargs)
 
@@ -153,6 +156,46 @@ def test_publication_labels_and_focused_flare_window(event, monkeypatch):
     ]}
     assert render_plot(event, request).startswith(b"\x89PNG")
     assert observed
+
+
+def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing_channels(event, monkeypatch):
+    from matplotlib.figure import Figure
+    import flare_metadata as catalog
+
+    (event / "goes_xray.csv").write_text(
+        "time,xrsa,xrsb\n2025-11-11T01:00:00Z,0.00001,0.0001\n"
+        "2025-11-11T01:05:00Z,0.0001,0.001\n", encoding="utf-8")
+    (event / "soho_sem.csv").write_text(
+        "time,flux_26_34,flux_01_50\n2025-11-11T01:00:00Z,100,200\n"
+        "2025-11-11T01:05:00Z,150,300\n", encoding="utf-8")
+    monkeypatch.setattr(catalog, "flare_metadata", lambda _: {
+        "class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T01:00:00+00:00",
+        "peak": "2025-11-11T01:00:00+00:00", "end": "2025-11-11T01:10:00+00:00",
+        "x": None, "y": None})
+    original = Figure.savefig
+    inspected = []
+
+    def inspect(fig, *args, **kwargs):
+        time_axes = [axis for axis in fig.axes if axis.get_xlabel() == "Time (UTC)"]
+        assert len(time_axes) == 2
+        goes, soho = time_axes
+        assert goes.get_yscale() == "log"
+        assert [line.get_label() for line in goes.lines[:2]] == [
+            "GOES XRS-A (0.05–0.4 nm)", "GOES XRS-B (0.1–0.8 nm)"]
+        assert [line.get_label() for line in soho.lines[:2]] == [
+            "SOHO/SEM 26–34 nm", "SOHO/SEM 0.1–50 nm"]
+        assert all(line.get_linestyle() == "--" for line in soho.lines[:2])
+        assert len(goes.lines) == len(soho.lines) == 3  # Shared peak/selected epoch.
+        assert fig.legends == []
+        inspected.append(True)
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    request = {"layout": "free", "style": "simple", "email": "user@example.org", "panels": [
+        {"series": "goes", "rect": {"x": .02, "y": .04, "w": .96, "h": .40}},
+        {"series": "soho", "rect": {"x": .02, "y": .52, "w": .96, "h": .40}}]}
+    assert render_plot(event, request).startswith(b"\x89PNG")
+    assert inspected
 
 
 def test_plotter_style_marks_flare_and_map_time_and_uses_compact_flux_axes(event, monkeypatch):
@@ -168,10 +211,10 @@ def test_plotter_style_marks_flare_and_map_time_and_uses_compact_flux_axes(event
 
     def inspect(fig, *args, **kwargs):
         ax = next(axis for axis in fig.axes if axis.lines and axis.lines[0].get_color() == "#d1495b")
-        assert len(ax.lines) == 5
+        assert len(ax.lines) == 3
         assert ax.lines[-1].get_color() == "#9a6400"
         assert ax.get_position().x0 < .055 + .04 * .89 + .16 * (.9 * .89)
-        assert "Observation time 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
+        assert "Selected time 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
         observed.append(True)
         return saved(fig, *args, **kwargs)
 
@@ -194,11 +237,36 @@ def test_flare_caption_uses_catalog_metadata_and_does_not_invent_position(event,
     metadata = flare_metadata(event)
     assert metadata["x"] == 100 and metadata["y"] == -200
     heading, subtitle = scientific_caption(metadata)
-    assert "X5.2" in heading and "Peak 01:05 UTC" in subtitle and "HPC (100″, -200″)" in subtitle
+    assert heading == "2025-11-11 X5.2 Solar Flare"
+    assert subtitle == "Peak: 2025-11-11 01:05 UTC"
     (tmp_path / "data" / "all_flares.csv").write_text(
         "class,start_time,peak_time,end_time,hpc_x,hpc_y\n"
         "X5.2,2025-11-11T01:00:00Z,2025-11-11T01:05:00Z,2025-11-11T01:10:00Z,,\n", encoding="utf-8")
     assert flare_metadata(event)["x"] is None
+
+
+def test_nearby_catalog_class_requires_unique_peak_in_event_maps(event, tmp_path, monkeypatch):
+    import flare_metadata as catalog
+
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / "flare_position_catalog_hek.csv"
+    path.write_text("fl_goescls,event_starttime,event_peaktime,event_endtime,hpc_x,hpc_y\n"
+                    "X5.1,2025-11-11T00:45:00Z,2025-11-11T01:00:00Z,2025-11-11T01:10:00Z,25,-56\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(catalog, "__file__", str(tmp_path / "flare_metadata.py"))
+    assert catalog.flare_metadata(event)["peak"].startswith("2025-11-11T01:00")
+    path.write_text("fl_goescls,event_starttime,event_peaktime,event_endtime,hpc_x,hpc_y\n"
+                    "X5.5,2025-11-11T00:45:00Z,2025-11-11T01:00:00Z,2025-11-11T01:10:00Z,25,-56\n",
+                    encoding="utf-8")
+    assert catalog.flare_metadata(event)["peak"] == ""
+    event.rename(event.with_name("2025-11-11_X5.1"))
+    renamed = event.with_name("2025-11-11_X5.1")
+    assert catalog.flare_metadata(renamed)["peak"] == ""
+    path.write_text("fl_goescls,event_starttime,event_peaktime,event_endtime,hpc_x,hpc_y\n"
+                    "X5.2,2025-11-11T00:45:00Z,2025-11-11T01:00:00Z,2025-11-11T01:10:00Z,25,-56\n",
+                    encoding="utf-8")
+    assert catalog.flare_metadata(renamed)["peak"].startswith("2025-11-11T01:00")
 
 
 def test_map_times_are_exact_dataset_keys_per_product(event):
@@ -254,8 +322,8 @@ def test_one_observation_time_is_used_by_every_map_and_time_series(event, monkey
 
     def inspect(fig, *args, **kwargs):
         titles = [text.get_text() for text in fig.texts]
-        assert sum("Observation time 01:10 UTC" in title for title in titles) == 1
-        assert sum("2025-11-11 01:10 UTC" in title for title in titles) == 2
+        assert sum("Observation: 01:10 UTC" in title for title in titles) == 1
+        assert sum("map · 01:10 UTC" in title for title in titles) == 2
         lines = [ax.lines[-1] for ax in fig.axes if ax.lines and ax.lines[-1].get_color() == "#9a6400"]
         assert len(lines) == 2
         assert all(datetime.fromisoformat(str(line.get_xdata()[0])).hour == 1 and
@@ -292,7 +360,7 @@ def test_observation_time_marks_time_series_even_without_map_panels(event, monke
 
     def inspect(fig, *args, **kwargs):
         assert sum(ax.lines[-1].get_color() == "#9a6400" for ax in fig.axes if ax.lines) == 2
-        assert "Observation time 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
+        assert "Selected time 01:00 UTC" in [text.get_text() for text in fig.legends[0].get_texts()]
         return original(fig, *args, **kwargs)
 
     monkeypatch.setattr(Figure, "savefig", inspect)

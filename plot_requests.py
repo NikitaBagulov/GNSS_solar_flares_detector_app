@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
-SERIES = {"goes": "GOES XRS-B (0.1–0.8 nm)", "soho": "SOHO/SEM EUV (0.1–50 nm)", "sun": "Solar disk"}
+SERIES = {"goes": "GOES X-ray flux", "soho": "SOHO/SEM EUV flux", "sun": "Solar disk"}
 PLOT_STYLES = ("plotter", "simple")
 SIMPLE_COLORS = {"goes": "#111111", "soho": "#006400", "day_night_index": "#333333",
                  "gsflai_index": "#006400", "isfai_index": "#333333"}
@@ -67,6 +67,27 @@ def event_series(event: Path) -> dict[str, str]:
                     continue
             available[key] = label
     return available
+
+
+def event_channels(event: Path) -> dict[str, list[str]]:
+    """Channel names present in the event source files for the editor preview."""
+    result = {}
+    for key, folder, filename, columns in (
+        ("goes", "goes_xray", "goes_xray.csv", ("xrsa", "xrsb")),
+        ("soho", "soho_sem", "soho_sem.csv", ("flux_26_34", "flux_01_50")),
+    ):
+        path = event / folder / filename
+        if not path.is_file():
+            path = event / filename
+        if not path.is_file():
+            continue
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                names = csv.DictReader(stream).fieldnames or []
+                result[key] = [column for column in columns if column in names]
+        except OSError:
+            continue
+    return result
 
 
 def map_epochs(event: Path) -> dict[str, list[str]]:
@@ -163,26 +184,33 @@ def validate_request(event: Path, request: dict) -> dict:
     return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email, "epoch": epoch}
 
 
-def _read_csv(path: Path, value_column: str):
+def _read_csv_channels(path: Path, columns: tuple[str, ...]):
     if path.stat().st_size > MAX_CSV_BYTES:
         raise ValueError("Data file is too large for an interactive plot")
-    dates, values = [], []
+    series = {column: ([], []) for column in columns}
     with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
-        if not reader.fieldnames or value_column not in reader.fieldnames:
-            raise ValueError(f"Missing column {value_column}")
+        if not reader.fieldnames or columns[-1] not in reader.fieldnames:
+            raise ValueError(f"Missing column {columns[-1]}")
         time_column = "time" if "time" in reader.fieldnames else reader.fieldnames[0]
         for row in reader:
             try:
                 stamp = datetime.fromisoformat(row[time_column].strip().replace("Z", "+00:00"))
-                value = float(row[value_column])
-                if value != value or abs(value) == float("inf"):
-                    continue
-                dates.append(stamp.replace(tzinfo=None))
-                values.append(value)
             except (KeyError, ValueError, TypeError):
                 continue
-    return dates, values
+            for column in columns:
+                try:
+                    value = float(row[column])
+                    if math.isfinite(value):
+                        series[column][0].append(stamp.replace(tzinfo=None))
+                        series[column][1].append(value)
+                except (KeyError, ValueError, TypeError):
+                    continue
+    return {key: pair for key, pair in series.items() if pair[0]}
+
+
+def _read_csv(path: Path, value_column: str):
+    return _read_csv_channels(path, (value_column,)).get(value_column, ([], []))
 
 
 def _map_points(path: Path, epoch: str | None):
@@ -214,8 +242,9 @@ def _flare_window(metadata: dict) -> tuple[datetime, datetime] | None:
         return None
     if end < start:
         return None
-    middle = start + (end - start) / 2
-    half = max(timedelta(minutes=30), (end - start) / 2 + timedelta(minutes=20))
+    peak = datetime.fromisoformat(metadata["peak"]).replace(tzinfo=None) if metadata.get("peak") else None
+    middle = peak if peak and start <= peak <= end else start + (end - start) / 2
+    half = timedelta(minutes=15) if peak else max(timedelta(minutes=15), (end - start) / 2 + timedelta(minutes=5))
     return middle - half, middle + half
 
 
@@ -228,7 +257,6 @@ def render_plot(event: Path, request: dict) -> bytes:
     from matplotlib import dates as mdates
     from matplotlib.dates import AutoDateLocator
     from matplotlib.lines import Line2D
-    from matplotlib.patches import Rectangle
     import cartopy.crs as ccrs
     from Plotter import Plotter, PLOT_STYLE, DEFAULT_PARAMS
     from flare_metadata import flare_metadata, scientific_caption
@@ -244,8 +272,9 @@ def render_plot(event: Path, request: dict) -> bytes:
     metadata = flare_metadata(event)
     heading, subtitle = scientific_caption(metadata, [panel["series"] for panel in panels])
     observation_time = datetime.fromisoformat(request["epoch"]).replace(tzinfo=None) if request["epoch"] else None
-    if observation_time:
-        subtitle += f"  ·  Observation time {observation_time:%H:%M} UTC"
+    peak_time = datetime.fromisoformat(metadata["peak"]).replace(tzinfo=None) if metadata.get("peak") else None
+    if observation_time and observation_time != peak_time:
+        subtitle += ("  ·  " if subtitle else "") + f"Observation: {observation_time:%H:%M} UTC"
     window = _flare_window(metadata)
     if window and observation_time:
         window = (min(window[0], observation_time - timedelta(minutes=5)),
@@ -266,12 +295,9 @@ def render_plot(event: Path, request: dict) -> bytes:
                     left = .055 + rect["x"] * .89
                     bottom = .055 + (1 - rect["y"] - rect["h"]) * .82
                     box_w, box_h = rect["w"] * .89, rect["h"] * .82
-                    fig.patches.append(Rectangle((left, bottom), box_w, box_h, transform=fig.transFigure,
-                                                        facecolor=palette["panel"], edgecolor=palette["grid"],
-                                                       linewidth=.8, zorder=-1))
                     map_panel = key.startswith("map:")
                     sun_panel = key == "sun"
-                    time_left = .19 if rect["w"] < .55 else .15
+                    time_left = .19 if rect["w"] < .55 else .14
                     ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else time_left),
                                         bottom + box_h * (.14 if sun_panel else .20 if map_panel else .26),
                                         box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
@@ -282,8 +308,11 @@ def render_plot(event: Path, request: dict) -> bytes:
                     if map_panel:
                         stamp = request["epoch"]
                         if stamp:
-                            title += f" · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC"
-                    fig.text(left + box_w * .045, bottom + box_h * .94,
+                            title = f"Global {key[4:].upper().replace('DTEC', 'dTEC')} map · {datetime.fromisoformat(stamp):%H:%M} UTC"
+                    fig.text(left + box_w * .025, bottom + box_h * .94,
+                             chr(65 + index), color=palette["ink"], weight="bold", fontsize=font_size + 3,
+                             va="center")
+                    fig.text(left + box_w * .105, bottom + box_h * .94,
                              title, color=palette["ink"], weight="normal" if simple else "bold",
                              fontsize=font_size, va="center", clip_on=True)
                     if not sun_panel:
@@ -307,14 +336,20 @@ def render_plot(event: Path, request: dict) -> bytes:
                             try:
                                 image = plt.imread(path)
                                 break
-                            except (OSError, ValueError):
+                            except (OSError, ValueError, SyntaxError):
                                 pass
                     painter = object.__new__(Plotter)
                     painter.data = SimpleNamespace(sun_image=image)
                     location = (metadata["x"], metadata["y"]) if metadata["x"] is not None else None
                     painter._plot_sun(ax, SimpleNamespace(location=location))
+                    if simple:
+                        ax.set_facecolor(palette["panel"])
                     if free:
                         ax.set_title("", loc="left")
+                        if location:
+                            fig.text(left + box_w * .5, bottom + box_h * .035,
+                                     f"HPC: ({location[0]:.0f}, {location[1]:.0f})″",
+                                     color=palette["ink"], fontsize=max(7, font_size - 1), ha="center")
                     if metadata["x"] is None:
                         ax.text(.5, .02, "Flare position unavailable", transform=ax.transAxes,
                                  ha="center", va="bottom", color=palette["muted"], fontsize=8,
@@ -325,7 +360,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     painter = object.__new__(Plotter)
                     painter.data = SimpleNamespace(product_values=[{product: points}], timestamps=[datetime.fromisoformat(stamp)])
                     painter._plot_map(ax, 0, product_name=product, map_time=datetime.fromisoformat(stamp),
-                                      vmin=0 if product == "roti" else -1, vmax=1)
+                                       vmin=0 if product == "roti" else -1, vmax=1.5 if product == "roti" else 1)
                     if simple and len(ax.collections) >= 3:
                         # The large double-stroked subsolar X and 30 pt samples from
                         # Plotter obscure the geography in a print-sized figure.
@@ -342,59 +377,71 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ax.set_title(f"{SERIES[key]} · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC", loc="left")
                 else:
                     if key == "goes":
-                        column, path = "xrsb", event / "goes_xray" / "goes_xray.csv"
+                        data_columns, path = ("xrsa", "xrsb"), event / "goes_xray" / "goes_xray.csv"
                         if not path.is_file(): path = event / "goes_xray.csv"
                     elif key == "soho":
-                        column, path = "flux_01_50", event / "soho_sem" / "soho_sem.csv"
+                        data_columns, path = ("flux_26_34", "flux_01_50"), event / "soho_sem" / "soho_sem.csv"
                         if not path.is_file(): path = event / "soho_sem.csv"
                     else:
                         product, column = key.split(":", 1)
                         path = event / "indices" / f"indices_{product}.csv"
-                    dates, values = _read_csv(path, column)
-                    if not dates:
+                        data_columns = (column,)
+                    measurements = _read_csv_channels(path, data_columns)
+                    if data_columns[-1] not in measurements:
                         raise ValueError(f"No usable data for {SERIES[key]}")
-                    focused = False
                     if window:
-                        visible = [(stamp, value) for stamp, value in zip(dates, values)
-                                   if window[0] <= stamp <= window[1]]
-                        if visible:
-                            dates, values = zip(*visible)
-                            focused = True
+                        for column_name, (dates, values) in list(measurements.items()):
+                            visible = [(stamp, value) for stamp, value in zip(dates, values)
+                                       if window[0] <= stamp <= window[1]]
+                            if visible:
+                                measurements[column_name] = tuple(zip(*visible))
+                            elif column_name != data_columns[-1]:
+                                del measurements[column_name]
                     if key == "goes" or key == "soho":
-                        if not simple and all(value > 0 for value in values):
+                        if all(value > 0 for _, values in measurements.values() for value in values) and key == "goes":
                             ax.set_yscale("log")
-                        ylabel = "W m⁻²" if key == "goes" else "photons cm⁻² s⁻¹"
+                        ylabel = "Flux (W m⁻²)" if key == "goes" else "EUV (photons cm⁻² s⁻¹)"
                     else:
                         ylabel = {"day_night_index": "Day/night", "gsflai_index": "GSFLAI", "isfai_index": "ISFAI"}[column]
-                    ax.plot(dates, values, color=color, linewidth=1.3 if simple else 2, solid_capstyle="round",
-                             marker="o" if len(dates) == 1 else None)
-                    if len(dates) == 1 and not focused:
-                        ax.set_xlim(dates[0] - timedelta(minutes=10), dates[0] + timedelta(minutes=10))
-                    if focused:
+                    for column_name, (dates, values) in measurements.items():
+                        secondary = column_name in ("xrsa", "flux_26_34")
+                        line_color = ("#2878a5" if column_name == "xrsa" else "#333333") if secondary else color
+                        if simple and len(measurements) > 1 and "color" not in panel:
+                            line_color = "#d1495b" if column_name == "xrsb" else "#333333" if column_name == "flux_01_50" else line_color
+                        line_style = "--" if key == "soho" else "-"
+                        channel_label = {"xrsa": "GOES XRS-A (0.05–0.4 nm)",
+                                         "xrsb": "GOES XRS-B (0.1–0.8 nm)",
+                                         "flux_26_34": "SOHO/SEM 26–34 nm",
+                                         "flux_01_50": "SOHO/SEM 0.1–50 nm"}.get(column_name)
+                        ax.plot(dates, values, color=line_color, linewidth=1.3 if simple else 2,
+                                linestyle=line_style, label=channel_label if len(measurements) > 1 else None,
+                                solid_capstyle="round", marker="o" if len(dates) == 1 else None)
+                    if len(measurements) > 1:
+                        ax.legend(loc="lower right", framealpha=.85, fontsize=max(6, font_size - 2) if free else 8)
+                    if window and any(window[0] <= stamp <= window[1]
+                                      for dates, _ in measurements.values() for stamp in dates):
                         ax.set_xlim(*window)
-                    for field, line_color, linestyle in (("start", "#7b8494", "--"),
-                                                          ("peak", "#bd4651", "-"),
-                                                          ("end", "#7b8494", "--")):
-                        if metadata.get(field):
-                            ax.axvline(datetime.fromisoformat(metadata[field]).replace(tzinfo=None),
-                                       color=line_color, linewidth=1, linestyle=linestyle, alpha=.9)
-                    if observation_time:
+                    elif len(measurements[data_columns[-1]][0]) == 1:
+                        stamp = measurements[data_columns[-1]][0][0]
+                        ax.set_xlim(stamp - timedelta(minutes=10), stamp + timedelta(minutes=10))
+                    if peak_time:
+                        ax.axvline(peak_time, color="#bd4651", linewidth=1.4, linestyle="--", alpha=.95)
+                    if observation_time and observation_time != peak_time:
                         ax.axvline(observation_time, color="#9a6400", linewidth=1.4, linestyle=":", alpha=.95)
                     if not free:
                         ax.set_title(SERIES[key], loc="left", color=palette["ink"])
                     # Put physical units in the heading for compact free panels: vertical labels
                     # were extending into the neighboring panel in publication-sized figures.
-                    ax.set_ylabel("" if free else ylabel, color=palette["ink"] if simple else color)
-                    if free:
+                    wide = free and rect["w"] >= .75 and rect["h"] >= .28
+                    ax.set_ylabel(ylabel if not free or wide else "", color=palette["ink"],
+                                  fontsize=max(7, font_size - 2) if free else None)
+                    if free and not wide:
                         fig.text(left + box_w * .045, bottom + box_h * .83,
-                                 ylabel, color=palette["muted"], fontsize=max(6, font_size - 2), va="center")
-                    if not simple:
-                        ax.tick_params(axis="y", colors=color)
-                        ax.spines["left"].set_color(color)
-                    ax.set_xlabel("UTC" if free else "Time (UTC)", fontsize=max(7, font_size - 2) if free else None)
+                                  ylabel, color=palette["muted"], fontsize=max(6, font_size - 2), va="center")
+                    ax.set_xlabel("Time (UTC)", fontsize=max(7, font_size - 2) if free else None)
                     ax.xaxis.set_major_locator(AutoDateLocator(maxticks=(3 if rect["w"] < .48 else 5) if free else 10))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                    if free and simple:
+                    if free and simple and ax.get_yscale() == "linear":
                         ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
                         ax.yaxis.get_offset_text().set_fontsize(7)
                     if not simple:
@@ -406,21 +453,17 @@ def render_plot(event: Path, request: dict) -> bytes:
                     axes[index // columns][index % columns].set_visible(False)
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
-                         fontsize=13 if simple else 16 if free else 13,
-                         fontweight="normal" if simple else "bold", color=palette["ink"], y=.985)
+                         fontsize=16 if free else 13,
+                         fontweight="bold", color=palette["ink"], y=.985)
             if caption and free:
                 fig.text(.5, .955, caption, ha="center", va="top",
                          fontsize=9, color=palette["muted"])
             if free and any(panel["series"] != "sun" and not panel["series"].startswith("map:") for panel in panels):
                 legend = []
-                for field, label, line_color, line_style in (("start", "Onset", "#7b8494", "--"),
-                                                              ("peak", "X-ray peak", "#bd4651", "-"),
-                                                              ("end", "End", "#7b8494", "--")):
-                    if metadata.get(field):
-                        legend.append(Line2D([], [], color=line_color, linestyle=line_style, label=label))
-                if observation_time:
+                if peak_time and observation_time and observation_time != peak_time:
+                    legend.append(Line2D([], [], color="#bd4651", linestyle="--", label="Flare peak"))
                     legend.append(Line2D([], [], color="#9a6400", linestyle=":", linewidth=1.4,
-                                         label=f"Observation time {observation_time:%H:%M} UTC"))
+                                         label=f"Selected time {observation_time:%H:%M} UTC"))
                 if legend:
                     fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .903),
                                ncol=min(len(legend), 4), frameon=False, fontsize=8,

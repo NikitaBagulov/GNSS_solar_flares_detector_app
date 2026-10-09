@@ -6,10 +6,12 @@ import re
 from urllib.parse import quote
 
 
-def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[str]], metadata: dict) -> tuple[str, str]:
+def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[str]], metadata: dict,
+                   channels: dict[str, list[str]]) -> tuple[str, str]:
     """Return HTML body and styles for the dedicated plot editor page."""
     data = json.dumps(series, ensure_ascii=False).replace("<", "\\u003c")
     times = json.dumps(epochs, ensure_ascii=False).replace("<", "\\u003c")
+    channel_json = json.dumps(channels, ensure_ascii=False).replace("<", "\\u003c")
     event_path = json.dumps(event["path"], ensure_ascii=False).replace("<", "\\u003c")
     from flare_metadata import scientific_caption
     heading, subtitle = scientific_caption(metadata, list(series)[:1])
@@ -24,7 +26,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
              <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and observation time are previewed here; actual data appears after generation.</span>
-          <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
+           <button type="button" class="button" id="exampleLayout">Example layout</button>
+           <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
             <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
             <span id="canvasSubtitle" class="canvas-subtitle">__SUBTITLE__</span>
@@ -44,7 +47,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           <h3>Selected panel</h3>
           <label>Data series <select id="panelSeries"></select></label>
            <label id="colorField">Line color <input id="panelColor" type="color" value="#2878a5"></label>
-           <p id="mapPalette" class="studio-note" hidden>Map colors and scale follow the original plotting: ROTI · viridis 0–1 TECu/min; dTEC · RdBu_r −1…1 TECu.</p>
+            <p id="mapPalette" class="studio-note" hidden>Map colors and scale follow the original plotting: ROTI · viridis 0–1.5 TECu/min; dTEC · RdBu_r −1…1 TECu.</p>
           <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
             <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
           <button type="button" class="button" id="removePanel">Remove selected panel</button>
@@ -59,6 +62,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
     (() => {
       const series = __SERIES_JSON__;
       const epochs = __EPOCHS_JSON__;
+      const channels = __CHANNELS_JSON__;
       const eventPath = __EVENT_JSON__;
       const heading = __HEADING_JSON__;
       const subtitle = __SUBTITLE_JSON__;
@@ -87,7 +91,12 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             const option = document.createElement('option'); option.value = time;
             option.textContent = time + ' UTC'; epoch.append(option);
           }
-          epoch.value = available.includes(previous) ? previous : available[Math.floor(available.length / 2)] || '';
+           const peak = Date.parse(location.peak);
+           const nearest = Number.isFinite(peak) && available.length ? available.reduce((best, time) =>
+             Math.abs(Date.parse(time.replace(' ', 'T') + 'Z') - peak) <
+             Math.abs(Date.parse(best.replace(' ', 'T') + 'Z') - peak) ? time : best) :
+             available[Math.floor(available.length / 2)];
+           epoch.value = available.includes(previous) ? previous : nearest || '';
           epoch.disabled = !available.length;
           document.getElementById('observationHint').textContent = available.length ?
             text('One time for all maps and time-series panels, from the available HDF5 datasets.',
@@ -95,18 +104,16 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             text('No common observation time for these maps.', 'У выбранных карт нет общего времени наблюдения.');
         }
        function updateCaption() {
-         const ionosphere = panels.some(panel => panel.series.startsWith('map:') || panel.series.includes(':'));
-         const radiation = panels.some(panel => ['goes', 'soho'].includes(panel.series));
-         const flare = location.flare ? `the ${location.flare} solar flare` : 'a solar flare';
-         document.getElementById('canvasTitle').textContent = ionosphere ? `Ionospheric response to ${flare}` :
-           radiation ? `Solar irradiance during ${flare}` : `Solar observations of ${flare}`;
-          const reference = epoch.value ? `Observation time ${epoch.value.slice(11, 16)} UTC` : '';
-         document.getElementById('canvasSubtitle').textContent = [subtitle, reference,
-           document.getElementById('plotTitle').value].filter(Boolean).join('  ·  ');
-         const markers = [['start', 'Onset', '#7b8494', '--'], ['peak', 'X-ray peak', '#bd4651', '-'],
-           ['end', 'End', '#7b8494', '-']].filter(([key]) => location[key]).map(([, label, color, line]) =>
-             `<span style="color:${color}">${line}</span> ${label}`);
-          if (epoch.value) markers.push(`<span style="color:#9a6400">⋮</span> Observation time ${epoch.value.slice(11, 16)} UTC`);
+          document.getElementById('canvasTitle').textContent = heading;
+          const peak = Date.parse(location.peak);
+          const selectedTime = epoch.value ? Date.parse(epoch.value.replace(' ', 'T') + 'Z') : NaN;
+          const reference = epoch.value && selectedTime !== peak ?
+            `Observation: ${epoch.value.slice(11, 16)} UTC` : '';
+          document.getElementById('canvasSubtitle').textContent = [subtitle, reference,
+            document.getElementById('plotTitle').value].filter(Boolean).join('  ·  ');
+          const markers = location.peak && reference ?
+            [`<span style="color:#bd4651">┊</span> Flare peak`,
+             `<span style="color:#9a6400">⋮</span> Selected time ${epoch.value.slice(11, 16)} UTC`] : [];
          document.getElementById('canvasLegend').innerHTML = panels.some(panel =>
            panel.series !== 'sun' && !panel.series.startsWith('map:')) ? markers.join('　') : '';
        }
@@ -116,8 +123,9 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          if (!location.start || !location.end) return 'UTC';
          const start = Date.parse(location.start), end = Date.parse(location.end);
          if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 'UTC';
-         const middle = (start + end) / 2;
-         const half = Math.max(30 * 60000, (end - start) / 2 + 20 * 60000);
+          const peak = Date.parse(location.peak);
+          const middle = Number.isFinite(peak) && peak >= start && peak <= end ? peak : (start + end) / 2;
+          const half = Number.isFinite(peak) ? 15 * 60000 : Math.max(15 * 60000, (end - start) / 2 + 5 * 60000);
          const label = stamp => new Date(stamp).toISOString().slice(11, 16);
           const moment = Date.parse(epoch.value.replace(' ', 'T') + 'Z');
           const left = Number.isFinite(moment) ? Math.min(middle - half, moment - 5 * 60000) : middle - half;
@@ -135,8 +143,10 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         if (!canPlace(panel, rect)) return false;
         panel.rect = rect; return true;
       }
-       const defaultColor = key => (style.value === 'simple' ?
-         {goes: '#111111', soho: '#006400', day_night_index: '#333333', gsflai_index: '#006400', isfai_index: '#333333'} :
+        const defaultColor = key => (style.value === 'simple' ?
+          {goes: (channels.goes || []).includes('xrsa') ? '#d1495b' : '#111111',
+           soho: (channels.soho || []).includes('flux_26_34') ? '#333333' : '#006400',
+           day_night_index: '#333333', gsflai_index: '#006400', isfai_index: '#333333'} :
          {goes: '#d1495b', soho: '#2878a5', day_night_index: '#2878a5', gsflai_index: '#2a9d8f', isfai_index: '#e76f51'}
        )[key.split(':').at(-1)] || (style.value === 'simple' ? '#333333' : '#2878a5');
        style.onchange = () => {
@@ -171,9 +181,11 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           const card = document.createElement('div'); card.className = 'canvas-panel'; card.dataset.id = panel.id;
           card.tabIndex = 0; card.setAttribute('aria-label', `${series[panel.series]}, drag to move, arrows to nudge`);
           const bar = document.createElement('div'); bar.className = 'canvas-panel-bar';
-           const caption = document.createElement('strong'); caption.textContent = series[panel.series] +
-              (panel.series.startsWith('map:') && epoch.value ? ' · ' + epoch.value.slice(0, 16) + ' UTC' : '');
-          const grip = document.createElement('span'); grip.textContent = '⠿'; grip.setAttribute('aria-hidden', 'true');
+            const caption = document.createElement('strong'); caption.textContent =
+               (panel.series.startsWith('map:') ? `Global ${panel.series.slice(4).toUpperCase().replace('DTEC', 'dTEC')} map` : series[panel.series]) +
+               (panel.series.startsWith('map:') && epoch.value ? ' · ' + epoch.value.slice(11, 16) + ' UTC' : '');
+           const grip = document.createElement('span'); grip.textContent = String.fromCharCode(65 + panels.indexOf(panel)) + ' ⠿';
+           grip.setAttribute('aria-hidden', 'true');
           bar.append(grip, caption);
            const chart = document.createElement('div'); chart.className = 'canvas-chart';
           const xLabel = document.createElement('span'); xLabel.className = 'canvas-xlabel';
@@ -193,24 +205,33 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><circle cx="40" cy="35" r="7"/><circle cx="77" cy="46" r="5"/><circle cx="112" cy="20" r="6"/><circle cx="155" cy="40" r="8"/></svg>';
             xLabel.textContent = 'Longitude'; yLabel.textContent = 'Latitude'; ticks.textContent = '−180     0      180';
             const scale = document.createElement('span'); scale.className = 'canvas-scale';
-            scale.textContent = panel.series === 'map:roti' ? '0 → 1 TECu/min' : '−1 → 1 TECu';
+             scale.textContent = panel.series === 'map:roti' ? '0 → 1.5 TECu/min' : '−1 → 1 TECu';
             scale.style.borderImage = panel.series === 'map:roti' ?
               'linear-gradient(#fde725, #21918c, #440154) 1' : 'linear-gradient(#b2182b, #f7f7f7, #2166ac) 1';
             card.append(scale);
            } else {
-            chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,64 28,52 43,60 60,35 83,50 105,17 125,37 145,22 165,48 200,18"/></svg>';
+             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,64 28,52 43,60 60,35 83,50 105,17 125,37 145,22 165,48 200,18"/></svg>';
+             if (panel.series === 'goes' && (channels.goes || []).includes('xrsa')) {
+               const line = document.createElement('span'); line.className = 'canvas-second-line';
+               line.textContent = 'XRS-A (0.05–0.4 nm) · XRS-B (0.1–0.8 nm)'; chart.append(line);
+             } else if (panel.series === 'soho' && (channels.soho || []).includes('flux_26_34')) {
+               const line = document.createElement('span'); line.className = 'canvas-second-line';
+               line.textContent = 'SEM 26–34 nm · 0.1–50 nm'; chart.append(line);
+             }
             const column = panel.series.split(':')[1];
              units.textContent = panel.series === 'goes' ? 'W m⁻²' : panel.series === 'soho' ?
                'photons cm⁻² s⁻¹' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
-              xLabel.textContent = 'UTC'; ticks.textContent = previewTicks();
+               xLabel.textContent = 'Time (UTC)'; ticks.textContent = previewTicks();
              if (location.start && location.end) {
                const start = Date.parse(location.start), end = Date.parse(location.end);
-               const middle = (start + end) / 2, half = Math.max(30 * 60000, (end - start) / 2 + 20 * 60000);
+                const peak = Date.parse(location.peak);
+                const middle = Number.isFinite(peak) && peak >= start && peak <= end ? peak : (start + end) / 2;
+                const half = Number.isFinite(peak) ? 15 * 60000 : Math.max(15 * 60000, (end - start) / 2 + 5 * 60000);
                 const moment = Date.parse(epoch.value.replace(' ', 'T') + 'Z');
                 const left = Number.isFinite(moment) ? Math.min(middle - half, moment - 5 * 60000) : middle - half;
                 const right = Number.isFinite(moment) ? Math.max(middle + half, moment + 5 * 60000) : middle + half;
-                for (const [stamp, kind] of [[location.start, 'onset'], [location.peak, 'peak'],
-                                             [location.end, 'end'], [epoch.value, 'map']]) {
+                for (const [stamp, kind] of [[location.peak, 'peak'],
+                                             [Date.parse(epoch.value.replace(' ', 'T') + 'Z') === Date.parse(location.peak) ? '' : epoch.value, 'map']]) {
                  const value = Date.parse(kind === 'map' ? stamp.replace(' ', 'T') + 'Z' : stamp);
                  if (!Number.isFinite(value)) continue;
                   const x = (value - left) / (right - left);
@@ -279,6 +300,21 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         panels.push(panel); selected = panel.id; render();
       }
       document.getElementById('addPlotPanel').onclick = addPanel;
+      function exampleLayout() {
+        if (!['map:roti', 'sun', 'goes', 'soho'].every(key => key in series)) return;
+        panels.length = 0;
+        for (const [key, rect] of [
+          ['map:roti', {x: .02, y: .02, w: .58, h: .42}],
+          ['sun', {x: .64, y: .02, w: .34, h: .42}],
+          ['goes', {x: .02, y: .49, w: .96, h: .22}],
+          ['soho', {x: .02, y: .74, w: .96, h: .22}],
+        ]) panels.push({id: String(Date.now()) + Math.random(), series: key,
+                       color: defaultColor(key), customColor: false, rect});
+        selected = panels[0].id;
+        render();
+      }
+      document.getElementById('exampleLayout').onclick = exampleLayout;
+      document.getElementById('exampleLayout').disabled = !['map:roti', 'sun', 'goes', 'soho'].every(key => key in series);
       document.getElementById('removePanel').onclick = () => {
         const index = panels.findIndex(item => item.id === selected);
         if (index < 0) return;
@@ -300,7 +336,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       }
       width.onchange = () => changeSize('w', width);
       height.onchange = () => changeSize('h', height);
-      addPanel();
+       if (!document.getElementById('exampleLayout').disabled) exampleLayout(); else addPanel();
       document.getElementById('generatePlot').onclick = async () => {
          if (!panels.length) { message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }
          if (Object.keys(epochs).length && !epoch.value) {
@@ -325,11 +361,12 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
     })();
     </script>
     """
-    replacements = {"SERIES_JSON": data, "EPOCHS_JSON": times, "EVENT_JSON": event_path, "EVENT_NAME": name,
+    replacements = {"SERIES_JSON": data, "EPOCHS_JSON": times, "CHANNELS_JSON": channel_json,
+                    "EVENT_JSON": event_path, "EVENT_NAME": name,
                     "HEADING": html.escape(heading), "SUBTITLE": html.escape(subtitle), "HEADING_JSON": heading_json,
                      "SUBTITLE_JSON": subtitle_json, "LOCATION_JSON": location_json,
                     "EVENT_URL": "/" + quote(event["path"], safe="/") + "/"}
-    body = re.sub(r"__(SERIES_JSON|EPOCHS_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL|HEADING|SUBTITLE|HEADING_JSON|SUBTITLE_JSON|LOCATION_JSON)__",
+    body = re.sub(r"__(SERIES_JSON|EPOCHS_JSON|CHANNELS_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL|HEADING|SUBTITLE|HEADING_JSON|SUBTITLE_JSON|LOCATION_JSON)__",
                   lambda match: replacements[match.group(1)], body)
     css = """
     <style>
@@ -345,7 +382,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .plot-canvas { position: relative; width: 100%; min-width: 620px; aspect-ratio: 12 / 8.5; overflow: hidden; background: #fff;
          border: 1px solid #cbd5e1; box-shadow: 0 5px 22px #1422351c; }
        .plot-canvas[data-style="plotter"] { background: #f4f7fb; }
-       .plot-canvas[data-style="simple"] .canvas-title { font-weight: 400; color: #111; }
+        .plot-canvas[data-style="simple"] .canvas-title { font-weight: 700; color: #111; }
        .plot-canvas[data-style="simple"] .canvas-subtitle { color: #333; }
        .plot-canvas[data-style="simple"] .canvas-panel { border-color: #ddd; box-shadow: none; }
        .plot-canvas[data-style="simple"] .canvas-panel-bar { color: #111; }
@@ -357,7 +394,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          background: repeating-linear-gradient(to right, transparent 0 24%, #e2e2e2 25% calc(25% + 1px)); }
        .plot-canvas[data-style="simple"] .canvas-xlabel, .plot-canvas[data-style="simple"] .canvas-ylabel,
        .plot-canvas[data-style="simple"] .canvas-ticks { color: #111; }
-       .canvas-title { position: absolute; top: 1%; left: 5%; width: 90%; text-align: center; overflow: hidden;
+        .canvas-title { position: absolute; top: 1%; left: 5%; width: 90%; text-align: center; overflow: hidden;
          white-space: nowrap; text-overflow: ellipsis; font-size: clamp(12px, 1.4vw, 19px); }
         .canvas-subtitle { position: absolute; top: 5%; left: 5%; width: 90%; text-align: center; overflow: hidden;
           white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: #63738a; }
@@ -383,9 +420,11 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .canvas-map svg { color: #2a9d8f; }
        .canvas-chart.canvas-sun { left: 15%; top: 21%; width: 70%; height: 59%; border: 0; background: #101b2b; }
        .canvas-sun svg { opacity: 1; }
-        .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+         .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+         .canvas-second-line { position: absolute; right: 1%; bottom: 1%; color: #333; background: #ffffffe0;
+           font-size: 8px; padding: 1px 3px; }
         .canvas-marker { position: absolute; top: 0; bottom: 0; z-index: 1; border-left: 1px dashed #7b8494; }
-        .canvas-marker.peak { border-left: 1px solid #bd4651; }
+         .canvas-marker.peak { border-left: 1px dashed #bd4651; }
         .canvas-marker.map { border-left: 2px dotted #9a6400; }
          .canvas-xlabel { position: absolute; top: 85%; left: 15%; width: 79%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
         .canvas-units { position: absolute; top: 13%; left: 5%; font-size: clamp(6px, .7vw, 9px); color: #63738a; }
