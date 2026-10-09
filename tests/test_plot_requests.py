@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from plot_requests import SERIES, SIMPLE_COLORS, _flare_window, cleanup_cache, map_epochs, render_plot, validate_request, _map_points
+from plot_requests import SERIES, SIMPLE_COLORS, _flare_window, cleanup_cache, figure_caption, map_epochs, render_plot, validate_request, _map_points
 from flare_metadata import flare_metadata, scientific_caption
 from results_server import PrettyDirectoryHandler, render_plot_editor_page
 
@@ -106,6 +106,71 @@ def test_simple_and_plotter_styles_change_render_and_validate_choice(event):
     request["style"] = "not-a-style"
     with pytest.raises(ValueError, match="style"):
         validate_request(event, request)
+
+
+def test_print_width_chart_types_flux_units_and_shared_axes(event, monkeypatch):
+    from matplotlib.figure import Figure
+
+    (event / "goes_xray.csv").write_text(
+        "time,xrsa,xrsb\n2025-11-11T01:00:00Z,0.00001,0.0001\n"
+        "2025-11-11T01:01:00Z,0.00002,0.0003\n", encoding="utf-8")
+    panels = [{"series": "goes", "plot_type": "bar", "rect": {"x": .03, "y": .03, "w": .94, "h": .40}},
+              {"series": "goes", "plot_type": "line", "fill_negative": True,
+               "rect": {"x": .03, "y": .55, "w": .94, "h": .40}}]
+    request = {"email": "test@example.org", "layout": "free", "style": "simple", "panels": panels,
+               "flux_mode": "relative", "shared_y": True, "print_size": "one-column"}
+    original = Figure.savefig
+    inspected = []
+
+    def inspect(fig, *args, **kwargs):
+        assert fig.get_size_inches().tolist() == pytest.approx([3.5, 4.95])
+        fig.canvas.draw()
+        for label in fig.texts:
+            bounds = label.get_window_extent(fig.canvas.get_renderer())
+            assert bounds.x0 >= -1 and bounds.x1 <= fig.bbox.x1 + 1
+            assert bounds.y0 >= -1 and bounds.y1 <= fig.bbox.y1 + 1
+        axes = [ax for ax in fig.axes if ax.get_xlabel() == "Time (UTC)"]
+        assert len(axes) == 2
+        assert axes[0].patches and not axes[1].patches
+        assert axes[1].collections  # Explicit negative fill, even if this event never drops below zero.
+        assert axes[0].get_ylim() == pytest.approx(axes[1].get_ylim())
+        inspected.append(True)
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    with Image.open(io.BytesIO(render_plot(event, request))) as image:
+        assert image.size == (1050, 1485)
+    assert inspected
+    assert "(A) GOES X-ray flux; (B) GOES X-ray flux" in figure_caption(event, request)
+    request["flux_mode"] = "physical"
+    request["panels"] = panels[:1]
+    assert validate_request(event, request)["flux_mode"] == "physical"
+    request["panels"][0]["plot_type"] = "heatmap"
+    with pytest.raises(ValueError, match="plot type"):
+        validate_request(event, request)
+    request["panels"][0]["plot_type"] = "auto"
+    request["panels"] = panels + [{"series": "sun", "rect": {"x": .01, "y": .01, "w": .20, "h": .20}}]
+    with pytest.raises(ValueError, match="at most two panels"):
+        validate_request(event, request)
+
+
+def test_draft_endpoint_uses_real_data_without_storing_plot(event, tmp_path):
+    handler = partial(PrettyDirectoryHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        payload = json.dumps({"event": "X/2025-11-11_X5.2", "layout": "free", "print_size": "one-column",
+                              "panels": [{"series": "goes", "rect": {"x": .04, "y": .05, "w": .92, "h": .88}}]}).encode()
+        with urlopen(Request(f"http://127.0.0.1:{server.server_port}/api/plots/preview", data=payload)) as response:
+            assert response.headers["Content-Type"] == "image/png"
+            with Image.open(io.BytesIO(response.read())) as image:
+                assert image.width == 315
+        assert not (tmp_path / ".plot-cache").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
 
 
 def test_publication_labels_and_focused_flare_window(event, monkeypatch):
@@ -464,6 +529,7 @@ def test_plot_http_create_fetch_delete_and_expiry(event, tmp_path):
                               "email": " Person@Example.org ", "title": "My X-ray"}).encode()
         with urlopen(Request(base + "/api/plots", data=payload, headers={"Content-Type": "application/json"})) as response:
             result = json.load(response)
+        assert "X5.2 solar flare" in result["caption"]
         with urlopen(base + result["url"]) as response:
             assert response.headers["Content-Type"] == "image/png"
             assert response.read(8) == b"\x89PNG\r\n\x1a\n"
@@ -475,6 +541,7 @@ def test_plot_http_create_fetch_delete_and_expiry(event, tmp_path):
                 return json.load(response)["plots"]
 
         assert search("person@example.org")[0]["title"] == "My X-ray"
+        assert search("person@example.org")[0]["caption"] == result["caption"]
         assert search("PERSON@example.org")[0]["url"] == result["url"]
         assert search("someone@example.org") == []
         with urlopen(Request(base + "/api/plots", data=payload)) as response:

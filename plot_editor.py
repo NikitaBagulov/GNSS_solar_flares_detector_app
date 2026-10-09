@@ -25,12 +25,14 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       <h1>Plot studio</h1><p>__EVENT_NAME__ · Drag panels by their headers and resize from the lower-right corner.</p></div></header>
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
-              <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and observation time are previewed here; actual data appears after generation.</span></div>
+               <div class="studio-toolbar"><strong>Layout preview</strong><span>Arrange panels here; use the draft button to inspect actual measurements before saving.</span>
+                 <button type="button" class="button" id="previewPlot">Preview real data</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
             <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
             <span id="canvasSubtitle" class="canvas-subtitle">__SUBTITLE__</span>
             <span id="canvasLegend" class="canvas-legend"></span>
-          <div id="plotStage" class="plot-stage" aria-label="Drag and resize plot panels"></div></div></div>
+           <div id="plotStage" class="plot-stage" aria-label="Drag and resize plot panels"></div></div>
+           <div id="draftPlot" hidden><img id="draftImage" alt="Draft rendered from event measurements"><p>Draft preview · changes to the panels require a new preview.</p></div></div>
       </section>
        <aside class="studio-sidebar">
           <h2>Plot settings</h2>
@@ -53,7 +55,10 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
            <button type="button" class="button" id="addPlotPanel">+ Add panel</button>
          <div id="panelSettings" class="panel-settings">
            <h3>Selected panel</h3>
-           <label>Data series <select id="panelSeries"></select></label>
+            <label>Data series <select id="panelSeries"></select></label>
+            <label id="plotTypeField">Display as <select id="panelPlotType"><option value="auto">Automatic</option>
+              <option value="line">Line</option><option value="points">Points</option><option value="bar">Bars</option></select></label>
+            <label id="negativeField" class="studio-checkbox"><input id="fillNegative" type="checkbox"> Shade values below zero</label>
            <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
              <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
            <button type="button" class="button" id="removePanel">Remove selected panel</button>
@@ -61,8 +66,14 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           </section>
           <section id="section-style" class="studio-tab-panel" role="tabpanel" aria-labelledby="tab-style" hidden>
            <p class="studio-note">Style and observation time apply to the whole figure.</p>
-           <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
-             <option value="plotter">Plotter · colored axes</option></select></label>
+            <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
+              <option value="plotter">Plotter · colored axes</option></select></label>
+            <label>Publication width <select id="printSize"><option value="two-column">Two columns · 7.2 × 5.1 in</option>
+              <option value="one-column">One column · 3.5 × 4.95 in</option></select></label>
+            <p class="studio-note">Export at 300 dpi; inspect text at the selected print size.</p>
+            <label>GOES / SOHO values <select id="fluxMode"><option value="relative">Change from early baseline (%)</option>
+              <option value="physical">Physical flux units</option></select></label>
+            <label class="studio-checkbox"><input id="sharedY" type="checkbox"> Match Y limits for compatible panels</label>
            <label>Observation time (UTC) <select id="observationTime"></select></label>
            <p class="studio-note" id="observationHint">One time for all maps and time-series panels, from the available HDF5 datasets.</p>
            <label>Additional caption <input id="plotTitle" maxlength="100" placeholder="Optional description"></label>
@@ -75,8 +86,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
            <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
          <button type="button" class="button studio-generate" id="generatePlot">Generate plot</button>
          <div id="plotMessage" role="status" aria-live="polite"></div>
-         <div id="renderedPlot" hidden><a id="renderedLink" target="_blank" rel="noopener">Open full-size plot</a>
-           <img id="renderedImage" alt="Generated plot"></div>
+          <div id="renderedPlot" hidden><a id="renderedLink" target="_blank" rel="noopener">Open full-size plot</a>
+            <img id="renderedImage" alt="Generated plot"><p id="figureCaption" class="figure-caption"></p></div>
           </section>
       </aside>
     </div>
@@ -96,8 +107,14 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       const color = document.getElementById('panelColor');
        const epoch = document.getElementById('observationTime');
       const width = document.getElementById('panelWidth');
-      const height = document.getElementById('panelHeight');
-       const panels = [];
+       const height = document.getElementById('panelHeight');
+       const plotType = document.getElementById('panelPlotType');
+       const fillNegative = document.getElementById('fillNegative');
+       const printSize = document.getElementById('printSize');
+       const fluxMode = document.getElementById('fluxMode');
+       const sharedY = document.getElementById('sharedY');
+        const panels = [];
+        let draftVersion = 0;
        let selected = null;
        const tabs = [...document.querySelectorAll('.studio-tabs [role="tab"]')];
        function setTab(name, focus = false) {
@@ -159,7 +176,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          if (!layout) return;
          panels.length = 0;
          for (const [key, x, y, w, h] of layout) panels.push({
-           id: String(Date.now()) + Math.random(), series: key, color: defaultColor(key), customColor: false,
+            id: String(Date.now()) + Math.random(), series: key, color: defaultColor(key), customColor: false,
+            plotType: 'auto', fillNegative: false,
            rect: {x, y, w, h},
          });
          selected = panels[0].id;
@@ -172,7 +190,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          if (templatePicker.value !== 'custom') applyTemplate(templatePicker.value);
          else markCustom();
        };
-       document.getElementById('plotTitle').addEventListener('input', updateCaption);
+        document.getElementById('plotTitle').addEventListener('input', () => { updateCaption(); invalidateDraft(); });
         function availableTimes() {
           const maps = [...new Set(panels.filter(panel => panel.series.startsWith('map:')).map(panel => panel.series))];
           if (!maps.length) return [...new Set(Object.values(epochs).flat())].sort();
@@ -236,7 +254,9 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       }
        function place(panel, rect) {
          if (!canPlace(panel, rect)) return false;
-         if (Object.keys(rect).some(axis => rect[axis] !== panel.rect[axis])) markCustom();
+          if (Object.keys(rect).some(axis => rect[axis] !== panel.rect[axis])) {
+            markCustom(); invalidateDraft();
+          }
          panel.rect = rect; return true;
       }
         const defaultColor = key => (style.value === 'simple' ?
@@ -257,13 +277,18 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       function syncSettings() {
          const panel = panels.find(item => item.id === selected);
          document.getElementById('panelSettings').hidden = !panel;
-         if (!panel) {
-           document.getElementById('colorField').hidden = true;
-           document.getElementById('mapPalette').hidden = true;
-           return;
-         }
-        select.value = panel.series; color.value = panel.color;
-        const map = panel.series.startsWith('map:');
+          if (!panel) {
+            document.getElementById('colorField').hidden = true;
+            document.getElementById('mapPalette').hidden = true;
+            document.getElementById('plotTypeField').hidden = true;
+            document.getElementById('negativeField').hidden = true;
+            return;
+          }
+         select.value = panel.series; color.value = panel.color; plotType.value = panel.plotType;
+         fillNegative.checked = panel.fillNegative;
+         const map = panel.series.startsWith('map:');
+         document.getElementById('plotTypeField').hidden = map || panel.series === 'sun';
+         document.getElementById('negativeField').hidden = map || panel.series === 'sun';
          document.getElementById('colorField').hidden = map || panel.series === 'sun';
         document.getElementById('mapPalette').hidden = !map;
         width.value = Math.round(panel.rect.w * 100); height.value = Math.round(panel.rect.h * 100);
@@ -274,8 +299,13 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          card.style.width = `${rect.w * 100}%`; card.style.height = `${rect.h * 100}%`;
          card.dataset.narrow = rect.w < .55;
       }
-      function render() {
-        syncEpoch();
+       function render() {
+         invalidateDraft();
+         if (panels.length > 2 && printSize.value === 'one-column') {
+           printSize.value = 'two-column';
+           document.getElementById('plotCanvas').dataset.printSize = 'two-column';
+         }
+         syncEpoch();
         canvas.replaceChildren();
         for (const panel of panels) {
           const card = document.createElement('div'); card.className = 'canvas-panel'; card.dataset.id = panel.id;
@@ -303,7 +333,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
            } else if (panel.series.startsWith('map:')) {
             chart.classList.add('canvas-map');
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><circle cx="40" cy="35" r="7"/><circle cx="77" cy="46" r="5"/><circle cx="112" cy="20" r="6"/><circle cx="155" cy="40" r="8"/></svg>';
-            xLabel.textContent = 'Longitude'; yLabel.textContent = 'Latitude'; ticks.textContent = '−180     0      180';
+             xLabel.textContent = 'Longitude (°)'; yLabel.textContent = 'Latitude (°)'; ticks.textContent = '−180     0      180';
             const scale = document.createElement('span'); scale.className = 'canvas-scale';
               scale.textContent = panel.series === 'map:roti' ? '0 → 0.5 TECu/min' : '−0.5 → 0.5 TECu';
             scale.style.borderImage = panel.series === 'map:roti' ?
@@ -311,6 +341,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             card.append(scale);
            } else {
              chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,64 28,52 43,60 60,35 83,50 105,17 125,37 145,22 165,48 200,18"/></svg>';
+             if (panel.plotType === 'points') chart.querySelector('polyline').style.strokeDasharray = '2 9';
+             if (panel.plotType === 'bar') chart.querySelector('polyline').style.strokeDasharray = '5 5';
              if (panel.series === 'goes' && (channels.goes || []).includes('xrsa')) {
                const line = document.createElement('span'); line.className = 'canvas-second-line';
                line.textContent = 'XRS-A (0.05–0.4 nm) · XRS-B (0.1–0.8 nm)'; chart.append(line);
@@ -321,8 +353,11 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
                 line.textContent = '26–34 nm — — · 0.1–50 nm ━'; chart.append(line);
              }
             const column = panel.series.split(':')[1];
-              units.textContent = panel.series === 'goes' || panel.series === 'soho' ?
-                'Flux change (%)' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
+               units.textContent = panel.series === 'goes' || panel.series === 'soho' ?
+                 (fluxMode.value === 'relative' ? 'Flux change (%)' :
+                   panel.series === 'goes' ? 'Flux (W m⁻²)' : 'EUV (photons cm⁻² s⁻¹)') :
+                 (column === 'day_night_index' ? 'Day/night index (unitless)' :
+                   `${column?.replace('_index', '').toUpperCase()} (${panel.series.startsWith('roti:') ? 'TECu/min' : 'TECu'})`);
                xLabel.textContent = 'Time (UTC)'; ticks.textContent = previewTicks();
              if (location.start && location.end) {
                const start = Date.parse(location.start), end = Date.parse(location.end);
@@ -397,7 +432,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          }
          if (!rect) { message.textContent = text('Free a slot before adding another panel.', 'Освободите место для новой панели.'); return; }
         const first = Object.keys(series)[0];
-         const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first), customColor: false,
+          const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first), customColor: false,
+            plotType: 'auto', fillNegative: false,
            rect};
          panels.push(panel); selected = panel.id; render();
          markCustom();
@@ -409,8 +445,12 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          panels.splice(index, 1); selected = panels.at(-1)?.id || null; markCustom(); render();
       };
       select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
-          panel.series = select.value; panel.color = defaultColor(panel.series); panel.customColor = false;
-          markCustom(); render(); };
+           panel.series = select.value; panel.color = defaultColor(panel.series); panel.customColor = false; panel.plotType = 'auto';
+           markCustom(); render(); };
+       plotType.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
+         panel.plotType = plotType.value; markCustom(); render(); };
+       fillNegative.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
+         panel.fillNegative = fillNegative.checked; markCustom(); render(); };
        color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
           panel.color = color.value; panel.customColor = true; markCustom(); render(); };
        epoch.onchange = render;
@@ -425,8 +465,47 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       width.onchange = () => changeSize('w', width);
       height.onchange = () => changeSize('h', height);
         const initialTemplate = Object.keys(templates).find(name => templates[name]);
-        if (initialTemplate) applyTemplate(initialTemplate); else addPanel();
-      document.getElementById('generatePlot').onclick = async () => {
+         if (initialTemplate) applyTemplate(initialTemplate); else addPanel();
+       function payload() {
+         return {event: eventPath, layout: 'free', style: style.value, epoch: epoch.value || null,
+           print_size: printSize.value, flux_mode: fluxMode.value, shared_y: sharedY.checked,
+           title: document.getElementById('plotTitle').value,
+           email: document.getElementById('plotEmail').value, panels: panels.map(panel => ({series: panel.series,
+             color: panel.color, plot_type: panel.plotType, fill_negative: panel.fillNegative, rect: panel.rect}))};
+       }
+       let draftUrl = null;
+       function invalidateDraft() { draftVersion++; document.getElementById('draftPlot').hidden = true; }
+       printSize.addEventListener('change', () => {
+         if (printSize.value === 'one-column' && panels.length > 2) {
+           printSize.value = 'two-column';
+           message.textContent = text('A one-column figure fits at most two panels. Remove panels first.',
+             'Рисунок в одну колонку вмещает не более двух панелей. Сначала удалите лишние.');
+         }
+         document.getElementById('plotCanvas').dataset.printSize = printSize.value;
+       });
+       fluxMode.addEventListener('change', render);
+       for (const field of [style, printSize, fluxMode, sharedY, epoch, document.getElementById('plotTitle')]) {
+         field.addEventListener('change', invalidateDraft);
+       }
+       document.getElementById('previewPlot').onclick = async () => {
+         const button = document.getElementById('previewPlot'); button.disabled = true;
+         const version = draftVersion;
+         message.textContent = text('Rendering draft from event data…', 'Строим черновик по данным события…');
+         try {
+           const response = await fetch('/api/plots/preview', {method: 'POST', headers: {'Content-Type': 'application/json'},
+             body: JSON.stringify(payload())});
+           if (!response.ok) throw Error((await response.json()).error || 'Preview failed');
+           const blob = await response.blob();
+           if (version !== draftVersion) return;
+           if (draftUrl) URL.revokeObjectURL(draftUrl);
+           draftUrl = URL.createObjectURL(blob);
+           document.getElementById('draftImage').src = draftUrl;
+           document.getElementById('draftPlot').hidden = false;
+           message.textContent = text('Draft is ready. Check labels at the chosen print width.',
+             'Черновик готов. Проверьте подписи при выбранной ширине печати.');
+         } catch (error) { message.textContent = error.message; } finally { button.disabled = false; }
+       };
+       document.getElementById('generatePlot').onclick = async () => {
          if (!panels.length) { message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }
          if (Object.keys(epochs).length && !epoch.value) {
            message.textContent = text('Selected maps have no common observation time.', 'У выбранных карт нет общего времени наблюдения.'); return;
@@ -436,13 +515,12 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         message.textContent = text('Generating plot…', 'Построение графика…');
         try {
           const response = await fetch('/api/plots', {method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({event: eventPath, layout: 'free', style: style.value, epoch: epoch.value || null, title: document.getElementById('plotTitle').value,
-               email: email.value, panels: panels.map(panel => ({series: panel.series, color: panel.color,
-                 rect: panel.rect}))})});
+               body: JSON.stringify(payload())});
           const result = await response.json();
           if (!response.ok) throw Error(result.error || 'Failed to create plot');
           document.getElementById('renderedImage').src = result.url;
-          document.getElementById('renderedLink').href = result.url;
+           document.getElementById('renderedLink').href = result.url;
+           document.getElementById('figureCaption').textContent = result.caption;
           document.getElementById('renderedPlot').hidden = false;
           message.textContent = text('Saved. Find it later by email in the catalog.', 'Сохранено. Позже найдите график по почте в каталоге.');
         } catch (error) { message.textContent = error.message; } finally { button.disabled = false; }
@@ -470,7 +548,9 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       .studio-scroll { overflow-x: auto; padding: 14px; background: #edf2f7; border-radius: 0 0 12px 12px; }
        .plot-canvas { position: relative; width: 100%; min-width: 620px; aspect-ratio: 12 / 8.5; overflow: hidden; background: #fff;
          border: 1px solid #cbd5e1; box-shadow: 0 5px 22px #1422351c; }
-       .plot-canvas[data-style="plotter"] { background: #f4f7fb; }
+        .plot-canvas[data-style="plotter"] { background: #f4f7fb; }
+        .plot-canvas[data-print-size="one-column"] { width: min(100%, 560px); min-width: 380px;
+          aspect-ratio: 3.5 / 4.95; margin: 0 auto; }
         .plot-canvas[data-style="simple"] .canvas-title { font-weight: 700; color: #111; }
        .plot-canvas[data-style="simple"] .canvas-subtitle { color: #333; }
        .plot-canvas[data-style="simple"] .canvas-panel { border-color: #ddd; box-shadow: none; }
@@ -544,7 +624,14 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .studio-tab-panel[hidden] { display: none; }
       .studio-sidebar label, .panel-settings { display: grid; gap: 5px; }
       .studio-sidebar input, .studio-sidebar select { width: 100%; min-height: 38px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; }
-      .studio-sidebar input[type=color] { padding: 3px; }
+       .studio-sidebar input[type=color] { padding: 3px; }
+       .studio-sidebar .studio-checkbox { display: flex; align-items: center; gap: 8px; }
+       .studio-checkbox input { width: auto; min-height: 0; }
+       #draftPlot[hidden], #plotTypeField[hidden], #negativeField[hidden] { display: none; }
+       #draftPlot { text-align: center; padding: 16px; background: white; color: #333; }
+       #draftPlot img { display: block; max-width: 100%; max-height: 650px; margin: auto; }
+       #draftPlot p { font-size: 12px; }
+       .figure-caption { line-height: 1.5; font-size: 13px; }
       .studio-note { color: var(--muted); font-size: 12px; margin: 0; }
       .panel-settings { gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
         .panel-settings[hidden], #colorField[hidden], #mapPalette[hidden], #renderedPlot[hidden] { display: none; }

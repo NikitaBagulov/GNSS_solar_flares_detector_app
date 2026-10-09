@@ -18,8 +18,11 @@ from types import SimpleNamespace
 
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
+PRODUCT_UNITS = {product: "TECu/min" if product == "roti" else "TECu" for product in PRODUCTS}
 SERIES = {"goes": "GOES X-ray flux", "soho": "SOHO/SEM EUV flux", "sun": "Solar disk"}
 PLOT_STYLES = ("plotter", "simple")
+PRINT_SIZES = {"two-column": (7.2, 5.1), "one-column": (3.5, 4.95)}
+PLOT_TYPES = ("auto", "line", "points", "bar")
 SIMPLE_COLORS = {"goes": "#111111", "soho": "#006400", "day_night_index": "#333333",
                  "gsflai_index": "#006400", "isfai_index": "#333333"}
 for product in PRODUCTS:
@@ -125,6 +128,8 @@ def validate_request(event: Path, request: dict) -> dict:
     panels = request.get("panels")
     if not isinstance(panels, list) or not 1 <= len(panels) <= 6:
         raise ValueError("Choose between 1 and 6 panels")
+    if request.get("print_size") == "one-column" and request.get("layout") == "free" and len(panels) > 2:
+        raise ValueError("One-column figures support at most two panels; choose two columns for a composite figure")
     epochs = map_epochs(event)
     selected_maps = {p.get("series") for p in panels if isinstance(p, dict)
                      and str(p.get("series", "")).startswith("map:")}
@@ -178,11 +183,28 @@ def validate_request(event: Path, request: dict) -> dict:
     style = request.get("style", "plotter")
     if style not in PLOT_STYLES:
         raise ValueError("Invalid plot style")
+    print_size = request.get("print_size", "two-column")
+    if print_size not in PRINT_SIZES:
+        raise ValueError("Invalid publication size")
+    flux_mode = request.get("flux_mode", "relative")
+    if flux_mode not in ("relative", "physical"):
+        raise ValueError("Invalid flux units")
+    if not isinstance(request.get("shared_y", False), bool):
+        raise ValueError("Invalid shared scale setting")
+    for panel in panels:
+        if panel.get("plot_type", "auto") not in PLOT_TYPES:
+            raise ValueError("Invalid plot type")
+        if not isinstance(panel.get("fill_negative", False), bool):
+            raise ValueError("Invalid negative fill setting")
+        if (panel["series"] == "sun" or panel["series"].startswith("map:")) and panel.get("plot_type", "auto") != "auto":
+            raise ValueError("Plot type applies to time series only")
     title = request.get("title", "")
     if not isinstance(title, str) or len(title) > 100:
         raise ValueError("Title must be at most 100 characters")
     email = normalize_email(request.get("email"))
-    return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email, "epoch": epoch}
+    return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email,
+            "epoch": epoch, "print_size": print_size, "flux_mode": flux_mode,
+            "shared_y": request.get("shared_y", False)}
 
 
 def _read_csv_channels(path: Path, columns: tuple[str, ...]):
@@ -262,7 +284,38 @@ def _relative_flux(measurements: dict) -> dict | None:
     return result
 
 
-def render_plot(event: Path, request: dict) -> bytes:
+def figure_caption(event: Path, request: dict) -> str:
+    """Accompanying manuscript caption; kept outside the axes to protect plot space."""
+    from flare_metadata import flare_metadata
+
+    request = validate_request(event, request)
+    metadata = flare_metadata(event)
+    moment = request["epoch"]
+    names = [SERIES[panel["series"]] for panel in request["panels"]]
+    description = "; ".join(f"({chr(65 + i)}) {name}" for i, name in enumerate(names))
+    parts = [f"{metadata['date']} {metadata['class']} solar flare: {description}."]
+    if metadata.get("peak"):
+        parts.append(f"Flare peak at {datetime.fromisoformat(metadata['peak']):%H:%M} UTC.")
+    if metadata.get("start") and metadata.get("end"):
+        parts.append("Event interval: "
+                     f"{datetime.fromisoformat(metadata['start']):%H:%M}–"
+                     f"{datetime.fromisoformat(metadata['end']):%H:%M} UTC.")
+    if moment and any(panel["series"].startswith("map:") for panel in request["panels"]):
+        parts.append(f"Maps and time-series observation markers correspond to {datetime.fromisoformat(moment):%H:%M} UTC.")
+    elif moment:
+        parts.append(f"Selected observation time: {datetime.fromisoformat(moment):%H:%M} UTC.")
+    if metadata.get("peak") and any(panel["series"] not in ("sun",) and not panel["series"].startswith("map:")
+                                    for panel in request["panels"]):
+        parts.append("Red dashed lines mark the flare peak; the dotted line marks the selected observation time when different.")
+    if request["flux_mode"] == "relative" and any(panel["series"] in ("goes", "soho") for panel in request["panels"]):
+        parts.append("Flux change is relative to the median of the first 10% of samples in the displayed interval for each channel; "
+                     "if insufficient, physical units are shown.")
+    if request["title"]:
+        parts.append(request["title"])
+    return " ".join(parts)
+
+
+def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
     request = validate_request(event, request)
     import matplotlib
 
@@ -297,12 +350,13 @@ def render_plot(event: Path, request: dict) -> bytes:
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
     rows = (len(panels) + columns - 1) // columns
     with PLOT_LOCK, plt.rc_context(params):
-        fig = plt.figure(figsize=(12, 8.5), facecolor=palette["figure"]) if free else None
+        fig = plt.figure(figsize=PRINT_SIZES[request["print_size"]], facecolor=palette["figure"]) if free else None
         if not free:
             fig, axes = plt.subplots(rows, columns, figsize=(7 * columns, 3.6 * rows), squeeze=False, constrained_layout=True)
         try:
             fig.patch.set_facecolor(palette["figure"])
             relative_flux_used = False
+            compatible_axes = {}
             for index, panel in enumerate(panels):
                 key = panel["series"]
                 if free:
@@ -318,7 +372,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                                         box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
                                         box_h * (.69 if sun_panel else .62 if map_panel else .64)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
-                    font_size = max(7, min(10, 10 * rect["w"] / .44, 10 * rect["h"] / .27))
+                    font_size = max(9, min(12, 14 * rect["w"] / .44, 14 * rect["h"] / .27))
                     title = SERIES[key]
                     if map_panel:
                         stamp = request["epoch"]
@@ -331,7 +385,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                               title, color=palette["ink"], weight="normal" if simple else "bold",
                               fontsize=font_size, va="center", ha="center", clip_on=True)
                     if not sun_panel:
-                        ax.tick_params(labelsize=max(6, font_size - 3), length=3, width=.7)
+                        ax.tick_params(labelsize=max(9, font_size - 2), length=3, width=.9)
                 else:
                     ax = axes[index // columns][index % columns]
                     if key.startswith("map:"):
@@ -388,8 +442,8 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ax.collections[-1].set_sizes([28])
                         ax.collections[-1].set_linewidths([1.2])
                         ax.collections[-1].set_color("#ad6115")
-                    ax.set_xlabel("Longitude")
-                    ax.set_ylabel("Latitude")
+                    ax.set_xlabel("Longitude (°)")
+                    ax.set_ylabel("Latitude (°)")
                     if free:
                         ax.set_title("", loc="center")  # The panel title is inside the draggable box.
                     else:
@@ -417,7 +471,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                             elif column_name != data_columns[-1]:
                                 del measurements[column_name]
                     if key == "goes" or key == "soho":
-                        relative = _relative_flux(measurements) if free else None
+                        relative = _relative_flux(measurements) if free and request["flux_mode"] == "relative" else None
                         if relative is not None:
                             measurements = relative
                             relative_flux_used = True
@@ -426,7 +480,8 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ylabel = "Flux change (%)" if relative is not None else (
                             "Flux (W m⁻²)" if key == "goes" else "EUV (photons cm⁻² s⁻¹)")
                     else:
-                        ylabel = {"day_night_index": "Day/night", "gsflai_index": "GSFLAI", "isfai_index": "ISFAI"}[column]
+                        ylabel = ("Day/night index (unitless)" if column == "day_night_index" else
+                                  f"{column.removesuffix('_index').upper()} ({PRODUCT_UNITS[product]})")
                     for column_name, (dates, values) in measurements.items():
                         secondary = column_name in ("xrsa", "flux_26_34")
                         line_color = ("#2878a5" if column_name == "xrsa" else "#333333") if secondary else color
@@ -438,9 +493,24 @@ def render_plot(event: Path, request: dict) -> bytes:
                                          "xrsb": "GOES XRS-B (0.1–0.8 nm)",
                                          "flux_26_34": "SOHO/SEM 26–34 nm",
                                          "flux_01_50": "SOHO/SEM 0.1–50 nm"}.get(column_name)
-                        ax.plot(dates, values, color=line_color, linewidth=1.3 if simple else 2,
-                                linestyle=line_style, label=channel_label if len(measurements) > 1 else None,
-                                solid_capstyle="round", marker="o" if len(dates) == 1 else None)
+                        plot_type = panel.get("plot_type", "auto")
+                        if plot_type == "auto":
+                            cadence = ((dates[-1] - dates[0]).total_seconds() / (len(dates) - 1)
+                                       if len(dates) > 1 else float("inf"))
+                            plot_type = "points" if cadence > 30 * 60 else "line"
+                        label = channel_label if len(measurements) > 1 else None
+                        if plot_type == "bar":
+                            span = (dates[-1] - dates[0]).total_seconds() / max(1, len(dates) - 1) if len(dates) > 1 else 60
+                            ax.bar(dates, values, width=timedelta(seconds=max(1, span * .75)), color=line_color,
+                                   alpha=.8, label=label)
+                        else:
+                            ax.plot(dates, values, color=line_color, linewidth=2 if simple else 2.2,
+                                    linestyle=line_style if plot_type == "line" else "None", label=label,
+                                    solid_capstyle="round", marker="o" if plot_type == "points" else None,
+                                    markersize=4.5)
+                            if panel.get("fill_negative") and plot_type == "line" and ax.get_yscale() == "linear":
+                                ax.fill_between(dates, values, 0, where=[value < 0 for value in values],
+                                                color=line_color, alpha=.18, interpolate=True)
                     if len(measurements) > 1:
                         ax.legend(loc="lower right", framealpha=.85, fontsize=max(6, font_size - 2) if free else 8)
                     if window and any(window[0] <= stamp <= window[1]
@@ -459,11 +529,15 @@ def render_plot(event: Path, request: dict) -> bytes:
                     # were extending into the neighboring panel in publication-sized figures.
                     wide = free and rect["w"] >= .75
                     ax.set_ylabel(ylabel if not free or wide else "", color=palette["ink"],
-                                  fontsize=max(7, font_size - 2) if free else None)
+                                  fontsize=max(9, font_size - 2) if free else None)
                     if free and not wide:
                         fig.text(left + box_w * .045, bottom + box_h * .83,
-                                  ylabel, color=palette["muted"], fontsize=max(6, font_size - 2), va="center")
-                    ax.set_xlabel("Time (UTC)", fontsize=max(7, font_size - 2) if free else None)
+                                  ylabel, color=palette["muted"], fontsize=max(8, font_size - 2), va="center")
+                    ax.set_xlabel("Time (UTC)", fontsize=max(9, font_size - 2) if free else None)
+                    if request["shared_y"]:
+                        compatible_axes.setdefault((key if key in ("goes", "soho") else
+                                                    column if column == "day_night_index" else (column, PRODUCT_UNITS[product]),
+                                                    ylabel, ax.get_yscale()), []).append(ax)
                     ax.xaxis.set_major_locator(AutoDateLocator(maxticks=(3 if rect["w"] < .48 else 5) if free else 10))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
                     if (free and simple and ax.get_yscale() == "linear" and
@@ -474,19 +548,26 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ax.spines["top"].set_visible(False)
                     ax.grid(True, color=palette["grid"], linewidth=.65)
                     ax.set_axisbelow(True)
+            if request["shared_y"]:
+                for siblings in compatible_axes.values():
+                    if len(siblings) > 1:
+                        lo = min(axis.get_ylim()[0] for axis in siblings)
+                        hi = max(axis.get_ylim()[1] for axis in siblings)
+                        for axis in siblings:
+                            axis.set_ylim(lo, hi)
             if not free:
                 for index in range(len(panels), rows * columns):
                     axes[index // columns][index % columns].set_visible(False)
             if relative_flux_used:
-                fig.text(.5, .012, "Flux change relative to the median of the first 10% of visible samples in each channel",
-                         ha="center", color=palette["muted"], fontsize=7)
+                fig.text(.5, .012, "Flux change (%): median of first 10% of displayed samples",
+                         ha="center", color=palette["muted"], fontsize=6 if request["print_size"] == "one-column" else 8)
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
-                         fontsize=16 if free else 13,
+                         fontsize=(11 if request["print_size"] == "one-column" else 15) if free else 13,
                          fontweight="bold", color=palette["ink"], y=.985)
             if caption and free:
                 fig.text(.5, .955, caption, ha="center", va="top",
-                         fontsize=9, color=palette["muted"])
+                          fontsize=8 if request["print_size"] == "one-column" else 10, color=palette["muted"])
             if free and any(panel["series"] != "sun" and not panel["series"].startswith("map:") for panel in panels):
                 legend = []
                 if peak_time and observation_time and observation_time != peak_time:
@@ -495,10 +576,11 @@ def render_plot(event: Path, request: dict) -> bytes:
                                          label=f"Selected time {observation_time:%H:%M} UTC"))
                 if legend:
                     fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .903),
-                               ncol=min(len(legend), 4), frameon=False, fontsize=8,
+                                ncol=min(len(legend), 4), frameon=False,
+                                fontsize=7 if request["print_size"] == "one-column" else 9,
                                labelcolor=palette["muted"])
             output = io.BytesIO()
-            fig.savefig(output, format="png", dpi=180, facecolor=fig.get_facecolor())
+            fig.savefig(output, format="png", dpi=dpi, facecolor=fig.get_facecolor())
             return output.getvalue()
         finally:
             plt.close(fig)
@@ -520,7 +602,7 @@ def cleanup_cache(cache: Path, now: float | None = None) -> None:
             path.unlink(missing_ok=True)
 
 
-def store_plot(cache: Path, image: bytes, email: str, event: str, title: str) -> str:
+def store_plot(cache: Path, image: bytes, email: str, event: str, title: str, caption: str = "") -> str:
     cache.mkdir(parents=True, exist_ok=True)
     name = f"{uuid.uuid4().hex}.png"
     image_path = cache / name
@@ -528,7 +610,7 @@ def store_plot(cache: Path, image: bytes, email: str, event: str, title: str) ->
         output.write(image)
     try:
         image_path.with_suffix(".json").write_text(
-            json.dumps({"email": email, "event": event, "title": title}, ensure_ascii=False), encoding="utf-8"
+            json.dumps({"email": email, "event": event, "title": title, "caption": caption}, ensure_ascii=False), encoding="utf-8"
         )
     except OSError:
         image_path.unlink(missing_ok=True)
@@ -548,7 +630,7 @@ def plots_for_email(cache: Path, email: str) -> list[dict]:
                 continue
             created = image.stat().st_mtime
             plots.append({"url": f"/generated/{image.name}", "delete_url": f"/api/plots/{image.name}",
-                          "event": data["event"], "title": data["title"],
+                           "event": data["event"], "title": data["title"], "caption": data.get("caption", ""),
                           "created_at": datetime.fromtimestamp(created).isoformat(timespec="seconds"),
                           "expires_at": datetime.fromtimestamp(created + TTL_SECONDS).isoformat(timespec="seconds")})
         except (OSError, ValueError, KeyError, TypeError):

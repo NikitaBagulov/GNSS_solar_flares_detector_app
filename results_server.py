@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from plot_requests import TTL_SECONDS, cleanup_cache, event_channels, event_series, map_epochs, normalize_email, plots_for_email, render_plot, store_plot
+from plot_requests import TTL_SECONDS, cleanup_cache, event_channels, event_series, figure_caption, map_epochs, normalize_email, plots_for_email, render_plot, store_plot
 from plot_editor import editor_content
 
 
@@ -128,6 +128,10 @@ UI_TRANSLATIONS = {
     "Plot studio": "Редактор графиков",
     "Back to event": "Вернуться к событию",
     "Layout preview": "Предпросмотр расположения",
+    "Arrange panels here; use the draft button to inspect actual measurements before saving.": "Расположите панели здесь; перед сохранением проверьте реальные измерения на черновике.",
+    "Preview real data": "Предпросмотр данных",
+    "Draft preview · changes to the panels require a new preview.": "Черновик · после изменения панелей обновите предпросмотр.",
+    "Draft rendered from event measurements": "Черновик по данным события",
     "Panels": "Панели",
     "Appearance": "Оформление",
     "Result": "Результат",
@@ -147,6 +151,20 @@ UI_TRANSLATIONS = {
     "Custom layout · your changes are kept until you choose another template.": "Своя компоновка · изменения сохраняются, пока вы не выберете другой шаблон.",
     "Panel layout, event markers and observation time are previewed here; actual data appears after generation.": "Здесь показаны расположение панелей, метки события и время наблюдения; данные появятся после построения.",
     "Selected panel": "Выбранная панель",
+    "Display as": "Способ отображения",
+    "Automatic": "Автоматически",
+    "Line": "Линия",
+    "Points": "Точки",
+    "Bars": "Столбцы",
+    "Shade values below zero": "Закрашивать значения ниже нуля",
+    "Publication width": "Ширина в публикации",
+    "Two columns · 7.2 × 5.1 in": "Две колонки · 7,2 × 5,1 дюйма",
+    "One column · 3.5 × 4.95 in": "Одна колонка · 3,5 × 4,95 дюйма",
+    "Export at 300 dpi; inspect text at the selected print size.": "Экспорт 300 dpi; проверяйте подписи в выбранном печатном размере.",
+    "GOES / SOHO values": "Значения GOES / SOHO",
+    "Change from early baseline (%)": "Изменение относительно фона (%)",
+    "Physical flux units": "Физические единицы потока",
+    "Match Y limits for compatible panels": "Одинаковая шкала Y у совместимых панелей",
     "Plot style": "Стиль графика",
     "Simple · white, fine grid": "Простой · белый фон, тонкая сетка",
     "Plotter · colored axes": "Plotter · цветные оси",
@@ -159,6 +177,7 @@ UI_TRANSLATIONS = {
     "Remove selected panel": "Удалить панель",
     "Generate plot": "Построить график",
     "Open full-size plot": "Открыть график в полном размере",
+    "Figure caption": "Подпись к рисунку",
     "Use the same email in the catalog to find your plots. No messages are sent.": "Введите ту же почту в каталоге, чтобы найти графики. Письма не отправляются.",
     "Drag panels by their headers and resize from the lower-right corner.": "Перетаскивайте панели за заголовки и меняйте размер за правый нижний угол.",
     "Build plot": "Построить график",
@@ -916,7 +935,14 @@ def render_dashboard(root: Path) -> bytes:
               const deleted = await fetch(plot.delete_url, {{method: 'DELETE'}});
               if (deleted.ok) {{ row.remove(); status.textContent = text('Plot deleted.', 'График удалён.'); }}
             }};
-            row.append(link, description, remove); results.append(row);
+             row.append(link, description);
+             if (plot.caption) {{
+               const details = document.createElement('details');
+               const summary = document.createElement('summary'); summary.textContent = text('Figure caption', 'Подпись к рисунку');
+               const caption = document.createElement('p'); caption.textContent = plot.caption;
+               details.append(summary, caption); row.append(details);
+             }}
+             row.append(remove); results.append(row);
           }}
         }} catch (error) {{ status.textContent = error.message; }}
       }});
@@ -1400,7 +1426,7 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         endpoint = urlparse(self.path).path
-        if endpoint not in ("/api/plots", "/api/plots/search"):
+        if endpoint not in ("/api/plots", "/api/plots/preview", "/api/plots/search"):
             self.send_error(404)
             return
         try:
@@ -1419,12 +1445,18 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
             if request["event"] not in {event["path"] for event in events}:
                 raise ValueError("Unknown event")
             event_path = (self._root_dir() / request["event"]).resolve()
+            if endpoint == "/api/plots/preview":
+                # Drafts are rendered from the real measurements without creating a cached plot.
+                draft = {**request, "email": "preview@localhost.test"}
+                return self._send_bytes(render_plot(event_path, draft, dpi=90), "image/png")
             normalized = render_plot(event_path, request)
+            caption = figure_caption(event_path, request)
             cache = self._root_dir() / ".plot-cache"
             cleanup_cache(cache)
-            name = store_plot(cache, normalized, normalize_email(request.get("email")), request["event"], request.get("title", ""))
+            name = store_plot(cache, normalized, normalize_email(request.get("email")), request["event"], request.get("title", ""), caption)
             url = f"/generated/{name}"
-            result = {"url": url, "expires_in_seconds": TTL_SECONDS, "delete_url": f"/api/plots/{name}"}
+            result = {"url": url, "expires_in_seconds": TTL_SECONDS, "delete_url": f"/api/plots/{name}",
+                      "caption": caption}
             return self._send_json(result)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             payload = json.dumps({"error": str(exc)}).encode("utf-8")
