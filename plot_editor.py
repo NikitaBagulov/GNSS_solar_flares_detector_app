@@ -25,45 +25,59 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       <h1>Plot studio</h1><p>__EVENT_NAME__ · Drag panels by their headers and resize from the lower-right corner.</p></div></header>
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
-             <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and observation time are previewed here; actual data appears after generation.</span>
-            <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
+              <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and observation time are previewed here; actual data appears after generation.</span></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
             <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
             <span id="canvasSubtitle" class="canvas-subtitle">__SUBTITLE__</span>
             <span id="canvasLegend" class="canvas-legend"></span>
           <div id="plotStage" class="plot-stage" aria-label="Drag and resize plot panels"></div></div></div>
       </section>
-      <aside class="studio-sidebar">
-         <h2>Plot settings</h2>
-          <label>Figure template <select id="figureTemplate">
+       <aside class="studio-sidebar">
+          <h2>Plot settings</h2>
+          <div class="studio-tabs" role="tablist" aria-label="Plot settings">
+            <button type="button" id="tab-layout" role="tab" aria-controls="section-layout" aria-selected="true" tabindex="0" data-tab="layout">Panels</button>
+            <button type="button" id="tab-style" role="tab" aria-controls="section-style" aria-selected="false" tabindex="-1" data-tab="style">Appearance</button>
+            <button type="button" id="tab-export" role="tab" aria-controls="section-export" aria-selected="false" tabindex="-1" data-tab="export">Result</button>
+          </div>
+          <section id="section-layout" class="studio-tab-panel" role="tabpanel" aria-labelledby="tab-layout">
+           <p class="studio-note">Choose a template or drag panels on the canvas. Changes are kept when switching tabs.</p>
+           <label>Figure template <select id="figureTemplate">
             <option value="overview">Flare overview · map + Sun + flux</option>
             <option value="irradiance">Solar irradiance · Sun + GOES + SOHO</option>
             <option value="response">Ionospheric response · map + index + flux</option>
             <option value="comparison">Map comparison · two products</option>
             <option value="timeline">Time series · stacked panels</option>
             <option value="custom">Custom layout</option>
-          </select></label>
-          <p class="studio-note" id="templateHint">Choose a template, then drag, resize or edit panels to customize it.</p>
-          <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
-            <option value="plotter">Plotter · colored axes</option></select></label>
-          <label>Observation time (UTC) <select id="observationTime"></select></label>
-          <p class="studio-note" id="observationHint">One time for all maps and time-series panels, from the available HDF5 datasets.</p>
-         <label>Additional caption <input id="plotTitle" maxlength="100" placeholder="Optional description"></label>
-        <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
-        <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
-        <div id="panelSettings" class="panel-settings">
-          <h3>Selected panel</h3>
-          <label>Data series <select id="panelSeries"></select></label>
-           <label id="colorField">Line color <input id="panelColor" type="color" value="#2878a5"></label>
-             <p id="mapPalette" class="studio-note" hidden>Fixed map scales: ROTI · viridis 0–0.5 TECu/min; dTEC · RdBu_r −0.5…0.5 TECu.</p>
-          <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
-            <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
-          <button type="button" class="button" id="removePanel">Remove selected panel</button>
-        </div>
-        <button type="button" class="button studio-generate" id="generatePlot">Generate plot</button>
-        <div id="plotMessage" role="status" aria-live="polite"></div>
-        <div id="renderedPlot" hidden><a id="renderedLink" target="_blank" rel="noopener">Open full-size plot</a>
-          <img id="renderedImage" alt="Generated plot"></div>
+           </select></label>
+           <p class="studio-note" id="templateHint">Choose a template, then drag, resize or edit panels to customize it.</p>
+           <button type="button" class="button" id="addPlotPanel">+ Add panel</button>
+         <div id="panelSettings" class="panel-settings">
+           <h3>Selected panel</h3>
+           <label>Data series <select id="panelSeries"></select></label>
+           <div class="size-fields"><label>Width (%) <input id="panelWidth" type="number" min="16" max="100" step="1"></label>
+             <label>Height (%) <input id="panelHeight" type="number" min="16" max="100" step="1"></label></div>
+           <button type="button" class="button" id="removePanel">Remove selected panel</button>
+         </div>
+          </section>
+          <section id="section-style" class="studio-tab-panel" role="tabpanel" aria-labelledby="tab-style" hidden>
+           <p class="studio-note">Style and observation time apply to the whole figure.</p>
+           <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
+             <option value="plotter">Plotter · colored axes</option></select></label>
+           <label>Observation time (UTC) <select id="observationTime"></select></label>
+           <p class="studio-note" id="observationHint">One time for all maps and time-series panels, from the available HDF5 datasets.</p>
+           <label>Additional caption <input id="plotTitle" maxlength="100" placeholder="Optional description"></label>
+           <label id="colorField">Selected panel line color <input id="panelColor" type="color" value="#2878a5"></label>
+           <p id="mapPalette" class="studio-note" hidden>Fixed map scales: ROTI · viridis 0–0.5 TECu/min; dTEC · RdBu_r −0.5…0.5 TECu.</p>
+          </section>
+          <section id="section-export" class="studio-tab-panel" role="tabpanel" aria-labelledby="tab-export" hidden>
+           <p class="studio-note">Generate your plot after arranging and styling the panels.</p>
+           <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
+           <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
+         <button type="button" class="button studio-generate" id="generatePlot">Generate plot</button>
+         <div id="plotMessage" role="status" aria-live="polite"></div>
+         <div id="renderedPlot" hidden><a id="renderedLink" target="_blank" rel="noopener">Open full-size plot</a>
+           <img id="renderedImage" alt="Generated plot"></div>
+          </section>
       </aside>
     </div>
     <script>
@@ -85,6 +99,27 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       const height = document.getElementById('panelHeight');
        const panels = [];
        let selected = null;
+       const tabs = [...document.querySelectorAll('.studio-tabs [role="tab"]')];
+       function setTab(name, focus = false) {
+         for (const tab of tabs) {
+           const active = tab.dataset.tab === name;
+           tab.setAttribute('aria-selected', String(active));
+           tab.tabIndex = active ? 0 : -1;
+           document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+           if (active && focus) tab.focus();
+         }
+       }
+       for (const tab of tabs) {
+         tab.addEventListener('click', () => setTab(tab.dataset.tab));
+         tab.addEventListener('keydown', event => {
+           const current = tabs.indexOf(tab);
+           const next = event.key === 'ArrowRight' ? (current + 1) % tabs.length :
+             event.key === 'ArrowLeft' ? (current + tabs.length - 1) % tabs.length :
+             event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+           if (next < 0) return;
+           event.preventDefault(); setTab(tabs[next].dataset.tab, true);
+         });
+       }
        const templatePicker = document.getElementById('figureTemplate');
        const templateHint = document.getElementById('templateHint');
        const has = (...keys) => keys.every(key => key in series);
@@ -220,9 +255,13 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         const option = document.createElement('option'); option.value = key; option.textContent = label; select.append(option);
       }
       function syncSettings() {
-        const panel = panels.find(item => item.id === selected);
-        document.getElementById('panelSettings').hidden = !panel;
-        if (!panel) return;
+         const panel = panels.find(item => item.id === selected);
+         document.getElementById('panelSettings').hidden = !panel;
+         if (!panel) {
+           document.getElementById('colorField').hidden = true;
+           document.getElementById('mapPalette').hidden = true;
+           return;
+         }
         select.value = panel.series; color.value = panel.color;
         const map = panel.series.startsWith('map:');
          document.getElementById('colorField').hidden = map || panel.series === 'sun';
@@ -309,7 +348,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           handle.title = text('Drag to resize', 'Потяните для изменения размера');
           handle.setAttribute('aria-label', 'Resize panel');
            card.append(bar, chart, units, ticks, xLabel, yLabel, handle); position(card, panel.rect);
-          card.addEventListener('pointerdown', () => { selected = panel.id; syncSettings(); });
+           card.addEventListener('pointerdown', () => { selected = panel.id; syncSettings(); });
           card.addEventListener('keydown', event => {
             const moves = {ArrowLeft: [-.01, 0], ArrowRight: [.01, 0], ArrowUp: [0, -.01], ArrowDown: [0, .01]};
             if (!moves[event.key]) return;
@@ -318,7 +357,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
                y: clamp(panel.rect.y + dy, 0, 1 - panel.rect.h)}); position(card, panel.rect);
           });
           function drag(event, resize) {
-            event.preventDefault(); selected = panel.id; syncSettings();
+             event.preventDefault(); selected = panel.id; syncSettings();
             const startX = event.clientX, startY = event.clientY, initial = {...panel.rect};
             const target = event.currentTarget;
             target.setPointerCapture(event.pointerId);
@@ -424,7 +463,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       .studio-heading { margin-bottom: 18px; }
       .studio-heading h1 { margin: 12px 0 4px; }
       .studio-heading p, .studio-back { color: var(--muted); }
-      .studio-layout { display: grid; grid-template-columns: minmax(0, 1fr) 295px; gap: 16px; align-items: start; }
+       .studio-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
       .studio-workspace, .studio-sidebar { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
       .studio-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px; }
       .studio-toolbar span { flex: 1; color: var(--muted); font-size: 12px; }
@@ -491,9 +530,18 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          border-left: 6px solid #2a9d8f; font-size: clamp(6px, .6vw, 8px); overflow-wrap: anywhere; }
       .resize-handle { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
         background: linear-gradient(135deg, transparent 49%, var(--accent) 50%, var(--accent) 57%, transparent 58%); }
-      .studio-sidebar { padding: 18px; display: grid; gap: 12px; }
-      .studio-sidebar h2, .studio-sidebar h3 { margin: 0; font-size: 17px; }
-      .studio-sidebar h3 { font-size: 14px; }
+       .studio-sidebar { padding: 18px; display: grid; gap: 16px; }
+       .studio-sidebar h2, .studio-sidebar h3 { margin: 0; font-size: 17px; }
+       .studio-sidebar h3 { font-size: 14px; }
+       .studio-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+         padding: 4px; background: #edf2f7; border-radius: 9px; }
+       .studio-tabs button { min-width: 0; padding: 9px 3px; border: 0; border-radius: 6px;
+         background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+       .studio-tabs button[aria-selected="true"] { background: var(--surface); color: var(--text);
+         box-shadow: 0 1px 5px #14223522; font-weight: 700; }
+       .studio-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+       .studio-tab-panel { display: grid; gap: 14px; align-content: start; min-width: 0; }
+       .studio-tab-panel[hidden] { display: none; }
       .studio-sidebar label, .panel-settings { display: grid; gap: 5px; }
       .studio-sidebar input, .studio-sidebar select { width: 100%; min-height: 38px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; font: inherit; }
       .studio-sidebar input[type=color] { padding: 3px; }
@@ -505,8 +553,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       .studio-generate:disabled { opacity: .55; cursor: wait; }
       #plotMessage { overflow-wrap: anywhere; }
       #renderedPlot img { display: block; width: 100%; margin-top: 8px; border: 1px solid var(--line); }
-      @media (max-width: 950px) { .studio-layout { grid-template-columns: 1fr; } .studio-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .studio-sidebar h2, .panel-settings, .studio-note, #plotMessage, #renderedPlot { grid-column: 1 / -1; } }
-      @media (max-width: 560px) { .studio-sidebar { grid-template-columns: 1fr; } .studio-sidebar > * { grid-column: 1 / -1; } }
+       @media (max-width: 950px) { .studio-layout { grid-template-columns: 1fr; } .studio-sidebar { order: -1; } }
     </style>
     """
     return body, css

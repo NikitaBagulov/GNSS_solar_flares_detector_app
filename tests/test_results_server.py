@@ -170,6 +170,16 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     (event / "goes_xray.csv").write_text("time,xrsb\n2025-11-11T01:00:00Z,0.2\n", encoding="utf-8")
     page = render_plot_editor_page(tmp_path, event).decode("utf-8")
     assert 'id="plotCanvas"' in page
+    assert 'role="tablist"' in page
+    for name in ('layout', 'style', 'export'):
+        assert f'id="tab-{name}" role="tab" aria-controls="section-{name}"' in page
+        assert f'id="section-{name}" class="studio-tab-panel" role="tabpanel"' in page
+    assert 'id="section-style" class="studio-tab-panel" role="tabpanel" aria-labelledby="tab-style" hidden' in page
+    assert 'id="section-export" class="studio-tab-panel" role="tabpanel" aria-labelledby="tab-export" hidden' in page
+    assert page.index('id="figureTemplate"') < page.index('id="section-style"')
+    assert page.index('id="plotStyle"') < page.index('id="section-export"')
+    assert page.index('id="plotEmail"') > page.index('id="section-export"')
+    assert '.studio-tab-panel[hidden] { display: none; }' in page
     assert 'id="plotStage"' in page
     assert 'id="canvasTitle"' in page
     assert 'id="canvasSubtitle"' in page
@@ -215,6 +225,43 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
             script = segment.split("</script>", 1)[0]
             check = subprocess.run(["node", "--check"], input=script, text=True, capture_output=True)
             assert check.returncode == 0, check.stderr
+
+
+def test_plot_studio_tabs_switch_with_mouse_and_keyboard():
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        return
+    from plot_editor import editor_content
+
+    body, _ = editor_content({"path": "X/event", "name": "event"}, {"sun": "Solar disk"}, {},
+                             {"x": None, "y": None, "class": "X1", "start": None, "peak": None, "end": None}, {})
+    snippet = body.split("const tabs =", 1)[1].split("const templatePicker =", 1)[0]
+    fake_dom = """
+    const assert = require('node:assert/strict');
+    const names = ['layout', 'style', 'export'];
+    const sections = Object.fromEntries(names.map(name => ['section-' + name, {hidden: name !== 'layout'}]));
+    const fakeTabs = names.map(name => ({dataset: {tab: name}, attrs: {'aria-controls': 'section-' + name},
+      events: {}, setAttribute(key, value) {this.attrs[key] = value;},
+      getAttribute(key) {return this.attrs[key];},
+      addEventListener(key, handler) {this.events[key] = handler;}, focus() {this.focused = true;}}));
+    const document = {querySelectorAll: () => fakeTabs, getElementById: id => sections[id]};
+    """
+    verify = """
+    fakeTabs[1].events.click();
+    assert.deepEqual(names.map(name => sections['section-' + name].hidden), [true, false, true]);
+    assert.equal(fakeTabs[1].attrs['aria-selected'], 'true');
+    fakeTabs[1].events.keydown({key: 'ArrowRight', preventDefault() {}});
+    assert.deepEqual(names.map(name => sections['section-' + name].hidden), [true, true, false]);
+    assert.equal(fakeTabs[2].tabIndex, 0);
+    assert.equal(fakeTabs[2].focused, true);
+    fakeTabs[2].events.keydown({key: 'Home', preventDefault() {}});
+    assert.deepEqual(names.map(name => sections['section-' + name].hidden), [false, true, true]);
+    """
+    result = subprocess.run(["node", "-e", fake_dom + "const tabs =" + snippet + verify],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_plot_templates_fit_and_require_available_data():
