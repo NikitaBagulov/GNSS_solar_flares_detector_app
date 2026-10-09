@@ -356,16 +356,16 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                 key = panel["series"]
                 if free:
                     rect = panel["rect"]
-                    left = .055 + rect["x"] * .89
-                    bottom = .055 + (1 - rect["y"] - rect["h"]) * .82
-                    box_w, box_h = rect["w"] * .89, rect["h"] * .82
+                    left = .035 + rect["x"] * .93
+                    bottom = .04 + (1 - rect["y"] - rect["h"]) * .84
+                    box_w, box_h = rect["w"] * .93, rect["h"] * .84
                     map_panel = key.startswith("map:")
                     sun_panel = key == "sun"
                     time_left = .19 if rect["w"] < .55 else .14
-                    ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else time_left),
-                                         bottom + box_h * (.14 if sun_panel else .20 if map_panel else .19),
-                                         box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
-                                         box_h * (.69 if sun_panel else .62 if map_panel else .39 if rect["w"] < .6 and key in ("goes", "soho") else .51)),
+                    ax = fig.add_axes((left + box_w * (.06 if sun_panel else .11 if map_panel else time_left),
+                                         bottom + box_h * (.12 if sun_panel or map_panel else .13),
+                                         box_w * (.88 if sun_panel else .74 if map_panel else .94 - time_left),
+                                         box_h * (.76 if sun_panel or map_panel else .43 if rect["w"] < .6 and key in ("goes", "soho") else .59)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
                     font_size = max(10, min(12, 14 * rect["w"] / .44, 14 * rect["h"] / .27))
                     title = SERIES[key]
@@ -373,10 +373,10 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                         stamp = request["epoch"]
                         if stamp:
                             title = f"Global {key[4:].upper().replace('DTEC', 'dTEC')} map · {datetime.fromisoformat(stamp):%H:%M} UTC"
-                    fig.text(left + box_w * .015, bottom + box_h * .94,
+                    fig.text(left + box_w * .015, bottom + box_h * .96,
                              chr(65 + index), color=palette["ink"], weight="bold", fontsize=font_size + 3,
                              va="center")
-                    fig.text(left + box_w * .5, bottom + box_h * .94,
+                    fig.text(left + box_w * .5, bottom + box_h * .96,
                               title, color=palette["ink"], weight="normal" if simple else "bold",
                               fontsize=font_size, va="center", ha="center", clip_on=True)
                     if not sun_panel:
@@ -437,8 +437,11 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                         ax.collections[-1].set_sizes([28])
                         ax.collections[-1].set_linewidths([1.2])
                         ax.collections[-1].set_color("#ad6115")
-                    ax.set_xlabel("Longitude (°)")
-                    ax.set_ylabel("Latitude (°)")
+                    # Cartopy supplies geographic degree labels through gridlines.
+                    # Additional GeoAxes labels end up outside the free-layout figure.
+                    if not free:
+                        ax.set_xlabel("Longitude (°)")
+                        ax.set_ylabel("Latitude (°)")
                     if free:
                         ax.set_title("", loc="center")  # The panel title is inside the draggable box.
                     else:
@@ -572,7 +575,7 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                 for index in range(len(panels), rows * columns):
                     axes[index // columns][index % columns].set_visible(False)
             if relative_flux_used:
-                fig.text(.5, .012, "Flux change (%): median of first 10% of displayed samples",
+                fig.text(.5, .005, "Flux change (%): median of first 10% of displayed samples",
                          ha="center", color=palette["muted"], fontsize=9)
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
@@ -588,7 +591,7 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                     legend.append(Line2D([], [], color="#9a6400", linestyle=":", linewidth=1.4,
                                          label=f"Selected time {observation_time:%H:%M} UTC"))
                 if legend:
-                    fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .903),
+                    fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .923),
                                 ncol=min(len(legend), 4), frameon=False,
                                  fontsize=10,
                                labelcolor=palette["muted"])

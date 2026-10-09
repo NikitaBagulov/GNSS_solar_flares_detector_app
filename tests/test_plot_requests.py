@@ -282,6 +282,12 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
 @pytest.mark.parametrize("style", ["simple", "plotter"])
 def test_overview_keeps_legends_and_panel_labels_separate(event, monkeypatch, style):
     from matplotlib.figure import Figure
+    import flare_metadata as catalog
+
+    monkeypatch.setattr(catalog, "flare_metadata", lambda _: {
+        "class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T01:00:00+00:00",
+        "peak": "2025-11-11T01:05:00+00:00", "end": "2025-11-11T01:10:00+00:00",
+        "x": None, "y": None})
 
     (event / "soho_sem.csv").write_text(
         "time,flux_26_34,flux_01_50\n2025-11-11T01:00:00Z,100,200\n"
@@ -295,6 +301,15 @@ def test_overview_keeps_legends_and_panel_labels_separate(event, monkeypatch, st
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         goes, soho = [ax for ax in fig.axes if ax.get_ylabel() == "Flux change (%)"]
+        geographic = next(ax for ax in fig.axes if ax.child_axes)
+        assert geographic.get_window_extent(renderer).width >= fig.bbox.width * .4
+        assert geographic.get_xlabel() == geographic.get_ylabel() == ""
+        assert goes.get_window_extent(renderer).height >= fig.bbox.height * .11
+        assert soho.get_window_extent(renderer).height >= fig.bbox.height * .11
+        global_legend = fig.legends[0].get_window_extent(renderer)
+        for title in ("Global ROTI map", "Solar disk"):
+            label = next(text for text in fig.texts if text.get_text().startswith(title))
+            assert label.get_window_extent(renderer).y1 < global_legend.y0
         for key, axis, letter in (("GOES X-ray flux", goes, "C"),
                                   ("SOHO/SEM EUV flux", soho, "D")):
             title = next(text for text in fig.texts if text.get_text() == key)
@@ -309,11 +324,12 @@ def test_overview_keeps_legends_and_panel_labels_separate(event, monkeypatch, st
         return saved(fig, *args, **kwargs)
 
     monkeypatch.setattr(Figure, "savefig", inspect)
-    request = {"layout": "free", "style": style, "email": "test@example.org", "panels": [
-        {"series": "map:roti", "rect": {"x": .02, "y": .02, "w": .58, "h": .39}},
-        {"series": "sun", "rect": {"x": .64, "y": .02, "w": .34, "h": .39}},
-        {"series": "goes", "rect": {"x": .02, "y": .44, "w": .96, "h": .25}},
-        {"series": "soho", "rect": {"x": .02, "y": .72, "w": .96, "h": .26}},
+    request = {"layout": "free", "style": style, "email": "test@example.org",
+               "epoch": "2025-11-11 01:00:00.000000", "panels": [
+        {"series": "map:roti", "rect": {"x": .005, "y": .005, "w": .59, "h": .46}},
+        {"series": "sun", "rect": {"x": .63, "y": .005, "w": .36, "h": .46}},
+        {"series": "goes", "rect": {"x": .01, "y": .485, "w": .98, "h": .24}},
+        {"series": "soho", "rect": {"x": .01, "y": .75, "w": .98, "h": .24}},
     ]}
     assert render_plot(event, request, dpi=90).startswith(b"\x89PNG")
 
@@ -379,7 +395,7 @@ def test_each_plot_title_is_centered_in_free_and_vertical_layouts(event, monkeyp
         if layout == "free":
             for title, rect in zip(("GOES X-ray flux", "Solar disk", "Global ROTI map"), rects):
                 label = next(text for text in fig.texts if text.get_text().startswith(title))
-                assert label.get_position()[0] == pytest.approx(.055 + .89 * (rect["x"] + rect["w"] / 2))
+                assert label.get_position()[0] == pytest.approx(.035 + .93 * (rect["x"] + rect["w"] / 2))
                 assert label.get_ha() == "center"
         else:
             assert [ax.get_title(loc="center") for ax in fig.axes] == [

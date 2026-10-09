@@ -146,8 +146,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        const timelineKeys = ['goes', 'soho', indexKey].filter(key => key && key in series);
        const templates = {
          overview: has('map:roti', 'sun', 'goes', 'soho') && (epochs['map:roti'] || []).length ? [
-           ['map:roti', .02, .02, .58, .39], ['sun', .64, .02, .34, .39],
-           ['goes', .02, .44, .96, .25], ['soho', .02, .72, .96, .26]] : null,
+            ['map:roti', .005, .005, .59, .46], ['sun', .63, .005, .36, .46],
+            ['goes', .01, .485, .98, .24], ['soho', .01, .75, .98, .24]] : null,
          irradiance: has('sun', 'goes', 'soho') ? [
            ['sun', .02, .02, .30, .46], ['goes', .35, .02, .63, .46],
            ['soho', .02, .53, .96, .42]] : null,
@@ -552,27 +552,27 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: #63738a; }
         .canvas-legend { position: absolute; top: 9%; left: 5%; width: 90%; text-align: center; overflow: hidden;
           white-space: nowrap; text-overflow: ellipsis; font-size: 10px; color: #63738a; }
-      .plot-stage { position: absolute; left: 5.5%; top: 12.5%; width: 89%; height: 82%;
+       .plot-stage { position: absolute; left: 3.5%; top: 12%; width: 93%; height: 84%;
         background-image: linear-gradient(#eef2f7 1px, transparent 1px), linear-gradient(90deg, #eef2f7 1px, transparent 1px);
         background-size: 5% 5%; }
        .canvas-panel { position: absolute; min-width: 0; min-height: 0; background: white;
          border: 1px solid #dce4ee; box-shadow: 0 3px 12px #1e293b1c; overflow: hidden; color: #63738a; }
       .canvas-panel.active { border-color: var(--accent); box-shadow: 0 0 0 3px #2878a533; z-index: 2; }
-       .canvas-panel-bar { position: absolute; left: 4%; top: 3%; width: 92%; height: 15%; display: flex; align-items: center;
+        .canvas-panel-bar { position: absolute; left: 4%; top: 1%; width: 92%; height: 15%; display: flex; align-items: center;
          gap: 6px; cursor: grab; touch-action: none; user-select: none; color: #17243a; }
       .canvas-panel-bar:active { cursor: grabbing; }
        .canvas-panel-bar strong { position: absolute; left: 10%; width: 80%; text-align: center;
          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
        .canvas-panel-bar > span { position: relative; z-index: 1; }
-           .canvas-chart { position: absolute; left: 15%; top: 30%; width: 79%; height: 51%;
+           .canvas-chart { position: absolute; left: 15%; top: 28%; width: 79%; height: 59%;
          border-left: 1px solid #dce4ee; border-bottom: 1px solid #dce4ee;
          background: repeating-linear-gradient(to bottom, transparent 0 24%, #dce4ee 25% calc(25% + 1px)); }
-        .canvas-chart.canvas-map { left: 15%; top: 18%; width: 73%; height: 62%; background: #edf2f7; }
+         .canvas-chart.canvas-map { left: 11%; top: 12%; width: 74%; height: 76%; background: #edf2f7; }
          .canvas-panel[data-narrow="true"] .canvas-chart:not(.canvas-map):not(.canvas-sun) { left: 19%; width: 75%; }
-        .canvas-panel:has(.canvas-map) .canvas-xlabel, .canvas-panel:has(.canvas-map) .canvas-ticks { left: 15%; width: 73%; }
+         .canvas-panel:has(.canvas-map) .canvas-xlabel, .canvas-panel:has(.canvas-map) .canvas-ticks { left: 11%; width: 74%; }
        .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; opacity: .7; }
        .canvas-map svg { color: #2a9d8f; }
-       .canvas-chart.canvas-sun { left: 15%; top: 21%; width: 70%; height: 59%; border: 0; background: #101b2b; }
+        .canvas-chart.canvas-sun { left: 6%; top: 12%; width: 88%; height: 76%; border: 0; background: #101b2b; }
        .canvas-sun svg { opacity: 1; }
           .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
           .canvas-chart polyline.canvas-secondary { stroke: #333333; stroke-dasharray: 5 4; }
@@ -581,17 +581,17 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         .canvas-marker { position: absolute; top: 0; bottom: 0; z-index: 1; border-left: 1px dashed #7b8494; }
          .canvas-marker.peak { border-left: 1px dashed #bd4651; }
         .canvas-marker.map { border-left: 2px dotted #9a6400; }
-         .canvas-xlabel { position: absolute; top: 85%; left: 15%; width: 79%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
+          .canvas-xlabel { position: absolute; top: 90%; left: 15%; width: 79%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
          .canvas-units { position: absolute; top: 30%; bottom: 19%; left: 2%; writing-mode: vertical-rl;
            transform: rotate(180deg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
            font-size: clamp(6px, .7vw, 9px); color: #63738a; }
        .canvas-ylabel { position: absolute; top: 42%; left: 1%; width: 17%; text-align: center; overflow-wrap: anywhere;
          font-size: clamp(6px, .75vw, 10px); }
-         .canvas-ticks { position: absolute; top: 74%; left: 15%; width: 79%; text-align: center; white-space: pre; overflow: hidden;
+          .canvas-ticks { position: absolute; top: 83%; left: 15%; width: 79%; text-align: center; white-space: pre; overflow: hidden;
           font-size: clamp(6px, .7vw, 9px); }
         .canvas-panel[data-narrow="true"]:not(:has(.canvas-map)):not(:has(.canvas-sun)) .canvas-xlabel,
         .canvas-panel[data-narrow="true"]:not(:has(.canvas-map)):not(:has(.canvas-sun)) .canvas-ticks { left: 19%; width: 75%; }
-         .canvas-scale { position: absolute; top: 18%; left: 89%; width: 10%; height: 62%; display: flex; align-items: center;
+          .canvas-scale { position: absolute; top: 12%; left: 87%; width: 12%; height: 76%; display: flex; align-items: center;
          border-left: 6px solid #2a9d8f; font-size: clamp(6px, .6vw, 8px); overflow-wrap: anywhere; }
       .resize-handle { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
         background: linear-gradient(135deg, transparent 49%, var(--accent) 50%, var(--accent) 57%, transparent 58%); }
