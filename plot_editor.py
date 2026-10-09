@@ -26,8 +26,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
              <div class="studio-toolbar"><strong>Layout preview</strong><span>Panel layout, event markers and observation time are previewed here; actual data appears after generation.</span>
-           <button type="button" class="button" id="exampleLayout">Example layout</button>
-           <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
+            <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
             <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
             <span id="canvasSubtitle" class="canvas-subtitle">__SUBTITLE__</span>
@@ -36,6 +35,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       </section>
       <aside class="studio-sidebar">
          <h2>Plot settings</h2>
+          <label>Figure template <select id="figureTemplate">
+            <option value="overview">Flare overview · map + Sun + flux</option>
+            <option value="irradiance">Solar irradiance · Sun + GOES + SOHO</option>
+            <option value="response">Ionospheric response · map + index + flux</option>
+            <option value="comparison">Map comparison · two products</option>
+            <option value="timeline">Time series · stacked panels</option>
+            <option value="custom">Custom layout</option>
+          </select></label>
+          <p class="studio-note" id="templateHint">Choose a template, then drag, resize or edit panels to customize it.</p>
           <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
             <option value="plotter">Plotter · colored axes</option></select></label>
           <label>Observation time (UTC) <select id="observationTime"></select></label>
@@ -75,8 +83,60 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        const epoch = document.getElementById('observationTime');
       const width = document.getElementById('panelWidth');
       const height = document.getElementById('panelHeight');
-      const panels = [];
-      let selected = null;
+       const panels = [];
+       let selected = null;
+       const templatePicker = document.getElementById('figureTemplate');
+       const templateHint = document.getElementById('templateHint');
+       const has = (...keys) => keys.every(key => key in series);
+       const indexKey = ['roti:isfai_index', 'roti:gsflai_index', 'roti:day_night_index',
+         ...Object.keys(series).filter(key => key.includes(':') && !key.startsWith('map:'))].find(key => key in series);
+       const fluxKey = has('goes') ? 'goes' : has('soho') ? 'soho' : null;
+       const maps = Object.keys(series).filter(key => key.startsWith('map:') && (epochs[key] || []).length);
+       const mapPair = maps.flatMap((left, i) => maps.slice(i + 1).map(right => [left, right]))
+         .find(pair => (epochs[pair[0]] || []).some(time => (epochs[pair[1]] || []).includes(time)));
+       const timelineKeys = ['goes', 'soho', indexKey].filter(key => key && key in series);
+       const templates = {
+         overview: has('map:roti', 'sun', 'goes', 'soho') && (epochs['map:roti'] || []).length ? [
+           ['map:roti', .02, .02, .58, .39], ['sun', .64, .02, .34, .39],
+           ['goes', .02, .44, .96, .25], ['soho', .02, .72, .96, .26]] : null,
+         irradiance: has('sun', 'goes', 'soho') ? [
+           ['sun', .02, .02, .30, .46], ['goes', .35, .02, .63, .46],
+           ['soho', .02, .53, .96, .42]] : null,
+         response: maps.length && indexKey && fluxKey ? [
+           [maps[0], .02, .02, .58, .46], [indexKey, .64, .02, .34, .46],
+           [fluxKey, .02, .53, .96, .42]] : null,
+         comparison: mapPair ? [
+           [mapPair[0], .02, .08, .47, .80], [mapPair[1], .51, .08, .47, .80]] : null,
+         timeline: timelineKeys.length >= 2 ? timelineKeys.map((key, i) =>
+           [key, .02, timelineKeys.length === 2 ? .02 + i * .50 : .02 + i * .32,
+            .96, timelineKeys.length === 2 ? .45 : .29]) : null,
+       };
+       for (const option of templatePicker.options) if (option.value !== 'custom') {
+         option.disabled = !templates[option.value];
+       }
+       function markCustom() {
+         templatePicker.value = 'custom';
+         templateHint.textContent = text('Custom layout · your changes are kept until you choose another template.',
+           'Своя компоновка · изменения сохраняются, пока вы не выберете другой шаблон.');
+       }
+       function applyTemplate(name) {
+         const layout = templates[name];
+         if (!layout) return;
+         panels.length = 0;
+         for (const [key, x, y, w, h] of layout) panels.push({
+           id: String(Date.now()) + Math.random(), series: key, color: defaultColor(key), customColor: false,
+           rect: {x, y, w, h},
+         });
+         selected = panels[0].id;
+         templatePicker.value = name;
+         templateHint.textContent = text('Drag, resize or edit any panel to make this template your own.',
+           'Перетащите, измените размер или данные любой панели, чтобы настроить шаблон под себя.');
+         render();
+       }
+       templatePicker.onchange = () => {
+         if (templatePicker.value !== 'custom') applyTemplate(templatePicker.value);
+         else markCustom();
+       };
        document.getElementById('plotTitle').addEventListener('input', updateCaption);
         function availableTimes() {
           const maps = [...new Set(panels.filter(panel => panel.series.startsWith('map:')).map(panel => panel.series))];
@@ -139,9 +199,10 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             other.rect.x >= rect.x + rect.w - 1e-6 || rect.y >= other.rect.y + other.rect.h - 1e-6 ||
             other.rect.y >= rect.y + rect.h - 1e-6);
       }
-      function place(panel, rect) {
-        if (!canPlace(panel, rect)) return false;
-        panel.rect = rect; return true;
+       function place(panel, rect) {
+         if (!canPlace(panel, rect)) return false;
+         if (Object.keys(rect).some(axis => rect[axis] !== panel.rect[axis])) markCustom();
+         panel.rect = rect; return true;
       }
         const defaultColor = key => (style.value === 'simple' ?
           {goes: (channels.goes || []).includes('xrsa') ? '#d1495b' : '#111111',
@@ -219,8 +280,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
                line.textContent = 'SEM 26–34 nm · 0.1–50 nm'; chart.append(line);
              }
             const column = panel.series.split(':')[1];
-             units.textContent = panel.series === 'goes' ? 'W m⁻²' : panel.series === 'soho' ?
-               'photons cm⁻² s⁻¹' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
+              units.textContent = panel.series === 'goes' || panel.series === 'soho' ?
+                'Flux change (%)' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
                xLabel.textContent = 'Time (UTC)'; ticks.textContent = previewTicks();
              if (location.start && location.end) {
                const start = Date.parse(location.start), end = Date.parse(location.end);
@@ -297,34 +358,20 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         const first = Object.keys(series)[0];
          const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first), customColor: false,
            rect};
-        panels.push(panel); selected = panel.id; render();
-      }
-      document.getElementById('addPlotPanel').onclick = addPanel;
-      function exampleLayout() {
-        if (!['map:roti', 'sun', 'goes', 'soho'].every(key => key in series)) return;
-        panels.length = 0;
-        for (const [key, rect] of [
-          ['map:roti', {x: .02, y: .02, w: .58, h: .42}],
-          ['sun', {x: .64, y: .02, w: .34, h: .42}],
-          ['goes', {x: .02, y: .49, w: .96, h: .22}],
-          ['soho', {x: .02, y: .74, w: .96, h: .22}],
-        ]) panels.push({id: String(Date.now()) + Math.random(), series: key,
-                       color: defaultColor(key), customColor: false, rect});
-        selected = panels[0].id;
-        render();
-      }
-      document.getElementById('exampleLayout').onclick = exampleLayout;
-      document.getElementById('exampleLayout').disabled = !['map:roti', 'sun', 'goes', 'soho'].every(key => key in series);
-      document.getElementById('removePanel').onclick = () => {
+         panels.push(panel); selected = panel.id; render();
+         markCustom();
+       }
+       document.getElementById('addPlotPanel').onclick = addPanel;
+       document.getElementById('removePanel').onclick = () => {
         const index = panels.findIndex(item => item.id === selected);
         if (index < 0) return;
-        panels.splice(index, 1); selected = panels.at(-1)?.id || null; render();
+         panels.splice(index, 1); selected = panels.at(-1)?.id || null; markCustom(); render();
       };
       select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
-         panel.series = select.value; panel.color = defaultColor(panel.series); panel.customColor = false;
-         render(); };
+          panel.series = select.value; panel.color = defaultColor(panel.series); panel.customColor = false;
+          markCustom(); render(); };
        color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
-         panel.color = color.value; panel.customColor = true; render(); };
+          panel.color = color.value; panel.customColor = true; markCustom(); render(); };
        epoch.onchange = render;
       function changeSize(axis, input) {
         const panel = panels.find(item => item.id === selected);
@@ -336,7 +383,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       }
       width.onchange = () => changeSize('w', width);
       height.onchange = () => changeSize('h', height);
-       if (!document.getElementById('exampleLayout').disabled) exampleLayout(); else addPanel();
+        const initialTemplate = Object.keys(templates).find(name => templates[name]);
+        if (initialTemplate) applyTemplate(initialTemplate); else addPanel();
       document.getElementById('generatePlot').onclick = async () => {
          if (!panels.length) { message.textContent = text('Add at least one panel.', 'Добавьте хотя бы одну панель.'); return; }
          if (Object.keys(epochs).length && !epoch.value) {
@@ -410,11 +458,11 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          gap: 6px; cursor: grab; touch-action: none; user-select: none; color: #17243a; }
       .canvas-panel-bar:active { cursor: grabbing; }
       .canvas-panel-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-         .canvas-chart { position: absolute; left: 15%; top: 20%; width: 79%; height: 51%;
+          .canvas-chart { position: absolute; left: 15%; top: 17%; width: 79%; height: 64%;
          border-left: 1px solid #dce4ee; border-bottom: 1px solid #dce4ee;
          background: repeating-linear-gradient(to bottom, transparent 0 24%, #dce4ee 25% calc(25% + 1px)); }
         .canvas-chart.canvas-map { left: 15%; top: 18%; width: 73%; height: 62%; background: #edf2f7; }
-        .canvas-panel[data-narrow="true"] .canvas-chart:not(.canvas-map):not(.canvas-sun) { left: 19%; width: 75%; }
+         .canvas-panel[data-narrow="true"] .canvas-chart:not(.canvas-map):not(.canvas-sun) { left: 19%; width: 75%; }
         .canvas-panel:has(.canvas-map) .canvas-xlabel, .canvas-panel:has(.canvas-map) .canvas-ticks { left: 15%; width: 73%; }
        .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; opacity: .7; }
        .canvas-map svg { color: #2a9d8f; }
@@ -434,7 +482,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           font-size: clamp(6px, .7vw, 9px); }
         .canvas-panel[data-narrow="true"]:not(:has(.canvas-map)):not(:has(.canvas-sun)) .canvas-xlabel,
         .canvas-panel[data-narrow="true"]:not(:has(.canvas-map)):not(:has(.canvas-sun)) .canvas-ticks { left: 19%; width: 75%; }
-        .canvas-scale { position: absolute; top: 27%; left: 89%; width: 10%; height: 47%; display: flex; align-items: center;
+         .canvas-scale { position: absolute; top: 18%; left: 89%; width: 10%; height: 62%; display: flex; align-items: center;
          border-left: 6px solid #2a9d8f; font-size: clamp(6px, .6vw, 8px); overflow-wrap: anywhere; }
       .resize-handle { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
         background: linear-gradient(135deg, transparent 49%, var(--accent) 50%, var(--accent) 57%, transparent 58%); }

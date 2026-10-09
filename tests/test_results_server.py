@@ -191,7 +191,12 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert 'style: style.value' in page
     assert 'data-style="simple"' in page and 'data-style="plotter"' in page
     assert "Global ${panel.series.slice(4).toUpperCase()" in page and "epoch.value.slice(11, 16) + ' UTC'" in page
-    assert 'id="exampleLayout"' in page and "['map:roti', 'sun', 'goes', 'soho']" in page
+    assert 'id="figureTemplate"' in page and 'option value="custom"' in page
+    for template in ('overview', 'irradiance', 'response', 'comparison', 'timeline'):
+        assert f'option value="{template}"' in page
+    assert 'option.disabled = !templates[option.value]' in page
+    assert 'function applyTemplate(name)' in page and 'function markCustom()' in page
+    assert 'Своя компоновка' in page
     assert 'function previewTicks()' in page and 'canvas-units' in page
     assert 'type="datetime-local"' not in page
     assert "canvas-ylabel" in page and "canvas-xlabel" in page and "canvas-scale" in page
@@ -206,3 +211,47 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
             script = segment.split("</script>", 1)[0]
             check = subprocess.run(["node", "--check"], input=script, text=True, capture_output=True)
             assert check.returncode == 0, check.stderr
+
+
+def test_plot_templates_fit_and_require_available_data():
+    import json
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        return
+    from plot_editor import editor_content
+
+    body, _ = editor_content(
+        {"path": "X/event", "name": "event"}, {"sun": "Solar disk"}, {},
+        {"x": None, "y": None, "class": "X1", "start": None, "peak": None, "end": None}, {},
+    )
+    definitions = body.split("const has =", 1)[1].split("for (const option of templatePicker.options)", 1)[0]
+    evaluate = "const has =" + definitions + "process.stdout.write(JSON.stringify(templates));"
+    cases = [
+        ({key: key for key in ("sun", "goes", "soho", "map:roti", "map:dtec_2_10",
+                                 "roti:isfai_index")},
+         {"map:roti": ["2025-11-11 01:00:00", "2025-11-11 01:05:00"],
+          "map:dtec_2_10": ["2025-11-11 01:05:00"]}),
+        ({"sun": "Solar disk", "goes": "GOES"}, {}),
+        ({"map:roti": "ROTI", "map:dtec_2_10": "dTEC"},
+         {"map:roti": ["2025-11-11 01:00:00"],
+          "map:dtec_2_10": ["2025-11-11 01:05:00"]}),
+    ]
+    layouts = []
+    for series, epochs in cases:
+        code = f"const series = {json.dumps(series)}; const epochs = {json.dumps(epochs)}; " + evaluate
+        result = subprocess.run(["node", "-e", code], capture_output=True, text=True, check=True)
+        layouts.append(json.loads(result.stdout))
+    assert all(layouts[0].values())
+    assert not any(layouts[1].values())
+    assert layouts[2]["comparison"] is None
+    for name, layout in layouts[0].items():
+        assert 1 <= len(layout) <= 6, name
+        for i, (key, x, y, w, h) in enumerate(layout):
+            assert key in cases[0][0]
+            assert 0 <= x and 0 <= y and w >= .16 and h >= .16
+            assert x + w <= 1 and y + h <= 1
+            for other in layout[:i]:
+                _, ox, oy, ow, oh = other
+                assert x >= ox + ow or ox >= x + w or y >= oy + oh or oy >= y + h

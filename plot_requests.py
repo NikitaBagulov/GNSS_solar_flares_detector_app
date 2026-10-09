@@ -7,6 +7,7 @@ import io
 import json
 import math
 import re
+import statistics
 import threading
 import time
 import uuid
@@ -248,6 +249,19 @@ def _flare_window(metadata: dict) -> tuple[datetime, datetime] | None:
     return middle - half, middle + half
 
 
+def _relative_flux(measurements: dict) -> dict | None:
+    """Compare different spectral channels by their change from an early baseline."""
+    if any(len(values) < 2 for _, values in measurements.values()):
+        return None
+    result = {}
+    for channel, (dates, values) in measurements.items():
+        baseline = statistics.median(values[:max(1, len(values) // 10)])
+        if baseline <= 0:
+            return None
+        result[channel] = (dates, [(value / baseline - 1) * 100 for value in values])
+    return result
+
+
 def render_plot(event: Path, request: dict) -> bytes:
     request = validate_request(event, request)
     import matplotlib
@@ -288,6 +302,7 @@ def render_plot(event: Path, request: dict) -> bytes:
             fig, axes = plt.subplots(rows, columns, figsize=(7 * columns, 3.6 * rows), squeeze=False, constrained_layout=True)
         try:
             fig.patch.set_facecolor(palette["figure"])
+            relative_flux_used = False
             for index, panel in enumerate(panels):
                 key = panel["series"]
                 if free:
@@ -299,9 +314,9 @@ def render_plot(event: Path, request: dict) -> bytes:
                     sun_panel = key == "sun"
                     time_left = .19 if rect["w"] < .55 else .14
                     ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else time_left),
-                                        bottom + box_h * (.14 if sun_panel else .20 if map_panel else .26),
+                                         bottom + box_h * (.14 if sun_panel else .20 if map_panel else .19),
                                         box_w * (.8 if sun_panel else .73 if map_panel else .94 - time_left),
-                                       box_h * (.69 if sun_panel else .62 if map_panel else .49)),
+                                        box_h * (.69 if sun_panel else .62 if map_panel else .64)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
                     font_size = max(7, min(10, 10 * rect["w"] / .44, 10 * rect["h"] / .27))
                     title = SERIES[key]
@@ -360,7 +375,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     painter = object.__new__(Plotter)
                     painter.data = SimpleNamespace(product_values=[{product: points}], timestamps=[datetime.fromisoformat(stamp)])
                     painter._plot_map(ax, 0, product_name=product, map_time=datetime.fromisoformat(stamp),
-                                       vmin=0 if product == "roti" else -1, vmax=1.5 if product == "roti" else 1)
+                                        vmin=0 if product == "roti" else -1, vmax=1.5 if product == "roti" else 1)
                     if simple and len(ax.collections) >= 3:
                         # The large double-stroked subsolar X and 30 pt samples from
                         # Plotter obscure the geography in a print-sized figure.
@@ -398,9 +413,14 @@ def render_plot(event: Path, request: dict) -> bytes:
                             elif column_name != data_columns[-1]:
                                 del measurements[column_name]
                     if key == "goes" or key == "soho":
-                        if all(value > 0 for _, values in measurements.values() for value in values) and key == "goes":
+                        relative = _relative_flux(measurements) if free else None
+                        if relative is not None:
+                            measurements = relative
+                            relative_flux_used = True
+                        elif all(value > 0 for _, values in measurements.values() for value in values) and key == "goes":
                             ax.set_yscale("log")
-                        ylabel = "Flux (W m⁻²)" if key == "goes" else "EUV (photons cm⁻² s⁻¹)"
+                        ylabel = "Flux change (%)" if relative is not None else (
+                            "Flux (W m⁻²)" if key == "goes" else "EUV (photons cm⁻² s⁻¹)")
                     else:
                         ylabel = {"day_night_index": "Day/night", "gsflai_index": "GSFLAI", "isfai_index": "ISFAI"}[column]
                     for column_name, (dates, values) in measurements.items():
@@ -432,7 +452,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                         ax.set_title(SERIES[key], loc="left", color=palette["ink"])
                     # Put physical units in the heading for compact free panels: vertical labels
                     # were extending into the neighboring panel in publication-sized figures.
-                    wide = free and rect["w"] >= .75 and rect["h"] >= .28
+                    wide = free and rect["w"] >= .75
                     ax.set_ylabel(ylabel if not free or wide else "", color=palette["ink"],
                                   fontsize=max(7, font_size - 2) if free else None)
                     if free and not wide:
@@ -441,7 +461,8 @@ def render_plot(event: Path, request: dict) -> bytes:
                     ax.set_xlabel("Time (UTC)", fontsize=max(7, font_size - 2) if free else None)
                     ax.xaxis.set_major_locator(AutoDateLocator(maxticks=(3 if rect["w"] < .48 else 5) if free else 10))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                    if free and simple and ax.get_yscale() == "linear":
+                    if (free and simple and ax.get_yscale() == "linear" and
+                            (key not in ("goes", "soho") or relative is None)):
                         ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
                         ax.yaxis.get_offset_text().set_fontsize(7)
                     if not simple:
@@ -451,6 +472,9 @@ def render_plot(event: Path, request: dict) -> bytes:
             if not free:
                 for index in range(len(panels), rows * columns):
                     axes[index // columns][index % columns].set_visible(False)
+            if relative_flux_used:
+                fig.text(.5, .012, "Flux change relative to the median of the first 10% of visible samples in each channel",
+                         ha="center", color=palette["muted"], fontsize=7)
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
                          fontsize=16 if free else 13,

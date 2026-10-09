@@ -186,7 +186,7 @@ class Plotter:
             color=PLOT_STYLE["ink"],
         )
         if show_colorbar:
-            cbar_ax = ax.inset_axes([1.025, 0.08, 0.025, 0.84])
+            cbar_ax = ax.inset_axes([1.025, 0, 0.025, 1])
             colorbar = plt.colorbar(sc, cax=cbar_ax)
             colorbar.set_label(self.get_product_unit(product_name), fontsize=8, color=PLOT_STYLE["muted"])
             colorbar.ax.tick_params(labelsize=7, length=2, colors=PLOT_STYLE["muted"])

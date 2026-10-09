@@ -179,7 +179,11 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
         time_axes = [axis for axis in fig.axes if axis.get_xlabel() == "Time (UTC)"]
         assert len(time_axes) == 2
         goes, soho = time_axes
-        assert goes.get_yscale() == "log"
+        assert goes.get_yscale() == soho.get_yscale() == "linear"
+        assert goes.get_ylabel() == soho.get_ylabel() == "Flux change (%)"
+        assert goes.lines[0].get_ydata() == pytest.approx([0, 900])
+        assert soho.lines[0].get_ydata() == pytest.approx([0, 50])
+        assert goes.get_position().height > .40 * .82 * .6
         assert [line.get_label() for line in goes.lines[:2]] == [
             "GOES XRS-A (0.05–0.4 nm)", "GOES XRS-B (0.1–0.8 nm)"]
         assert [line.get_label() for line in soho.lines[:2]] == [
@@ -196,6 +200,26 @@ def test_available_goes_and_soho_channels_are_labelled_without_inventing_missing
         {"series": "soho", "rect": {"x": .02, "y": .52, "w": .96, "h": .40}}]}
     assert render_plot(event, request).startswith(b"\x89PNG")
     assert inspected
+
+
+def test_colorbar_matches_rendered_map_height(event, monkeypatch):
+    from matplotlib.figure import Figure
+
+    original = Figure.savefig
+
+    def inspect(fig, *args, **kwargs):
+        fig.canvas.draw()
+        map_axes = next(axis for axis in fig.axes if axis.child_axes)
+        map_box = map_axes.get_position()
+        bar_box = map_axes.child_axes[0].get_position()
+        assert bar_box.y0 == pytest.approx(map_box.y0, abs=1e-6)
+        assert bar_box.y1 == pytest.approx(map_box.y1, abs=1e-6)
+        return original(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect)
+    assert render_plot(event, {"layout": "free", "style": "simple", "email": "user@example.org",
+                               "panels": [{"series": "map:roti", "rect": {"x": .02, "y": .02,
+                                                                           "w": .58, "h": .42}}]}).startswith(b"\x89PNG")
 
 
 def test_plotter_style_marks_flare_and_map_time_and_uses_compact_flux_axes(event, monkeypatch):
