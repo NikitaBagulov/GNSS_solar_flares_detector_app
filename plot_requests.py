@@ -10,21 +10,21 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
-SERIES = {"goes": "GOES X-ray", "soho": "SOHO SEM", "sun": "Solar disk"}
+SERIES = {"goes": "GOES XRS-B (0.1–0.8 nm)", "soho": "SOHO/SEM EUV (0.1–50 nm)", "sun": "Solar disk"}
 PLOT_STYLES = ("plotter", "simple")
 SIMPLE_COLORS = {"goes": "#111111", "soho": "#006400", "day_night_index": "#333333",
                  "gsflai_index": "#006400", "isfai_index": "#333333"}
 for product in PRODUCTS:
     for column in INDEX_COLUMNS:
-        SERIES[f"{product}:{column}"] = f"{product} · {column}"
-    SERIES[f"map:{product}"] = f"Map · {product}"
+        SERIES[f"{product}:{column}"] = f"{column.replace('_index', '').upper()} · {product.upper().replace('DTEC', 'dTEC')}"
+    SERIES[f"map:{product}"] = f"{product.upper().replace('DTEC', 'dTEC')} map"
 
 PLOT_LOCK = threading.Lock()
 TTL_SECONDS = 3 * 24 * 60 * 60
@@ -189,6 +189,20 @@ def _map_points(path: Path, epoch: str | None):
         return key, points
 
 
+def _flare_window(metadata: dict) -> tuple[datetime, datetime] | None:
+    """A shared UTC view around an identified flare; never infer times from a folder name."""
+    try:
+        start = datetime.fromisoformat(metadata["start"]).replace(tzinfo=None)
+        end = datetime.fromisoformat(metadata["end"]).replace(tzinfo=None)
+    except (KeyError, ValueError, TypeError):
+        return None
+    if end < start:
+        return None
+    middle = start + (end - start) / 2
+    half = max(timedelta(minutes=30), (end - start) / 2 + timedelta(minutes=20))
+    return middle - half, middle + half
+
+
 def render_plot(event: Path, request: dict) -> bytes:
     request = validate_request(event, request)
     import matplotlib
@@ -212,6 +226,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                "savefig.facecolor": palette["figure"]} if simple else DEFAULT_PARAMS)
     metadata = flare_metadata(event)
     heading, subtitle = scientific_caption(metadata)
+    window = _flare_window(metadata)
     free = request["layout"] == "free"
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
     rows = (len(panels) + columns - 1) // columns
@@ -233,17 +248,23 @@ def render_plot(event: Path, request: dict) -> bytes:
                                                        linewidth=.8, zorder=-1))
                     map_panel = key.startswith("map:")
                     sun_panel = key == "sun"
-                    ax = fig.add_axes((left + box_w * (.1 if sun_panel else .19), bottom + box_h * (.13 if sun_panel else .24),
-                                       box_w * (.8 if sun_panel else .61 if map_panel else .69),
-                                       box_h * (.68 if sun_panel else .53)),
+                    ax = fig.add_axes((left + box_w * (.1 if sun_panel else .15 if map_panel else .22),
+                                       bottom + box_h * (.14 if sun_panel else .20 if map_panel else .26),
+                                       box_w * (.8 if sun_panel else .73 if map_panel else .72),
+                                       box_h * (.69 if sun_panel else .62 if map_panel else .49)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
-                    font_size = max(7, min(11, 11 * rect["w"] / .44))
+                    font_size = max(7, min(10, 10 * rect["w"] / .44, 10 * rect["h"] / .27))
                     title = SERIES[key]
                     if map_panel:
-                        title += f" · {panel.get('epoch') or 'file midpoint'} UTC"
-                    fig.text(left + box_w * .04, bottom + box_h * .88,
-                              title[:max(12, int(box_w * 65))], color=palette["ink"],
-                              weight="normal" if simple else "bold", fontsize=font_size, va="center")
+                        stamp = panel.get("epoch")
+                        if stamp is None:
+                            available_times = map_epochs(event).get(key, [])
+                            stamp = available_times[len(available_times) // 2] if available_times else None
+                        if stamp:
+                            title += f" · {datetime.fromisoformat(stamp):%Y-%m-%d %H:%M} UTC"
+                    fig.text(left + box_w * .045, bottom + box_h * .94,
+                             title, color=palette["ink"], weight="normal" if simple else "bold",
+                             fontsize=font_size, va="center", clip_on=True)
                     if not sun_panel:
                         ax.tick_params(labelsize=max(6, font_size - 3), length=3, width=.7)
                 else:
@@ -272,7 +293,7 @@ def render_plot(event: Path, request: dict) -> bytes:
                     location = (metadata["x"], metadata["y"]) if metadata["x"] is not None else None
                     painter._plot_sun(ax, SimpleNamespace(location=location))
                     if free:
-                        ax.set_title("")
+                        ax.set_title("", loc="left")
                     if metadata["x"] is None:
                         ax.text(.5, .02, "Flare position unavailable", transform=ax.transAxes,
                                  ha="center", va="bottom", color=palette["muted"], fontsize=8,
@@ -284,10 +305,18 @@ def render_plot(event: Path, request: dict) -> bytes:
                     painter.data = SimpleNamespace(product_values=[{product: points}], timestamps=[datetime.fromisoformat(stamp)])
                     painter._plot_map(ax, 0, product_name=product, map_time=datetime.fromisoformat(stamp),
                                       vmin=0 if product == "roti" else -1, vmax=1)
+                    if simple and len(ax.collections) >= 3:
+                        # The large double-stroked subsolar X and 30 pt samples from
+                        # Plotter obscure the geography in a print-sized figure.
+                        ax.collections[0].set_sizes([6])
+                        ax.collections[-2].set_visible(False)
+                        ax.collections[-1].set_sizes([28])
+                        ax.collections[-1].set_linewidths([1.2])
+                        ax.collections[-1].set_color("#ad6115")
                     ax.set_xlabel("Longitude")
                     ax.set_ylabel("Latitude")
                     if free:
-                        ax.set_title("")  # The panel title is inside the draggable box.
+                        ax.set_title("", loc="center")  # The panel title is inside the draggable box.
                     else:
                         ax.set_title(f"{Plotter._format_product_name(painter, product)} @ {stamp}", loc="left")
                 else:
@@ -303,23 +332,49 @@ def render_plot(event: Path, request: dict) -> bytes:
                     dates, values = _read_csv(path, column)
                     if not dates:
                         raise ValueError(f"No usable data for {SERIES[key]}")
+                    focused = False
+                    if window:
+                        visible = [(stamp, value) for stamp, value in zip(dates, values)
+                                   if window[0] <= stamp <= window[1]]
+                        if visible:
+                            dates, values = zip(*visible)
+                            focused = True
                     if key == "goes" or key == "soho":
                         if not simple and all(value > 0 for value in values):
                             ax.set_yscale("log")
-                        ylabel = "Flux (W m⁻²)" if key == "goes" else "Flux (photons cm⁻² s⁻¹)"
+                        ylabel = "W m⁻²" if key == "goes" else "photons cm⁻² s⁻¹"
                     else:
                         ylabel = {"day_night_index": "Day/night", "gsflai_index": "GSFLAI", "isfai_index": "ISFAI"}[column]
                     ax.plot(dates, values, color=color, linewidth=1.3 if simple else 2, solid_capstyle="round",
-                            marker="o" if len(dates) == 1 else None)
+                             marker="o" if len(dates) == 1 else None)
+                    if len(dates) == 1 and not focused:
+                        ax.set_xlim(dates[0] - timedelta(minutes=10), dates[0] + timedelta(minutes=10))
+                    if focused:
+                        ax.set_xlim(*window)
+                        if simple:
+                            for field, line_color, linestyle in (("start", "#7b8494", "--"),
+                                                                  ("peak", "#bc3738", "-"),
+                                                                  ("end", "#7b8494", "--")):
+                                if metadata.get(field):
+                                    ax.axvline(datetime.fromisoformat(metadata[field]).replace(tzinfo=None),
+                                               color=line_color, linewidth=.85, linestyle=linestyle, alpha=.85)
                     if not free:
                         ax.set_title(SERIES[key], loc="left", color=palette["ink"])
-                    ax.set_ylabel(ylabel, color=palette["ink"] if simple else color)
+                    # Put physical units in the heading for compact free panels: vertical labels
+                    # were extending into the neighboring panel in publication-sized figures.
+                    ax.set_ylabel("" if free else ylabel, color=palette["ink"] if simple else color)
+                    if free:
+                        fig.text(left + box_w * .045, bottom + box_h * .83,
+                                 ylabel, color=palette["muted"], fontsize=max(6, font_size - 2), va="center")
                     if not simple:
                         ax.tick_params(axis="y", colors=color)
                         ax.spines["left"].set_color(color)
-                    ax.set_xlabel("Time (UTC)")
-                    ax.xaxis.set_major_locator(AutoDateLocator(maxticks=5 if free else 10))
+                    ax.set_xlabel("UTC" if free else "Time (UTC)", fontsize=max(7, font_size - 2) if free else None)
+                    ax.xaxis.set_major_locator(AutoDateLocator(maxticks=(3 if rect["w"] < .48 else 5) if free else 10))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+                    if free and simple:
+                        ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+                        ax.yaxis.get_offset_text().set_fontsize(7)
                     if not simple:
                         ax.spines["top"].set_visible(False)
                     ax.grid(True, color=palette["grid"], linewidth=.65)
@@ -329,10 +384,11 @@ def render_plot(event: Path, request: dict) -> bytes:
                     axes[index // columns][index % columns].set_visible(False)
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
-                          fontsize=16 if free else 13, fontweight="normal" if simple else "bold", color=palette["ink"], y=.99)
+                         fontsize=13 if simple else 16 if free else 13,
+                         fontweight="normal" if simple else "bold", color=palette["ink"], y=.985)
             if caption and free:
                 fig.text(.5, .955, caption, ha="center", va="top",
-                          fontsize=9, color=palette["muted"])
+                         fontsize=9, color=palette["muted"])
             output = io.BytesIO()
             fig.savefig(output, format="png", dpi=180, facecolor=fig.get_facecolor())
             return output.getvalue()

@@ -128,7 +128,7 @@ UI_TRANSLATIONS = {
     "Plot studio": "Редактор графиков",
     "Back to event": "Вернуться к событию",
     "Layout preview": "Предпросмотр расположения",
-    "Each panel shows its title, axes, labels and color scale inside its border. Data is drawn when you generate the plot.": "Внутри каждой панели видны заголовок, оси, подписи и цветовая шкала. Данные отрисуются после построения графика.",
+    "Scientific labels and spacing are shown here; the data and event markers appear in the generated plot.": "На рабочей области видны научные подписи и отступы; данные и метки события появятся на готовом графике.",
     "Selected panel": "Выбранная панель",
     "Plot style": "Стиль графика",
     "Simple · white, fine grid": "Простой · белый фон, тонкая сетка",

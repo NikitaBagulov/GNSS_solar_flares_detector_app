@@ -183,9 +183,11 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert 'id="plotEmail" type="email" required' in page
     assert 'id="panelEpoch"' in page
     assert 'id="plotStyle"' in page
-    assert '<option value="simple">' in page and '<option value="plotter" selected>' in page
+    assert '<option value="simple" selected>' in page and '<option value="plotter">' in page
     assert 'style: style.value' in page
     assert 'data-style="simple"' in page and 'data-style="plotter"' in page
+    assert 'series[panel.series] +' in page and "panel.epoch.slice(0, 16) + ' UTC'" in page
+    assert 'function previewTicks()' in page and 'canvas-units' in page
     assert 'type="datetime-local"' not in page
     assert "canvas-ylabel" in page and "canvas-xlabel" in page and "canvas-scale" in page
     assert 'href="/X/2025-11-11_X5.2/"' in page

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from plot_requests import cleanup_cache, map_epochs, render_plot, validate_request, _map_points
+from plot_requests import SERIES, SIMPLE_COLORS, _flare_window, cleanup_cache, map_epochs, render_plot, validate_request, _map_points
 from flare_metadata import flare_metadata, scientific_caption
 from results_server import PrettyDirectoryHandler, render_plot_editor_page
 
@@ -106,6 +106,48 @@ def test_simple_and_plotter_styles_change_render_and_validate_choice(event):
     request["style"] = "not-a-style"
     with pytest.raises(ValueError, match="style"):
         validate_request(event, request)
+
+
+def test_publication_labels_and_focused_flare_window(event, monkeypatch):
+    from datetime import datetime
+    from matplotlib.figure import Figure
+    import flare_metadata as catalog
+
+    (event / "goes_xray.csv").write_text(
+        "time,xrsb\n2025-11-11T01:00:00Z,0.001\n2025-11-11T12:00:00Z,0.9\n", encoding="utf-8")
+    metadata = {"class": "X5.2", "date": "2025-11-11", "start": "2025-11-11T01:00:00+00:00",
+                "peak": "2025-11-11T01:05:00+00:00", "end": "2025-11-11T01:10:00+00:00",
+                "x": None, "y": None}
+    monkeypatch.setattr(catalog, "flare_metadata", lambda _: metadata)
+    assert _flare_window(metadata) == (datetime(2025, 11, 11, 0, 35), datetime(2025, 11, 11, 1, 35))
+    observed = []
+    original_savefig = Figure.savefig
+
+    def inspect_figure(fig, *args, **kwargs):
+        titles = [text.get_text() for text in fig.texts]
+        assert any("ROTI map · 2025-11-11 01:00 UTC" == text for text in titles)
+        assert titles.count("Solar disk") == 1
+        assert SERIES["goes"] in titles
+        sun_axes = [axis for axis in fig.axes if axis.patches and
+                    any(type(patch).__name__ == "Circle" for patch in axis.patches)]
+        assert sun_axes and sun_axes[0].get_title(loc="left") == ""
+        goes_axes = [axis for axis in fig.axes if axis.lines and
+                     any(line.get_color() == SIMPLE_COLORS["goes"] for line in axis.lines)]
+        assert goes_axes
+        ax = goes_axes[0]
+        assert max(ax.lines[0].get_ydata()) < .01  # The 12:00 spike was cropped before autoscaling.
+        assert len(ax.lines) == 4  # X-ray flux plus onset, peak and end markers.
+        observed.append(True)
+        return original_savefig(fig, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", inspect_figure)
+    request = {"layout": "free", "style": "simple", "email": "user@example.org", "panels": [
+        {"series": "map:roti", "rect": {"x": .03, "y": .03, "w": .53, "h": .44}},
+        {"series": "sun", "rect": {"x": .58, "y": .03, "w": .39, "h": .44}},
+        {"series": "goes", "rect": {"x": .03, "y": .53, "w": .94, "h": .41}},
+    ]}
+    assert render_plot(event, request).startswith(b"\x89PNG")
+    assert observed
 
 
 def test_flare_caption_uses_catalog_metadata_and_does_not_invent_position(event, tmp_path, monkeypatch):

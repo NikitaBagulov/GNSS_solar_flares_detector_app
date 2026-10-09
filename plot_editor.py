@@ -15,14 +15,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
     heading, subtitle = scientific_caption(metadata)
     heading_json = json.dumps(heading, ensure_ascii=False).replace("<", "\\u003c")
     subtitle_json = json.dumps(subtitle, ensure_ascii=False).replace("<", "\\u003c")
-    location_json = json.dumps({"x": metadata["x"], "y": metadata["y"]})
+    location_json = json.dumps({"x": metadata["x"], "y": metadata["y"],
+                                "start": metadata["start"], "peak": metadata["peak"], "end": metadata["end"]})
     name = html.escape(event["name"])
     body = r"""
     <header class="studio-heading"><div><a href="__EVENT_URL__" class="studio-back">← Back to event</a>
       <h1>Plot studio</h1><p>__EVENT_NAME__ · Drag panels by their headers and resize from the lower-right corner.</p></div></header>
     <div class="studio-layout">
       <section class="studio-workspace" aria-label="Layout preview">
-         <div class="studio-toolbar"><strong>Layout preview</strong><span>Each panel shows its title, axes, labels and color scale inside its border. Data is drawn when you generate the plot.</span>
+           <div class="studio-toolbar"><strong>Layout preview</strong><span>Scientific labels and spacing are shown here; the data and event markers appear in the generated plot.</span>
           <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
            <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
@@ -31,8 +32,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       </section>
       <aside class="studio-sidebar">
          <h2>Plot settings</h2>
-         <label>Plot style <select id="plotStyle"><option value="simple">Simple · white, fine grid</option>
-           <option value="plotter" selected>Plotter · colored axes</option></select></label>
+          <label>Plot style <select id="plotStyle"><option value="simple" selected>Simple · white, fine grid</option>
+            <option value="plotter">Plotter · colored axes</option></select></label>
          <label>Additional caption <input id="plotTitle" maxlength="100" placeholder="Optional description"></label>
         <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
         <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
@@ -73,8 +74,17 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       document.getElementById('plotTitle').addEventListener('input', event => {
         document.getElementById('canvasSubtitle').textContent = [subtitle, event.target.value].filter(Boolean).join('  ·  ');
       });
-      const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
-      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+       const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
+       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+       function previewTicks() {
+         if (!location.start || !location.end) return 'UTC';
+         const start = Date.parse(location.start), end = Date.parse(location.end);
+         if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 'UTC';
+         const middle = (start + end) / 2;
+         const half = Math.max(30 * 60000, (end - start) / 2 + 20 * 60000);
+         const label = stamp => new Date(stamp).toISOString().slice(11, 16);
+         return `${label(middle - half)}     ${label(middle)}     ${label(middle + half)}`;
+       }
       function canPlace(current, rect) {
         return rect.x >= 0 && rect.y >= 0 && rect.w >= .16 && rect.h >= .16 &&
           rect.x + rect.w <= 1.000001 && rect.y + rect.h <= 1.000001 &&
@@ -130,14 +140,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           const card = document.createElement('div'); card.className = 'canvas-panel'; card.dataset.id = panel.id;
           card.tabIndex = 0; card.setAttribute('aria-label', `${series[panel.series]}, drag to move, arrows to nudge`);
           const bar = document.createElement('div'); bar.className = 'canvas-panel-bar';
-          const caption = document.createElement('strong'); caption.textContent = series[panel.series] +
-            (panel.series.startsWith('map:') && panel.epoch ? ' · ' + panel.epoch + ' UTC' : '');
+           const caption = document.createElement('strong'); caption.textContent = series[panel.series] +
+             (panel.series.startsWith('map:') && panel.epoch ? ' · ' + panel.epoch.slice(0, 16) + ' UTC' : '');
           const grip = document.createElement('span'); grip.textContent = '⠿'; grip.setAttribute('aria-hidden', 'true');
           bar.append(grip, caption);
           const chart = document.createElement('div'); chart.className = 'canvas-chart';
           const xLabel = document.createElement('span'); xLabel.className = 'canvas-xlabel';
           const yLabel = document.createElement('span'); yLabel.className = 'canvas-ylabel';
-          const ticks = document.createElement('span'); ticks.className = 'canvas-ticks';
+           const ticks = document.createElement('span'); ticks.className = 'canvas-ticks';
+           const units = document.createElement('span'); units.className = 'canvas-units';
            if (panel.series === 'sun') {
              chart.classList.add('canvas-sun');
              const x = location.x === null ? null : 100 + location.x / 960 * 38;
@@ -158,15 +169,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           } else {
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,64 28,52 43,60 60,35 83,50 105,17 125,37 145,22 165,48 200,18"/></svg>';
             const column = panel.series.split(':')[1];
-            yLabel.textContent = panel.series === 'goes' ? 'Flux (W m⁻²)' : panel.series === 'soho' ?
-              'Flux (photons cm⁻² s⁻¹)' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
-            xLabel.textContent = 'Time (UTC)'; ticks.textContent = '00:00   12:00   23:59';
+             units.textContent = panel.series === 'goes' ? 'W m⁻²' : panel.series === 'soho' ?
+               'photons cm⁻² s⁻¹' : ({day_night_index: 'Day/night', gsflai_index: 'GSFLAI', isfai_index: 'ISFAI'}[column] || column);
+             xLabel.textContent = 'UTC'; ticks.textContent = previewTicks();
           }
           chart.style.color = panel.color;
           const handle = document.createElement('div'); handle.className = 'resize-handle';
           handle.title = text('Drag to resize', 'Потяните для изменения размера');
           handle.setAttribute('aria-label', 'Resize panel');
-          card.append(bar, chart, ticks, xLabel, yLabel, handle); position(card, panel.rect);
+           card.append(bar, chart, units, ticks, xLabel, yLabel, handle); position(card, panel.rect);
           card.addEventListener('pointerdown', () => { selected = panel.id; syncSettings(); });
           card.addEventListener('keydown', event => {
             const moves = {ArrowLeft: [-.01, 0], ArrowRight: [.01, 0], ArrowUp: [0, -.01], ArrowDown: [0, .01]};
@@ -311,21 +322,23 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          gap: 6px; cursor: grab; touch-action: none; user-select: none; color: #17243a; }
       .canvas-panel-bar:active { cursor: grabbing; }
       .canvas-panel-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-       .canvas-chart { position: absolute; left: 19%; top: 23%; width: 69%; height: 53%;
+        .canvas-chart { position: absolute; left: 22%; top: 20%; width: 72%; height: 51%;
          border-left: 1px solid #dce4ee; border-bottom: 1px solid #dce4ee;
          background: repeating-linear-gradient(to bottom, transparent 0 24%, #dce4ee 25% calc(25% + 1px)); }
-       .canvas-chart.canvas-map { width: 61%; background: #edf2f7; }
+        .canvas-chart.canvas-map { left: 15%; top: 18%; width: 73%; height: 62%; background: #edf2f7; }
+        .canvas-panel:has(.canvas-map) .canvas-xlabel, .canvas-panel:has(.canvas-map) .canvas-ticks { left: 15%; width: 73%; }
        .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; opacity: .7; }
        .canvas-map svg { color: #2a9d8f; }
        .canvas-chart.canvas-sun { left: 15%; top: 21%; width: 70%; height: 59%; border: 0; background: #101b2b; }
        .canvas-sun svg { opacity: 1; }
        .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
-       .canvas-xlabel { position: absolute; top: 83%; left: 19%; width: 69%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
+        .canvas-xlabel { position: absolute; top: 85%; left: 22%; width: 72%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
+        .canvas-units { position: absolute; top: 13%; left: 5%; font-size: clamp(6px, .7vw, 9px); color: #63738a; }
        .canvas-ylabel { position: absolute; top: 42%; left: 1%; width: 17%; text-align: center; overflow-wrap: anywhere;
          font-size: clamp(6px, .75vw, 10px); }
-       .canvas-ticks { position: absolute; top: 76%; left: 19%; width: 69%; text-align: center; white-space: pre; overflow: hidden;
+        .canvas-ticks { position: absolute; top: 74%; left: 22%; width: 72%; text-align: center; white-space: pre; overflow: hidden;
          font-size: clamp(6px, .7vw, 9px); }
-       .canvas-scale { position: absolute; top: 27%; left: 84%; width: 14%; height: 47%; display: flex; align-items: center;
+        .canvas-scale { position: absolute; top: 27%; left: 89%; width: 10%; height: 47%; display: flex; align-items: center;
          border-left: 6px solid #2a9d8f; font-size: clamp(6px, .6vw, 8px); overflow-wrap: anywhere; }
       .resize-handle { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; cursor: nwse-resize; touch-action: none;
         background: linear-gradient(135deg, transparent 49%, var(--accent) 50%, var(--accent) 57%, transparent 58%); }
