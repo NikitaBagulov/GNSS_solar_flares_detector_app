@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 from plot_requests import cleanup_cache, map_epochs, render_plot, validate_request, _map_points
+from flare_metadata import flare_metadata, scientific_caption
 from results_server import PrettyDirectoryHandler, render_plot_editor_page
 
 
@@ -65,6 +66,63 @@ def test_freeform_panels_render_at_canvas_aspect_ratio_and_validate_bounds(event
     request["panels"][1]["rect"]["w"] = float("nan")
     with pytest.raises(ValueError, match="position"):
         validate_request(event, request)
+
+
+def test_freeform_rejects_overlapping_panels_and_renders_sun(event):
+    request = {"layout": "free", "email": "person@example.org", "panels": [
+        {"series": "sun", "rect": {"x": .04, "y": .04, "w": .44, "h": .55}},
+        {"series": "goes", "rect": {"x": .52, "y": .04, "w": .44, "h": .55}},
+    ]}
+    with Image.open(io.BytesIO(render_plot(event, request))) as image:
+        pixels = np.asarray(image.convert("RGB"))
+        assert np.count_nonzero((pixels[:, :, 0] > 200) & (pixels[:, :, 1] > 130) & (pixels[:, :, 2] < 135)) > 100
+    request["panels"][1]["rect"]["x"] = .4
+    with pytest.raises(ValueError, match="overlap"):
+        validate_request(event, request)
+
+
+def test_simple_and_plotter_styles_change_render_and_validate_choice(event):
+    (event / "soho_sem.csv").write_text(
+        "time,flux_01_50\n2025-11-11T01:00:00Z,100\n2025-11-11T01:01:00Z,120\n", encoding="utf-8")
+    request = {"layout": "free", "email": "user@example.org", "panels": [
+        {"series": "goes", "rect": {"x": .04, "y": .04, "w": .9, "h": .38}},
+        {"series": "soho", "rect": {"x": .04, "y": .52, "w": .9, "h": .38}},
+    ]}
+    assert validate_request(event, request)["style"] == "plotter"
+    colors = {}
+    for style in ("simple", "plotter"):
+        request["style"] = style
+        with Image.open(io.BytesIO(render_plot(event, request))) as image:
+            pixels = np.asarray(image.convert("RGB"))
+            colors[style] = pixels
+    assert np.all(colors["simple"][0, 0] == 255)
+    assert not np.all(colors["plotter"][0, 0] == 255)
+    simple = colors["simple"]
+    assert np.count_nonzero((simple[:, :, 1] > simple[:, :, 0] * 1.2) &
+                            (simple[:, :, 1] > simple[:, :, 2] * 1.2)) > 20
+    plotter = colors["plotter"]
+    assert np.count_nonzero((plotter[:, :, 0] > plotter[:, :, 1] * 1.3) &
+                            (plotter[:, :, 0] > plotter[:, :, 2] * 1.1)) > 20
+    request["style"] = "not-a-style"
+    with pytest.raises(ValueError, match="style"):
+        validate_request(event, request)
+
+
+def test_flare_caption_uses_catalog_metadata_and_does_not_invent_position(event, tmp_path, monkeypatch):
+    import flare_metadata as catalog
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "all_flares.csv").write_text(
+        "class,start_time,peak_time,end_time,hpc_x,hpc_y\n"
+        "X5.2,2025-11-11T01:00:00Z,2025-11-11T01:05:00Z,2025-11-11T01:10:00Z,100,-200\n", encoding="utf-8")
+    monkeypatch.setattr(catalog, "__file__", str(tmp_path / "flare_metadata.py"))
+    metadata = flare_metadata(event)
+    assert metadata["x"] == 100 and metadata["y"] == -200
+    heading, subtitle = scientific_caption(metadata)
+    assert "X5.2" in heading and "Peak 01:05 UTC" in subtitle and "HPC (100″, -200″)" in subtitle
+    (tmp_path / "data" / "all_flares.csv").write_text(
+        "class,start_time,peak_time,end_time,hpc_x,hpc_y\n"
+        "X5.2,2025-11-11T01:00:00Z,2025-11-11T01:05:00Z,2025-11-11T01:10:00Z,,\n", encoding="utf-8")
+    assert flare_metadata(event)["x"] is None
 
 
 def test_map_times_are_exact_dataset_keys_per_product(event):

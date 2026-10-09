@@ -17,7 +17,10 @@ from types import SimpleNamespace
 
 INDEX_COLUMNS = ("day_night_index", "gsflai_index", "isfai_index")
 PRODUCTS = ("roti", "dtec_2_10", "dtec_10_20", "dtec_20_60")
-SERIES = {"goes": "GOES X-ray", "soho": "SOHO SEM"}
+SERIES = {"goes": "GOES X-ray", "soho": "SOHO SEM", "sun": "Solar disk"}
+PLOT_STYLES = ("plotter", "simple")
+SIMPLE_COLORS = {"goes": "#111111", "soho": "#006400", "day_night_index": "#333333",
+                 "gsflai_index": "#006400", "isfai_index": "#333333"}
 for product in PRODUCTS:
     for column in INDEX_COLUMNS:
         SERIES[f"{product}:{column}"] = f"{product} · {column}"
@@ -41,6 +44,9 @@ def normalize_email(value: object) -> str:
 def event_series(event: Path) -> dict[str, str]:
     available = {}
     for key, label in SERIES.items():
+        if key == "sun":
+            available[key] = label
+            continue
         if key == "goes":
             path = event / "goes_xray" / "goes_xray.csv"
             path = path if path.is_file() else event / "goes_xray.csv"
@@ -99,6 +105,7 @@ def validate_request(event: Path, request: dict) -> dict:
         raise ValueError("Choose between 1 and 6 panels")
     epochs = map_epochs(event) if any(isinstance(p, dict) and str(p.get("series", "")).startswith("map:")
                                        for p in panels) else {}
+    rects = []
     for panel in panels:
         if not isinstance(panel, dict) or panel.get("series") not in available:
             raise ValueError("Unknown or unavailable data series")
@@ -123,14 +130,21 @@ def validate_request(event: Path, request: dict) -> dict:
             x, y, w, h = (rect[axis] for axis in ("x", "y", "w", "h"))
             if x < 0 or y < 0 or w < .16 or h < .16 or x + w > 1.000001 or y + h > 1.000001:
                 raise ValueError("Panel must fit inside the canvas")
+            if any(x < ox + ow - 1e-6 and ox < x + w - 1e-6 and y < oy + oh - 1e-6 and oy < y + h - 1e-6
+                   for ox, oy, ow, oh in rects):
+                raise ValueError("Panels must not overlap")
+            rects.append((x, y, w, h))
     layout = request.get("layout", "vertical")
     if layout not in ("vertical", "grid", "free"):
         raise ValueError("Invalid plot layout")
+    style = request.get("style", "plotter")
+    if style not in PLOT_STYLES:
+        raise ValueError("Invalid plot style")
     title = request.get("title", "")
     if not isinstance(title, str) or len(title) > 100:
         raise ValueError("Title must be at most 100 characters")
     email = normalize_email(request.get("email"))
-    return {"panels": panels, "layout": layout, "title": title, "email": email}
+    return {"panels": panels, "layout": layout, "style": style, "title": title, "email": email}
 
 
 def _read_csv(path: Path, value_column: str):
@@ -186,17 +200,27 @@ def render_plot(event: Path, request: dict) -> bytes:
     from matplotlib.patches import Rectangle
     import cartopy.crs as ccrs
     from Plotter import Plotter, PLOT_STYLE, DEFAULT_PARAMS
+    from flare_metadata import flare_metadata, scientific_caption
 
     panels = request["panels"]
+    simple = request["style"] == "simple"
+    palette = ({**PLOT_STYLE, "ink": "#111111", "muted": "#333333", "grid": "#e2e2e2",
+                "figure": "#ffffff", "panel": "#ffffff"} if simple else PLOT_STYLE)
+    params = ({**DEFAULT_PARAMS, "text.color": palette["ink"], "axes.labelcolor": palette["ink"],
+               "axes.edgecolor": palette["ink"], "xtick.color": palette["ink"],
+               "ytick.color": palette["ink"], "axes.titleweight": "normal",
+               "savefig.facecolor": palette["figure"]} if simple else DEFAULT_PARAMS)
+    metadata = flare_metadata(event)
+    heading, subtitle = scientific_caption(metadata)
     free = request["layout"] == "free"
     columns = 2 if request["layout"] == "grid" and len(panels) > 1 else 1
     rows = (len(panels) + columns - 1) // columns
-    with PLOT_LOCK, plt.rc_context(DEFAULT_PARAMS):
-        fig = plt.figure(figsize=(12, 8.5), facecolor=PLOT_STYLE["figure"]) if free else None
+    with PLOT_LOCK, plt.rc_context(params):
+        fig = plt.figure(figsize=(12, 8.5), facecolor=palette["figure"]) if free else None
         if not free:
             fig, axes = plt.subplots(rows, columns, figsize=(7 * columns, 3.6 * rows), squeeze=False, constrained_layout=True)
         try:
-            fig.patch.set_facecolor(PLOT_STYLE["figure"])
+            fig.patch.set_facecolor(palette["figure"])
             for index, panel in enumerate(panels):
                 key = panel["series"]
                 if free:
@@ -205,20 +229,23 @@ def render_plot(event: Path, request: dict) -> bytes:
                     bottom = .055 + (1 - rect["y"] - rect["h"]) * .82
                     box_w, box_h = rect["w"] * .89, rect["h"] * .82
                     fig.patches.append(Rectangle((left, bottom), box_w, box_h, transform=fig.transFigure,
-                                                       facecolor=PLOT_STYLE["panel"], edgecolor=PLOT_STYLE["grid"],
+                                                        facecolor=palette["panel"], edgecolor=palette["grid"],
                                                        linewidth=.8, zorder=-1))
                     map_panel = key.startswith("map:")
-                    ax = fig.add_axes((left + box_w * .19, bottom + box_h * .24,
-                                       box_w * (.61 if map_panel else .69), box_h * .53),
+                    sun_panel = key == "sun"
+                    ax = fig.add_axes((left + box_w * (.1 if sun_panel else .19), bottom + box_h * (.13 if sun_panel else .24),
+                                       box_w * (.8 if sun_panel else .61 if map_panel else .69),
+                                       box_h * (.68 if sun_panel else .53)),
                                       projection=ccrs.PlateCarree() if map_panel else None)
                     font_size = max(7, min(11, 11 * rect["w"] / .44))
                     title = SERIES[key]
                     if map_panel:
                         title += f" · {panel.get('epoch') or 'file midpoint'} UTC"
                     fig.text(left + box_w * .04, bottom + box_h * .88,
-                             title[:max(12, int(box_w * 65))], color=PLOT_STYLE["ink"],
-                             weight="bold", fontsize=font_size, va="center")
-                    ax.tick_params(labelsize=max(6, font_size - 3), length=3, width=.7)
+                              title[:max(12, int(box_w * 65))], color=palette["ink"],
+                              weight="normal" if simple else "bold", fontsize=font_size, va="center")
+                    if not sun_panel:
+                        ax.tick_params(labelsize=max(6, font_size - 3), length=3, width=.7)
                 else:
                     ax = axes[index // columns][index % columns]
                     if key.startswith("map:"):
@@ -229,8 +256,28 @@ def render_plot(event: Path, request: dict) -> bytes:
                                    "day_night_index": PLOT_STYLE["index_day"],
                                    "gsflai_index": PLOT_STYLE["index_gsflai"],
                                    "isfai_index": PLOT_STYLE["index_isfai"]}
-                color = panel.get("color", original_colors.get(key.split(":")[-1], "#2878a5"))
-                if key.startswith("map:"):
+                color = panel.get("color", (SIMPLE_COLORS if simple else original_colors).get(
+                    key.split(":")[-1], "#333333" if simple else "#2878a5"))
+                if key == "sun":
+                    image = None
+                    for path in sorted((event / "solar_image").glob("*")):
+                        if path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+                            try:
+                                image = plt.imread(path)
+                                break
+                            except (OSError, ValueError):
+                                pass
+                    painter = object.__new__(Plotter)
+                    painter.data = SimpleNamespace(sun_image=image)
+                    location = (metadata["x"], metadata["y"]) if metadata["x"] is not None else None
+                    painter._plot_sun(ax, SimpleNamespace(location=location))
+                    if free:
+                        ax.set_title("")
+                    if metadata["x"] is None:
+                        ax.text(.5, .02, "Flare position unavailable", transform=ax.transAxes,
+                                 ha="center", va="bottom", color=palette["muted"], fontsize=8,
+                                bbox={"facecolor": "white", "alpha": .85, "edgecolor": "none"})
+                elif key.startswith("map:"):
                     product = key[4:]
                     stamp, points = _map_points(event / "maps" / f"map_{product}.h5", panel.get("epoch"))
                     painter = object.__new__(Plotter)
@@ -257,29 +304,35 @@ def render_plot(event: Path, request: dict) -> bytes:
                     if not dates:
                         raise ValueError(f"No usable data for {SERIES[key]}")
                     if key == "goes" or key == "soho":
-                        if all(value > 0 for value in values):
+                        if not simple and all(value > 0 for value in values):
                             ax.set_yscale("log")
                         ylabel = "Flux (W m⁻²)" if key == "goes" else "Flux (photons cm⁻² s⁻¹)"
                     else:
                         ylabel = {"day_night_index": "Day/night", "gsflai_index": "GSFLAI", "isfai_index": "ISFAI"}[column]
-                    ax.plot(dates, values, color=color, linewidth=2, solid_capstyle="round",
+                    ax.plot(dates, values, color=color, linewidth=1.3 if simple else 2, solid_capstyle="round",
                             marker="o" if len(dates) == 1 else None)
                     if not free:
-                        ax.set_title(SERIES[key], loc="left", color=PLOT_STYLE["ink"])
-                    ax.set_ylabel(ylabel, color=color)
-                    ax.tick_params(axis="y", colors=color)
-                    ax.spines["left"].set_color(color)
+                        ax.set_title(SERIES[key], loc="left", color=palette["ink"])
+                    ax.set_ylabel(ylabel, color=palette["ink"] if simple else color)
+                    if not simple:
+                        ax.tick_params(axis="y", colors=color)
+                        ax.spines["left"].set_color(color)
                     ax.set_xlabel("Time (UTC)")
                     ax.xaxis.set_major_locator(AutoDateLocator(maxticks=5 if free else 10))
                     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-                    ax.spines["top"].set_visible(False)
-                    ax.grid(True, color=PLOT_STYLE["grid"], linewidth=.65)
+                    if not simple:
+                        ax.spines["top"].set_visible(False)
+                    ax.grid(True, color=palette["grid"], linewidth=.65)
                     ax.set_axisbelow(True)
             if not free:
                 for index in range(len(panels), rows * columns):
                     axes[index // columns][index % columns].set_visible(False)
-            fig.suptitle(request["title"] or event.name, fontsize=16, fontweight="bold",
-                         color=PLOT_STYLE["ink"], y=.98)
+            caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
+            fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
+                          fontsize=16 if free else 13, fontweight="normal" if simple else "bold", color=palette["ink"], y=.99)
+            if caption and free:
+                fig.text(.5, .955, caption, ha="center", va="top",
+                          fontsize=9, color=palette["muted"])
             output = io.BytesIO()
             fig.savefig(output, format="png", dpi=180, facecolor=fig.get_facecolor())
             return output.getvalue()

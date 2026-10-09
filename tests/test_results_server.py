@@ -172,12 +172,20 @@ def test_plot_studio_is_separate_page_with_draggable_canvas(tmp_path):
     assert 'id="plotCanvas"' in page
     assert 'id="plotStage"' in page
     assert 'id="canvasTitle"' in page
+    assert 'id="canvasSubtitle"' in page
+    assert "Solar flare X5.2 · 2025-11-11" in page
+    assert '"sun": "Solar disk"' in page
+    assert "function canPlace(current, rect)" in page
     assert 'id="panelWidth"' in page
     assert 'id="panelHeight"' in page
     assert "setPointerCapture" in page
     assert "layout: 'free'" in page
     assert 'id="plotEmail" type="email" required' in page
     assert 'id="panelEpoch"' in page
+    assert 'id="plotStyle"' in page
+    assert '<option value="simple">' in page and '<option value="plotter" selected>' in page
+    assert 'style: style.value' in page
+    assert 'data-style="simple"' in page and 'data-style="plotter"' in page
     assert 'type="datetime-local"' not in page
     assert "canvas-ylabel" in page and "canvas-xlabel" in page and "canvas-scale" in page
     assert 'href="/X/2025-11-11_X5.2/"' in page

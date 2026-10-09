@@ -130,6 +130,9 @@ UI_TRANSLATIONS = {
     "Layout preview": "Предпросмотр расположения",
     "Each panel shows its title, axes, labels and color scale inside its border. Data is drawn when you generate the plot.": "Внутри каждой панели видны заголовок, оси, подписи и цветовая шкала. Данные отрисуются после построения графика.",
     "Selected panel": "Выбранная панель",
+    "Plot style": "Стиль графика",
+    "Simple · white, fine grid": "Простой · белый фон, тонкая сетка",
+    "Plotter · colored axes": "Plotter · цветные оси",
     "Width (%)": "Ширина (%)",
     "Height (%)": "Высота (%)",
     "Map time from file (UTC)": "Время карты из файла (UTC)",
@@ -147,6 +150,10 @@ UI_TRANSLATIONS = {
     "Vertical": "Друг под другом",
     "Two columns": "Два столбца",
     "Plot title": "Название графика",
+    "Additional caption": "Дополнительная подпись",
+    "Optional description": "Необязательное описание",
+    "Solar disk": "Солнечный диск",
+    "Flare position unavailable": "Положение вспышки неизвестно",
     "Email identifier": "Почта для поиска графиков",
     "My plots": "Мои графики",
     "Enter your email to find plots created with it during the last three days. No messages are sent.": "Укажите почту, чтобы найти созданные с ней графики за последние три дня. Письма не отправляются.",
@@ -1134,10 +1141,11 @@ def render_event_page(root: Path, path: Path) -> bytes:
 
 
 def render_plot_editor_page(root: Path, path: Path) -> bytes:
+    from flare_metadata import flare_metadata
     event = scan_event(root, path)
     epochs = map_epochs(path)
     series = {key: label for key, label in event_series(path).items() if not key.startswith("map:") or key in epochs}
-    body, styles = editor_content(event, series, epochs)
+    body, styles = editor_content(event, series, epochs, flare_metadata(path))
     return page_shell(f"Plot studio · {event['name']}", body, extra_head=styles)
 
 

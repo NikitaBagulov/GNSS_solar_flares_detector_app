@@ -6,11 +6,16 @@ import re
 from urllib.parse import quote
 
 
-def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[str]]) -> tuple[str, str]:
+def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[str]], metadata: dict) -> tuple[str, str]:
     """Return HTML body and styles for the dedicated plot editor page."""
     data = json.dumps(series, ensure_ascii=False).replace("<", "\\u003c")
     times = json.dumps(epochs, ensure_ascii=False).replace("<", "\\u003c")
     event_path = json.dumps(event["path"], ensure_ascii=False).replace("<", "\\u003c")
+    from flare_metadata import scientific_caption
+    heading, subtitle = scientific_caption(metadata)
+    heading_json = json.dumps(heading, ensure_ascii=False).replace("<", "\\u003c")
+    subtitle_json = json.dumps(subtitle, ensure_ascii=False).replace("<", "\\u003c")
+    location_json = json.dumps({"x": metadata["x"], "y": metadata["y"]})
     name = html.escape(event["name"])
     body = r"""
     <header class="studio-heading"><div><a href="__EVENT_URL__" class="studio-back">← Back to event</a>
@@ -20,12 +25,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
          <div class="studio-toolbar"><strong>Layout preview</strong><span>Each panel shows its title, axes, labels and color scale inside its border. Data is drawn when you generate the plot.</span>
           <button type="button" class="button" id="addPlotPanel">+ Add panel</button></div>
         <div class="studio-scroll"><div id="plotCanvas" class="plot-canvas" aria-label="Layout preview">
-          <strong id="canvasTitle" class="canvas-title">__EVENT_NAME__</strong>
+           <strong id="canvasTitle" class="canvas-title">__HEADING__</strong>
+           <span id="canvasSubtitle" class="canvas-subtitle">__SUBTITLE__</span>
           <div id="plotStage" class="plot-stage" aria-label="Drag and resize plot panels"></div></div></div>
       </section>
       <aside class="studio-sidebar">
-        <h2>Plot settings</h2>
-        <label>Plot title <input id="plotTitle" maxlength="100" placeholder="Plot title"></label>
+         <h2>Plot settings</h2>
+         <label>Plot style <select id="plotStyle"><option value="simple">Simple · white, fine grid</option>
+           <option value="plotter" selected>Plotter · colored axes</option></select></label>
+         <label>Additional caption <input id="plotTitle" maxlength="100" placeholder="Optional description"></label>
         <label>Email identifier <input id="plotEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
         <p class="studio-note">Use the same email in the catalog to find your plots. No messages are sent.</p>
         <div id="panelSettings" class="panel-settings">
@@ -49,9 +57,13 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       const series = __SERIES_JSON__;
       const epochs = __EPOCHS_JSON__;
       const eventPath = __EVENT_JSON__;
+      const heading = __HEADING_JSON__;
+      const subtitle = __SUBTITLE_JSON__;
+      const location = __LOCATION_JSON__;
       const canvas = document.getElementById('plotStage');
       const message = document.getElementById('plotMessage');
-      const select = document.getElementById('panelSeries');
+       const select = document.getElementById('panelSeries');
+       const style = document.getElementById('plotStyle');
       const color = document.getElementById('panelColor');
       const epoch = document.getElementById('panelEpoch');
       const width = document.getElementById('panelWidth');
@@ -59,12 +71,31 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       const panels = [];
       let selected = null;
       document.getElementById('plotTitle').addEventListener('input', event => {
-        document.getElementById('canvasTitle').textContent = event.target.value || eventPath.split('/').at(-1);
+        document.getElementById('canvasSubtitle').textContent = [subtitle, event.target.value].filter(Boolean).join('  ·  ');
       });
       const text = (en, ru) => document.documentElement.lang === 'ru' ? ru : en;
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-      const defaultColor = key => ({goes: '#d1495b', soho: '#2878a5',
-        day_night_index: '#2878a5', gsflai_index: '#2a9d8f', isfai_index: '#e76f51'})[key.split(':').at(-1)] || '#2878a5';
+      function canPlace(current, rect) {
+        return rect.x >= 0 && rect.y >= 0 && rect.w >= .16 && rect.h >= .16 &&
+          rect.x + rect.w <= 1.000001 && rect.y + rect.h <= 1.000001 &&
+          panels.every(other => other === current || rect.x >= other.rect.x + other.rect.w - 1e-6 ||
+            other.rect.x >= rect.x + rect.w - 1e-6 || rect.y >= other.rect.y + other.rect.h - 1e-6 ||
+            other.rect.y >= rect.y + rect.h - 1e-6);
+      }
+      function place(panel, rect) {
+        if (!canPlace(panel, rect)) return false;
+        panel.rect = rect; return true;
+      }
+       const defaultColor = key => (style.value === 'simple' ?
+         {goes: '#111111', soho: '#006400', day_night_index: '#333333', gsflai_index: '#006400', isfai_index: '#333333'} :
+         {goes: '#d1495b', soho: '#2878a5', day_night_index: '#2878a5', gsflai_index: '#2a9d8f', isfai_index: '#e76f51'}
+       )[key.split(':').at(-1)] || (style.value === 'simple' ? '#333333' : '#2878a5');
+       style.onchange = () => {
+         document.getElementById('plotCanvas').dataset.style = style.value;
+         for (const panel of panels) if (!panel.customColor) panel.color = defaultColor(panel.series);
+         render();
+       };
+       document.getElementById('plotCanvas').dataset.style = style.value;
       for (const [key, label] of Object.entries(series)) {
         const option = document.createElement('option'); option.value = key; option.textContent = label; select.append(option);
       }
@@ -75,7 +106,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         select.value = panel.series; color.value = panel.color;
         const map = panel.series.startsWith('map:');
         document.getElementById('epochField').hidden = !map;
-        document.getElementById('colorField').hidden = map;
+         document.getElementById('colorField').hidden = map || panel.series === 'sun';
         document.getElementById('mapPalette').hidden = !map;
         epoch.replaceChildren();
         if (map) {
@@ -107,7 +138,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
           const xLabel = document.createElement('span'); xLabel.className = 'canvas-xlabel';
           const yLabel = document.createElement('span'); yLabel.className = 'canvas-ylabel';
           const ticks = document.createElement('span'); ticks.className = 'canvas-ticks';
-          if (panel.series.startsWith('map:')) {
+           if (panel.series === 'sun') {
+             chart.classList.add('canvas-sun');
+             const x = location.x === null ? null : 100 + location.x / 960 * 38;
+             const y = location.y === null ? null : 40 - location.y / 960 * 38;
+             chart.innerHTML = '<svg viewBox="0 0 200 80" aria-hidden="true"><circle cx="100" cy="40" r="38" fill="#f6c85f" stroke="#e6a23c"/>' +
+               (x === null ? '' : `<text x="${x}" y="${y}" fill="#e76f51" stroke="white" stroke-width=".4" font-size="16">★</text>`) + '</svg>';
+             ticks.textContent = x === null ? text('Flare position unavailable', 'Положение вспышки неизвестно') :
+               `HPC ${Math.round(location.x)}″, ${Math.round(location.y)}″`;
+           } else if (panel.series.startsWith('map:')) {
             chart.classList.add('canvas-map');
             chart.innerHTML = '<svg viewBox="0 0 200 80" preserveAspectRatio="none" aria-hidden="true"><circle cx="40" cy="35" r="7"/><circle cx="77" cy="46" r="5"/><circle cx="112" cy="20" r="6"/><circle cx="155" cy="40" r="8"/></svg>';
             xLabel.textContent = 'Longitude'; yLabel.textContent = 'Latitude'; ticks.textContent = '−180     0      180';
@@ -133,8 +172,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
             const moves = {ArrowLeft: [-.01, 0], ArrowRight: [.01, 0], ArrowUp: [0, -.01], ArrowDown: [0, .01]};
             if (!moves[event.key]) return;
             event.preventDefault(); const [dx, dy] = moves[event.key];
-            panel.rect.x = clamp(panel.rect.x + dx, 0, 1 - panel.rect.w);
-            panel.rect.y = clamp(panel.rect.y + dy, 0, 1 - panel.rect.h); position(card, panel.rect);
+             place(panel, {...panel.rect, x: clamp(panel.rect.x + dx, 0, 1 - panel.rect.w),
+               y: clamp(panel.rect.y + dy, 0, 1 - panel.rect.h)}); position(card, panel.rect);
           });
           function drag(event, resize) {
             event.preventDefault(); selected = panel.id; syncSettings();
@@ -145,11 +184,11 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
               const dx = (next.clientX - startX) / canvas.clientWidth;
               const dy = (next.clientY - startY) / canvas.clientHeight;
               if (resize) {
-                panel.rect.w = clamp(initial.w + dx, .16, 1 - initial.x);
-                panel.rect.h = clamp(initial.h + dy, .16, 1 - initial.y);
-              } else {
-                panel.rect.x = clamp(initial.x + dx, 0, 1 - initial.w);
-                panel.rect.y = clamp(initial.y + dy, 0, 1 - initial.h);
+                 place(panel, {...initial, w: clamp(initial.w + dx, .16, 1 - initial.x),
+                   h: clamp(initial.h + dy, .16, 1 - initial.y)});
+               } else {
+                 place(panel, {...initial, x: clamp(initial.x + dx, 0, 1 - initial.w),
+                   y: clamp(initial.y + dy, 0, 1 - initial.h)});
               }
               position(card, panel.rect);
               width.value = Math.round(panel.rect.w * 100); height.value = Math.round(panel.rect.h * 100);
@@ -169,10 +208,15 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       function addPanel() {
         if (panels.length >= 6 || !Object.keys(series).length) return;
         const index = panels.length;
-        const rect = {x: index % 2 ? .52 : .04, y: .04 + Math.floor(index / 2) * .32, w: .44, h: .27};
+         let rect;
+         for (let row = 0; row < 3 && !rect; row++) for (let col = 0; col < 2; col++) {
+           const candidate = {x: col ? .52 : .04, y: .04 + row * .32, w: .44, h: .27};
+           if (canPlace(null, candidate)) { rect = candidate; break; }
+         }
+         if (!rect) { message.textContent = text('Free a slot before adding another panel.', 'Освободите место для новой панели.'); return; }
         const first = Object.keys(series)[0];
         const available = epochs[first] || [];
-        const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first),
+         const panel = {id: String(Date.now()) + Math.random(), series: first, color: defaultColor(first), customColor: false,
           epoch: available[Math.floor(available.length / 2)] || null, rect};
         panels.push(panel); selected = panel.id; render();
       }
@@ -183,15 +227,19 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         panels.splice(index, 1); selected = panels.at(-1)?.id || null; render();
       };
       select.onchange = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
-        panel.series = select.value; panel.color = defaultColor(panel.series); const available = epochs[panel.series] || [];
+         panel.series = select.value; panel.color = defaultColor(panel.series); panel.customColor = false;
+         const available = epochs[panel.series] || [];
         panel.epoch = available[Math.floor(available.length / 2)] || null; render(); };
-      color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return; panel.color = color.value; render(); };
+       color.oninput = () => { const panel = panels.find(item => item.id === selected); if (!panel) return;
+         panel.color = color.value; panel.customColor = true; render(); };
       epoch.onchange = () => { const panel = panels.find(item => item.id === selected); if (panel) { panel.epoch = epoch.value; render(); } };
       function changeSize(axis, input) {
         const panel = panels.find(item => item.id === selected);
         if (!panel || !input.value) return;
-        panel.rect[axis] = clamp(Number(input.value) / 100, .16, 1 - panel.rect[axis === 'w' ? 'x' : 'y']);
-        render();
+         const candidate = {...panel.rect, [axis]: clamp(Number(input.value) / 100, .16,
+           1 - panel.rect[axis === 'w' ? 'x' : 'y'])};
+         if (!place(panel, candidate)) message.textContent = text('Panels cannot overlap.', 'Панели не могут перекрываться.');
+         render();
       }
       width.onchange = () => changeSize('w', width);
       height.onchange = () => changeSize('h', height);
@@ -203,7 +251,7 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
         message.textContent = text('Generating plot…', 'Построение графика…');
         try {
           const response = await fetch('/api/plots', {method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({event: eventPath, layout: 'free', title: document.getElementById('plotTitle').value,
+             body: JSON.stringify({event: eventPath, layout: 'free', style: style.value, title: document.getElementById('plotTitle').value,
               email: email.value, panels: panels.map(panel => ({series: panel.series, color: panel.color,
                 epoch: panel.epoch || null, rect: panel.rect}))})});
           const result = await response.json();
@@ -218,8 +266,10 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
     </script>
     """
     replacements = {"SERIES_JSON": data, "EPOCHS_JSON": times, "EVENT_JSON": event_path, "EVENT_NAME": name,
+                    "HEADING": html.escape(heading), "SUBTITLE": html.escape(subtitle), "HEADING_JSON": heading_json,
+                    "SUBTITLE_JSON": subtitle_json, "LOCATION_JSON": location_json,
                     "EVENT_URL": "/" + quote(event["path"], safe="/") + "/"}
-    body = re.sub(r"__(SERIES_JSON|EPOCHS_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL)__",
+    body = re.sub(r"__(SERIES_JSON|EPOCHS_JSON|EVENT_JSON|EVENT_NAME|EVENT_URL|HEADING|SUBTITLE|HEADING_JSON|SUBTITLE_JSON|LOCATION_JSON)__",
                   lambda match: replacements[match.group(1)], body)
     css = """
     <style>
@@ -232,10 +282,25 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
       .studio-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px; }
       .studio-toolbar span { flex: 1; color: var(--muted); font-size: 12px; }
       .studio-scroll { overflow-x: auto; padding: 14px; background: #edf2f7; border-radius: 0 0 12px 12px; }
-      .plot-canvas { position: relative; width: 100%; min-width: 620px; aspect-ratio: 12 / 8.5; overflow: hidden; background: #fff;
-        border: 1px solid #cbd5e1; box-shadow: 0 5px 22px #1422351c; }
-      .canvas-title { position: absolute; top: 1%; left: 5%; width: 90%; text-align: center; overflow: hidden;
-        white-space: nowrap; text-overflow: ellipsis; font-size: clamp(12px, 1.4vw, 19px); }
+       .plot-canvas { position: relative; width: 100%; min-width: 620px; aspect-ratio: 12 / 8.5; overflow: hidden; background: #fff;
+         border: 1px solid #cbd5e1; box-shadow: 0 5px 22px #1422351c; }
+       .plot-canvas[data-style="plotter"] { background: #f4f7fb; }
+       .plot-canvas[data-style="simple"] .canvas-title { font-weight: 400; color: #111; }
+       .plot-canvas[data-style="simple"] .canvas-subtitle { color: #333; }
+       .plot-canvas[data-style="simple"] .canvas-panel { border-color: #ddd; box-shadow: none; }
+       .plot-canvas[data-style="simple"] .canvas-panel-bar { color: #111; }
+       .plot-canvas[data-style="simple"] .canvas-panel-bar strong { font-weight: 400; }
+       .plot-canvas[data-style="simple"] .canvas-chart:not(.canvas-sun):not(.canvas-map) { border: 1px solid #111;
+         background: repeating-linear-gradient(to bottom, transparent 0 24%, #e2e2e2 25% calc(25% + 1px)); }
+       .plot-canvas[data-style="simple"] .canvas-chart:not(.canvas-sun):not(.canvas-map)::before {
+         content: ''; position: absolute; inset: 0; pointer-events: none;
+         background: repeating-linear-gradient(to right, transparent 0 24%, #e2e2e2 25% calc(25% + 1px)); }
+       .plot-canvas[data-style="simple"] .canvas-xlabel, .plot-canvas[data-style="simple"] .canvas-ylabel,
+       .plot-canvas[data-style="simple"] .canvas-ticks { color: #111; }
+       .canvas-title { position: absolute; top: 1%; left: 5%; width: 90%; text-align: center; overflow: hidden;
+         white-space: nowrap; text-overflow: ellipsis; font-size: clamp(12px, 1.4vw, 19px); }
+       .canvas-subtitle { position: absolute; top: 6.5%; left: 5%; width: 90%; text-align: center; overflow: hidden;
+         white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: #63738a; }
       .plot-stage { position: absolute; left: 5.5%; top: 12.5%; width: 89%; height: 82%;
         background-image: linear-gradient(#eef2f7 1px, transparent 1px), linear-gradient(90deg, #eef2f7 1px, transparent 1px);
         background-size: 5% 5%; }
@@ -252,6 +317,8 @@ def editor_content(event: dict, series: dict[str, str], epochs: dict[str, list[s
        .canvas-chart.canvas-map { width: 61%; background: #edf2f7; }
        .canvas-chart svg { width: 100%; height: 100%; fill: currentColor; opacity: .7; }
        .canvas-map svg { color: #2a9d8f; }
+       .canvas-chart.canvas-sun { left: 15%; top: 21%; width: 70%; height: 59%; border: 0; background: #101b2b; }
+       .canvas-sun svg { opacity: 1; }
        .canvas-chart polyline { fill: none; stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
        .canvas-xlabel { position: absolute; top: 83%; left: 19%; width: 69%; text-align: center; font-size: clamp(7px, .85vw, 11px); }
        .canvas-ylabel { position: absolute; top: 42%; left: 1%; width: 17%; text-align: center; overflow-wrap: anywhere;
