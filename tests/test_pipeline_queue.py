@@ -106,9 +106,47 @@ def test_index_job_enqueues_plot_only_when_selection_rule_matches(monkeypatch, t
         max_attempts=3,
         last_error=None,
     )
-    monkeypatch.setattr("pipeline.dispatcher.run_index_calculation_for_flare", lambda *_: type("Result", (), {"flare_keys": ["flare"]})())
+    call = {}
+
+    def run_index(_config, _flare_key, *, force_recompute=False):
+        call["force_recompute"] = force_recompute
+        return type("Result", (), {"flare_keys": ["flare"]})()
+
+    monkeypatch.setattr("pipeline.dispatcher.run_index_calculation_for_flare", run_index)
     monkeypatch.setattr(dispatcher, "_should_plot", lambda _flare_key: False)
 
     dispatcher._execute(job)
 
+    assert dispatcher.queue._connection().execute("SELECT COUNT(*) FROM jobs WHERE job_type='plot'").fetchone()[0] == 0
+    assert call["force_recompute"] is False
+
+
+def test_index_job_can_force_recompute_without_changing_plot_selection(monkeypatch, tmp_path):
+    dispatcher = QueueDispatcher.__new__(QueueDispatcher)
+    dispatcher.queue = SQLiteJobQueue(tmp_path / "queue.sqlite3", worker_id="test")
+    dispatcher.max_attempts = 3
+    dispatcher.config = object()
+    job = Job(
+        id=1,
+        job_type="index",
+        flare_key="flare",
+        target_date="2025-01-01",
+        payload={"force_recompute": True},
+        status="running",
+        attempts=1,
+        max_attempts=3,
+        last_error=None,
+    )
+    call = {}
+
+    def run_index(_config, _flare_key, *, force_recompute=False):
+        call["force_recompute"] = force_recompute
+        return type("Result", (), {"flare_keys": ["flare"]})()
+
+    monkeypatch.setattr("pipeline.dispatcher.run_index_calculation_for_flare", run_index)
+    monkeypatch.setattr(dispatcher, "_should_plot", lambda _flare_key: False)
+
+    dispatcher._execute(job)
+
+    assert call["force_recompute"] is True
     assert dispatcher.queue._connection().execute("SELECT COUNT(*) FROM jobs WHERE job_type='plot'").fetchone()[0] == 0

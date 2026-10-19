@@ -104,7 +104,11 @@ class QueueDispatcher:
         if job.job_type == "index":
             if not job.flare_key:
                 raise ValueError("index job has no flare_key")
-            result = run_index_calculation_for_flare(self.config, job.flare_key)
+            result = run_index_calculation_for_flare(
+                self.config,
+                job.flare_key,
+                force_recompute=bool(job.payload.get("force_recompute", False)),
+            )
             if job.flare_key not in result.flare_keys:
                 raise RuntimeError(f"index produced no result for {job.flare_key}")
             if self._should_plot(job.flare_key):

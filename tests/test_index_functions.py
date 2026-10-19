@@ -7,6 +7,7 @@ from index_functions.day_night_index import (
     RE_meters,
     _day_geometry,
     _subsolar_point,
+    compute_day_night_components,
     compute_day_night_index,
     great_circle_distance_vec,
 )
@@ -57,6 +58,23 @@ def test_day_night_index_produces_finite_value_for_day_and_night_points():
     )
 
     assert np.isfinite(value)
+
+
+def test_day_night_index_returns_unscaled_day_night_contrast():
+    when = datetime(2025, 3, 20, 12, 0, 0)
+    subsolar_lat, subsolar_lon = _subsolar_point(when)
+    points = [
+        [subsolar_lat, subsolar_lon, 1000.0],
+        [subsolar_lat, (subsolar_lon + 180.0 + 180.0) % 360.0 - 180.0, 1.0],
+    ]
+
+    components = compute_day_night_components(points, when)
+    index = compute_day_night_index(points, when)
+
+    assert components is not None
+    assert components["index"] == pytest.approx(components["mu_day"] - components["mu_night"])
+    assert components["index"] == pytest.approx(999.0)
+    assert index == pytest.approx(999.0)
 
 
 def test_julian_day_helpers_agree_on_known_epoch():

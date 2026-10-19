@@ -133,7 +133,7 @@ def compute_day_night_components(
         variant="distance_weight_cos",
         eps_abs=1e-6,
         exclude_terminator_deg=0.0):
-    """Return the day/night terms used by the normalized contrast index.
+    """Return the day/night terms and their unnormalized contrast.
 
     Variants are explicit so comparisons never overwrite old results.
      legacy reproduces the historical reversed weight; distance_weight uses
@@ -193,15 +193,15 @@ def compute_day_night_components(
         return None
     mu_day = float(np.sum(day_values * weights) / weight_sum)
     mu_night = float(np.median(v_night))
-    numerator = mu_day - mu_night
-    denominator = abs(mu_day) + abs(mu_night) + 0.05
+    # Keep the physical contrast in the input data's units. Do not scale it
+    # into a fixed [-1, 1] interval.
+    contrast = mu_day - mu_night
     return {
         "variant": variant,
         "mu_day": mu_day,
         "mu_night": mu_night,
-        "numerator": numerator,
-        "denominator": denominator,
-        "index": numerator / denominator,
+        "contrast": contrast,
+        "index": contrast,
         "n_day": int(np.sum(day_mask)),
         "n_night": int(np.sum(night_mask)),
         "subsolar_lat": float(sub_lat),
@@ -230,7 +230,7 @@ def compute_day_night_index(
                 f"{components['subsolar_lat']:.6f},{components['subsolar_lon']:.6f},"
                 f"{components['n_day']},{components['n_night']},"
                 f"{components['mu_day']:.6f},{components['mu_night']:.6f},"
-                f"{components['numerator']:.6f},{components['denominator']:.6f},"
+                f"{components['contrast']:.6f},"
                 f"{components['index']:.6f}\\n"
             )
     return float(components["index"])

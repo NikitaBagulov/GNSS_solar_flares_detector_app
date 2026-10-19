@@ -354,14 +354,21 @@ def run_index_calculation(config: PipelineConfig) -> IndexCalculationResult:
     )
 
 
-def run_index_calculation_for_flare(config: PipelineConfig, flare_key: str) -> IndexCalculationResult:
+def run_index_calculation_for_flare(
+    config: PipelineConfig,
+    flare_key: str,
+    *,
+    force_recompute: bool = False,
+) -> IndexCalculationResult:
     tracker = _load_tracker(config)
     _publish_source_files(
         tracker,
         overwrite=config.run_config.policy_for("download") == "overwrite",
     )
     calculator = IndexCalculator(
-        existing_data_policy=config.run_config.policy_for("index"),
+        existing_data_policy=(
+            "overwrite" if force_recompute else config.run_config.policy_for("index")
+        ),
     )
 
     calculator.process_single_flare(flare_key, tracker=tracker)
