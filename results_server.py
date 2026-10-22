@@ -873,7 +873,7 @@ def render_dashboard(root: Path) -> bytes:
         <p class="page-intro">Browse events and see at a glance which data products are ready.</p>
       </div>
       <nav class="api-links" aria-label="Data endpoints">
-        <a href="/api/events">Events JSON</a><a href="/api/summary">Summary JSON</a>
+        <a href="/favorites">★ Избранные</a><a href="/api/events">Events JSON</a><a href="/api/summary">Summary JSON</a>
       </nav>
     </header>
     <section class="catalog-summary" aria-label="Catalog overview">
@@ -1383,6 +1383,8 @@ class PrettyDirectoryHandler(SimpleHTTPRequestHandler):
             return self.handle_api(parsed.path, parse_qs(parsed.query))
 
         root = self._root_dir()
+        if parsed.path in {"/favorites", "/favorites.html"}:
+            return self._send_bytes(Path(__file__).with_name("favorites.html").read_bytes())
         if parsed.path in {"", "/"}:
             return self._send_bytes(render_dashboard(root))
 

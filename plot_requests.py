@@ -478,7 +478,7 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
                         ylabel = "Flux change (%)" if relative is not None else (
                             "Flux (W m⁻²)" if key == "goes" else "EUV (photons cm⁻² s⁻¹)")
                     else:
-                        ylabel = ("Day/night index (unitless)" if column == "day_night_index" else
+                        ylabel = (f"Day/night contrast ({PRODUCT_UNITS[product]})" if column == "day_night_index" else
                                   f"{column.removesuffix('_index').upper()} ({PRODUCT_UNITS[product]})")
                     for column_name, (dates, values) in measurements.items():
                         secondary = column_name in ("xrsa", "flux_26_34")
@@ -580,7 +580,8 @@ def render_plot(event: Path, request: dict, *, dpi: int = 300) -> bytes:
             caption = "  ·  ".join(filter(None, (subtitle, request["title"])))
             fig.suptitle(heading if free else heading + ("\n" + caption if caption else ""),
                           fontsize=16 if free else 13,
-                         fontweight="bold", color=palette["ink"], y=.985)
+                          fontweight="bold", color=palette["ink"],
+                          **({"y": .985} if free else {}))
             if caption and free:
                 fig.text(.5, .955, caption, ha="center", va="top",
                            fontsize=11, color=palette["muted"])
