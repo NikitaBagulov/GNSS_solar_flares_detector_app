@@ -7,6 +7,7 @@ import sys
 import json
 import pandas as pd
 import os
+from download_lock import serialized_download
 
 
 class DataManager:
@@ -43,6 +44,7 @@ class DataManager:
         self._cleanup_all_downloads()
         sys.exit(1)
     
+    @serialized_download
     def _cleanup_orphaned_temp_files(self):
         tmp_files = list(self.base_download_dir.rglob("*.tmp"))
         
@@ -70,6 +72,7 @@ class DataManager:
         except Exception as e:
             print(f"⚠️ Ошибка сохранения состояния транзакций: {e}")
     
+    @serialized_download
     def _recover_interrupted_downloads(self):
         if not self._transaction_file.exists():
             return
@@ -99,6 +102,7 @@ class DataManager:
             print(f"⚠️ Ошибка восстановления после прерывания: {e}")
             self._transaction_file.unlink(missing_ok=True)
     
+    @serialized_download
     def _cleanup_all_downloads(self):
         files_removed = 0
         
@@ -144,6 +148,7 @@ class DataManager:
             self.sources_config[source_name] = config
         
     
+    @serialized_download
     def download_by_date(
         self, 
         target_date: date,

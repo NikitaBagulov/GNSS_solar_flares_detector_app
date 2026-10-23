@@ -113,12 +113,8 @@ class SQLiteJobQueue:
             (job_type, flare_key, target_date),
         ).fetchone()
         if existing is not None:
-            if existing["status"] in {"failed", "dead"}:
-                connection.execute(
-                    """UPDATE jobs SET status='pending', available_at=?, updated_at=?,
-                       max_attempts=?, payload_json=?, last_error=NULL WHERE id=?""",
-                    (now, now, max_attempts, json.dumps(payload or {}, sort_keys=True), existing["id"]),
-                )
+            # Discovery is idempotent, not an explicit retry request. In
+            # particular it must preserve backoff and exhausted attempts.
             return int(existing["id"])
         cursor = connection.execute(
             """
@@ -147,6 +143,16 @@ class SQLiteJobQueue:
         connection = self._connection()
         connection.execute("BEGIN IMMEDIATE")
         try:
+            connection.execute(
+                """UPDATE jobs SET status='dead', updated_at=?
+                   WHERE status IN ('pending','failed') AND attempts >= max_attempts""",
+                (_now(),),
+            )
+            connection.execute(
+                """UPDATE jobs SET status='pending', updated_at=?
+                   WHERE status='failed' AND attempts < max_attempts AND available_at <= ?""",
+                (_now(), _now()),
+            )
             row = connection.execute(
                 """
                 SELECT * FROM jobs
